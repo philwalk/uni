@@ -258,7 +258,16 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // gained `vol-exit timing pts/yr` and `vol-exit 3x interaction pts/yr`, record-band rows. An
 // `-emitf32` chunk's sidecar (`F32_SIDECAR_KEYS`) carries `format`, `layout`, `columnsAbsent` and
 // `paths` where a TSV's carries `header` and `path`, and its `episodes` lists each path's rows.
-const EMIT_SCHEMA: u32 = 29;
+// 29 -> 30: THE BASKET GRADES ONLY AGAINST A CLIENT'S RULER (`-basketruler`). The verdict no
+// longer supplies a basket: `verdictChannels.basket` gained `graded` and reads `source` "emitted"
+// or "off"; `channels.basket` is `{ "ruler": null, "graded": false }` for a basket run without a
+// ruler, and with one carries the readings, `graded: true` and `ruler` (file, digest, index,
+// basis, closesDate, window, names, minSessions, `readUnder`, per-name coverage, the rows with
+// their records and bands, the mechanism, the fitted dials). `logName*` are in `gradedSeries` only
+// with a ruler, `ungradedChannelSeries` otherwise; `logBasket` is never graded, and a run with a
+// ruler omits it unless an `-emitf32` run's `-emitcols` names it. A world without a basket loses
+// the basket rows, readings and `verdictSeries` entries the verdict used to supply.
+const EMIT_SCHEMA: u32 = 30;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -3156,15 +3165,16 @@ pub struct World {
     /// name_i = the SECTOR leg + its own idio + its own gaps. The sector leg is the satellite
     /// construction (beta on the primary's observed return plus idio riding the re-levelled
     /// state factor) and is shared by every name: the model has no sector index, so the
-    /// basket's equal-weight aggregate IS the sector, graded against SMH's own relation to SPY.
+    /// basket's equal-weight aggregate IS the sector.
     /// A name's idio rides the VOL STATE only, not the spiral's amplification, so in stress the
     /// shared variance dominates and pairwise correlation rises — the mechanism the record shows
     /// (0.56 on SPY's worst decile vs 0.22 mid). Own gaps: a per-name Student-t jump (JUMP_NU,
     /// the primary's skew) at `basket_gaps` per year past ~10%. Reaches no price; 0 = off, no
-    /// columns, bit-identical. Graded against SMH's eight largest holdings as of 2026-10-02
-    /// (`basket-2026-10-03.tsv`): N = 8.
+    /// columns, bit-identical. A NULL WORLD of exchangeable names, graded only against a client's
+    /// ruler (`BasketRuler`, `-basketruler`), whose names set N; one basket a world. Costs about
+    /// 0.2 ms and 0.23 MB a name per 100-year path.
     pub basket: usize,
-    /// sector leg: beta on the primary's observed return (anchored 1.56, the basket's beta on SPY)
+    /// sector leg: beta on the primary's observed return
     pub basket_beta: f64,
     /// sector leg: idio sd as a FRACTION of the primary's realized vol, riding the vol state x
     /// spiral (the satellite's `sat_idio` construction)
@@ -9310,15 +9320,15 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
     })
 }
 
-/// The bar channels' statistics — `None` when no range channel ran.
-/// THE BASKET's readings, medians across paths, at the three levels of `basket-2026-10-03.tsv`.
-/// Level 1 per name, pooled over names and paths: vol as a ratio to the primary's, sessions past
-/// 10% per year, the share of sessions >20% below the running peak. Level 2 the equal-weight
-/// aggregate against the primary: correlation and beta, and vol ratio. Level 3: mean pairwise
-/// correlation, idio share (1 - R^2 of a name on the aggregate), same-day tail coincidence, and
-/// the mechanism — mean pairwise correlation on the primary's worst decile against its middle
-/// decile. The equal-weight basket is the mean of simple returns, as a log series, the fixture's
-/// convention.
+/// THE BASKET's readings against a client's ruler (`BasketRuler`), medians across paths, each path
+/// read under the ruler's coverage (`masked_returns`, `basket_read`). Level 1 over the ruler's
+/// graded names: vol as a ratio to the primary's over each name's own span, sessions past 10% per
+/// year, the share of sessions >20% below the running peak. Level 2 the equal-weight aggregate of
+/// the names present against the primary: correlation, beta, vol ratio. Level 3 the mean pairwise
+/// correlation over the graded pairs, the median idio share (1 - R^2 of a name on the aggregate),
+/// same-day tail coincidence, and the mechanism -- mean pairwise correlation on the primary's worst
+/// decile against its middle decile. The aggregate is the mean of the present names' simple
+/// returns, as a log series.
 #[derive(Clone, Copy, Debug)]
 pub struct BasketStats {
     pub name_vol_ratio: f64,
@@ -9332,88 +9342,220 @@ pub struct BasketStats {
     pub tail_coincidence: f64,
     pub pair_corr_worst: f64,
     pub pair_corr_mid: f64,
-    /// the SPREAD of time-below-peak across the names (max - min), which is what `basket_drift`
-    /// moves; the eight span 0.53
+    /// the SPREAD of time-below-peak across the graded names (max - min), which is what
+    /// `basket_drift` moves
     pub name_d20_spread: f64,
 }
 
-fn sd_of(r: &[f64]) -> f64 {
-    let m = r.iter().sum::<f64>() / r.len() as f64;
-    (r.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (r.len() - 1) as f64).sqrt()
+/// The basket's fidelity rows, graded only against a ruler, in gate order: the readings are
+/// `BasketStats::graded`'s, the bands `BasketRuler::bands`'.
+pub const BASKET_ROWS: [&str; 8] = [
+    "basket name vol ratio",
+    "basket name gaps/yr",
+    "basket corr",
+    "basket beta",
+    "basket vol ratio",
+    "basket pair corr",
+    "basket idio share",
+    "basket tail coincidence",
+];
+
+/// The basket's mechanism row: pairwise correlation rises on the primary's worst decile.
+pub const BASKET_MECHANISM_ROW: &str = "basket pair corr rises on the worst decile";
+
+impl BasketStats {
+    /// The readings `BASKET_ROWS` grade, in their order.
+    #[must_use]
+    pub fn graded(&self) -> [f64; 8] {
+        [
+            self.name_vol_ratio,
+            self.name_gaps,
+            self.agg_corr,
+            self.agg_beta,
+            self.agg_vol_ratio,
+            self.pair_corr,
+            self.idio_share,
+            self.tail_coincidence,
+        ]
+    }
 }
 
-fn mean_pair_corr(rn: &[Vec<f64>]) -> f64 {
-    let mut sum = 0.0f64;
-    let mut cnt = 0usize;
-    for a in 0..rn.len() {
-        for b in (a + 1)..rn.len() {
-            sum += pearson(&rn[a], &rn[b]);
-            cnt += 1;
+/// One history's basket readings, each name present exactly where its return is finite: a
+/// record's name before its listing, and a model path's outside its coverage span, is NaN.
+/// `record_bands -basket` reads the record with `basket_read` and the model reads each path with
+/// it, so a ruler's rows and the readings graded against them are one definition.
+#[derive(Clone, Debug)]
+pub struct BasketRead {
+    /// per name: the daily sd of its returns
+    pub sd: Vec<f64>,
+    /// per name: that sd over the index's on the same sessions
+    pub vol_ratio: Vec<f64>,
+    /// per name: sessions past 10% per year of its sessions
+    pub gaps10: Vec<f64>,
+    /// per name: the share of its levels more than 20% below their running peak
+    pub d20: Vec<f64>,
+    /// per name: 1 - R^2 on the aggregate, over its sessions
+    pub idio: Vec<f64>,
+    /// the aggregate's daily sd, and its correlation, beta and vol ratio on the index, over the
+    /// sessions with a name present
+    pub agg_sd: f64,
+    pub agg_corr: f64,
+    pub agg_beta: f64,
+    pub agg_vol_ratio: f64,
+    /// each requested pair's correlation over its common sessions
+    pub pair: Vec<f64>,
+    /// on the aggregate's worst 1% of sessions, the share of the names present below their own
+    /// 1% cut
+    pub tail_coincidence: f64,
+    /// mean pair correlation on the index's worst decile of sessions, its central decile and its
+    /// best decile, each pair over its common sessions there
+    pub worst: f64,
+    pub mid: f64,
+    pub best: f64,
+}
+
+/// The finite pairs of `a` and `b` over `idx`, in index order: their count, and the sums of
+/// squared deviations of each and of their product about the pairs' own means.
+fn present_moments(
+    a: &[f64],
+    b: &[f64],
+    idx: impl Iterator<Item = usize> + Clone,
+) -> (usize, f64, f64, f64) {
+    let (mut n, mut sa, mut sb) = (0usize, 0.0f64, 0.0f64);
+    for t in idx.clone() {
+        if a[t].is_finite() && b[t].is_finite() {
+            n += 1;
+            sa += a[t];
+            sb += b[t];
         }
     }
-    sum / cnt as f64
+    if n == 0 {
+        return (0, f64::NAN, f64::NAN, f64::NAN);
+    }
+    let (ma, mb) = (sa / n as f64, sb / n as f64);
+    let (mut saa, mut sbb, mut sab) = (0.0f64, 0.0f64, 0.0f64);
+    for t in idx {
+        if a[t].is_finite() && b[t].is_finite() {
+            let (x, y) = (a[t] - ma, b[t] - mb);
+            saa += x * x;
+            sbb += y * y;
+            sab += x * y;
+        }
+    }
+    (n, saa, sbb, sab)
 }
 
-/// One path's eleven basket readings, in `BasketStats` field order.
-fn basket_path_stats(s: &Path) -> [f64; 12] {
-    let rp = daily_returns(&s.price);
-    let n = rp.len();
-    let rn: Vec<Vec<f64>> = s
-        .names
-        .iter()
-        .map(|lp| (0..n).map(|t| lp[t + 1] - lp[t]).collect())
-        .collect();
-    let agg: Vec<f64> = (0..n)
-        .map(|t| (rn.iter().map(|r| r[t].exp()).sum::<f64>() / rn.len() as f64).ln())
-        .collect();
-    let sd_p = sd_of(&rp);
-    let vol_ratios: Vec<f64> = rn.iter().map(|r| sd_of(r) / sd_p).collect();
-    let yrs = n as f64 / DAYS_PER_YEAR as f64;
-    let gaps: Vec<f64> = rn
-        .iter()
-        .map(|r| r.iter().filter(|v| v.abs() > 0.10).count() as f64 / yrs)
-        .collect();
-    let d20s: Vec<f64> = s
-        .names
-        .iter()
-        .map(|lp| {
-            let px: Vec<f64> = lp.iter().map(|v| v.exp()).collect();
-            depth_shares(&px).2
-        })
-        .collect();
-    let mp = rp.iter().sum::<f64>() / n as f64;
-    let ma = agg.iter().sum::<f64>() / n as f64;
-    let mut cov = 0.0f64;
-    let mut var_p = 0.0f64;
-    for t in 0..n {
-        cov += (rp[t] - mp) * (agg[t] - ma);
-        var_p += (rp[t] - mp) * (rp[t] - mp);
-    }
-    let idio: Vec<f64> = rn
-        .iter()
-        .map(|r| {
-            let ba = pearson(r, &agg);
-            1.0 - ba * ba
-        })
-        .collect();
-    let cuts: Vec<f64> = rn.iter().map(|r| pctile(r, 0.01)).collect();
-    let agg_cut = pctile(&agg, 0.01);
-    let worst_agg: Vec<usize> = (0..n).filter(|&t| agg[t] <= agg_cut).collect();
-    let coinc = if worst_agg.is_empty() {
+/// Pearson correlation from `present_moments`; NaN under three pairs or without variance.
+fn moments_corr((n, saa, sbb, sab): (usize, f64, f64, f64)) -> f64 {
+    let den = (saa * sbb).sqrt();
+    if n < 3 || den.is_nan() || den <= 0.0 {
         f64::NAN
     } else {
-        worst_agg
-            .iter()
-            .map(|&t| {
-                rn.iter()
-                    .enumerate()
-                    .filter(|(q, r)| r[t] < cuts[*q])
-                    .count() as f64
-                    / rn.len() as f64
-            })
-            .sum::<f64>()
-            / worst_agg.len() as f64
+        sab / den
+    }
+}
+
+/// The mean of the finite entries; NaN when there are none.
+fn mean_finite(v: &[f64]) -> f64 {
+    let (mut s, mut n) = (0.0f64, 0usize);
+    for &x in v {
+        if x.is_finite() {
+            s += x;
+            n += 1;
+        }
+    }
+    if n == 0 { f64::NAN } else { s / n as f64 }
+}
+
+/// The basket readings of one history: `rp` the index's daily log returns, `rn` each name's (NaN
+/// where absent), `pairs` the pairs whose correlations are read. See `BasketRead`.
+#[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one history's readings in `BasketRead`'s field order, the Scala twin's `basketRead`               line for line"
+)]
+pub fn basket_read(rp: &[f64], rn: &[Vec<f64>], pairs: &[(usize, usize)]) -> BasketRead {
+    let n = rp.len();
+    // each name's first and one-past-last present session, so a pair scans only its overlap
+    let spans: Vec<(usize, usize)> = rn
+        .iter()
+        .map(|r| {
+            let lo = r.iter().position(|x| x.is_finite()).unwrap_or(n);
+            let hi = r.iter().rposition(|x| x.is_finite()).map_or(lo, |k| k + 1);
+            (lo, hi)
+        })
+        .collect();
+    let overlap = |a: usize, b: usize| {
+        let lo = spans[a].0.max(spans[b].0);
+        lo..spans[a].1.min(spans[b].1).max(lo)
     };
+    let agg: Vec<f64> = (0..n)
+        .map(|t| {
+            let (mut s, mut m) = (0.0f64, 0usize);
+            for r in rn {
+                if r[t].is_finite() {
+                    s += r[t].exp();
+                    m += 1;
+                }
+            }
+            if m == 0 {
+                f64::NAN
+            } else {
+                (s / m as f64).ln()
+            }
+        })
+        .collect();
+    let k_names = rn.len();
+    let (mut sd, mut vol_ratio) = (Vec::with_capacity(k_names), Vec::with_capacity(k_names));
+    let (mut gaps10, mut d20, mut idio) = (
+        Vec::with_capacity(k_names),
+        Vec::with_capacity(k_names),
+        Vec::with_capacity(k_names),
+    );
+    for (r, &(lo, hi)) in rn.iter().zip(&spans) {
+        let (cnt, saa, sbb, _) = present_moments(r, rp, lo..hi);
+        sd.push((saa / (cnt as f64 - 1.0)).sqrt());
+        vol_ratio.push((saa / sbb).sqrt());
+        let mut gaps = 0usize;
+        let mut cum = 0.0f64;
+        let mut px = vec![1.0f64];
+        for &x in &r[lo..hi] {
+            if x.is_finite() {
+                if x.abs() > 0.10 {
+                    gaps += 1;
+                }
+                cum += x;
+                px.push(cum.exp());
+            }
+        }
+        gaps10.push(gaps as f64 / (cnt as f64 / DAYS_PER_YEAR as f64));
+        d20.push(depth_shares(&px).2);
+        let c = moments_corr(present_moments(r, &agg, lo..hi));
+        idio.push(1.0 - c * c);
+    }
+    let am = present_moments(&agg, rp, 0..n);
+    let pair: Vec<f64> = pairs
+        .iter()
+        .map(|&(a, b)| moments_corr(present_moments(&rn[a], &rn[b], overlap(a, b))))
+        .collect();
+    let cut = pctile(&agg, 0.01);
+    let cuts: Vec<f64> = rn.iter().map(|r| pctile(r, 0.01)).collect();
+    let (mut shares, mut worst_days) = (0.0f64, 0usize);
+    for t in 0..n {
+        if agg[t].is_finite() && agg[t] <= cut {
+            let (mut present, mut below) = (0usize, 0usize);
+            for (r, c) in rn.iter().zip(&cuts) {
+                if r[t].is_finite() {
+                    present += 1;
+                    if r[t] < *c {
+                        below += 1;
+                    }
+                }
+            }
+            shares += below as f64 / present as f64;
+            worst_days += 1;
+        }
+    }
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| {
         rp[a]
@@ -9421,58 +9563,1099 @@ fn basket_path_stats(s: &Path) -> [f64; 12] {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     let dec = n / 10;
-    let pair_on = |idx: &[usize]| -> f64 {
-        let sub: Vec<Vec<f64>> = rn
+    let on = |idx: &[usize]| -> f64 {
+        let v: Vec<f64> = pairs
             .iter()
-            .map(|r| idx.iter().map(|&t| r[t]).collect())
+            .map(|&(a, b)| moments_corr(present_moments(&rn[a], &rn[b], idx.iter().copied())))
             .collect();
-        mean_pair_corr(&sub)
+        mean_finite(&v)
     };
+    BasketRead {
+        sd,
+        vol_ratio,
+        gaps10,
+        d20,
+        idio,
+        agg_sd: (am.1 / (am.0 as f64 - 1.0)).sqrt(),
+        agg_corr: moments_corr(am),
+        agg_beta: am.3 / am.2,
+        agg_vol_ratio: (am.1 / am.2).sqrt(),
+        pair,
+        tail_coincidence: if worst_days == 0 {
+            f64::NAN
+        } else {
+            shares / worst_days as f64
+        },
+        worst: on(&order[..dec]),
+        mid: on(&order[n / 2 - dec / 2..n / 2 + dec / 2]),
+        best: on(&order[n - dec..]),
+    }
+}
+
+/// One basket name's coverage in a ruler's window, in the window's return sessions: its first
+/// and one-past-last (`start`, `end`), how many it has, and the dates of the first and last.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RulerName {
+    pub name: String,
+    pub first: String,
+    pub last: String,
+    pub start: usize,
+    pub end: usize,
+    pub sessions: usize,
+    /// the record's vol over the index's on this name's sessions, and its sessions past 10% a
+    /// year: the per-name rows the bands range over
+    pub vol_ratio: f64,
+    pub gaps10: f64,
+}
+
+/// The pairs a ruler grades: both names graded (`min_sessions` sessions or more) and their spans
+/// overlapping by `min_sessions` sessions or more, in (a, b) order with a < b.
+fn graded_pairs_of(names: &[RulerName], min_sessions: usize) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for a in 0..names.len() {
+        for b in (a + 1)..names.len() {
+            let lo = names[a].start.max(names[b].start);
+            let hi = names[a].end.min(names[b].end);
+            if names[a].sessions >= min_sessions
+                && names[b].sessions >= min_sessions
+                && hi >= lo + min_sessions
+            {
+                out.push((a, b));
+            }
+        }
+    }
+    out
+}
+
+/// The dials `-solvebasket` fitted to a ruler, the solve's terms, and each graded row's reading
+/// at its confirming ensemble.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RulerDials {
+    pub basket_beta: f64,
+    pub basket_sector: f64,
+    pub basket_idio: f64,
+    pub basket_gaps: f64,
+    pub version: String,
+    /// `primary_digest` of the world solved on
+    pub primary: String,
+    pub paths: usize,
+    pub years: usize,
+    pub seed: u64,
+    pub readings: Vec<(String, f64)>,
+}
+
+/// THE BASKET RULER (`-basketruler FILE`): a client's record of its own names against one index,
+/// measured by `record_bands -basket` (`basket_ruler_tsv`) from a wide closes file, with the four
+/// basket dials `-solvebasket` fitted to it. The basket rows grade only against one; without it a
+/// basket is emitted ungraded. A null world either way: the closes decide only whose co-movement
+/// the names reproduce.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BasketRuler {
+    /// the file's name, and the FNV-1a digest of its bytes
+    pub file: String,
+    pub digest: String,
+    pub index: String,
+    pub basis: String,
+    pub closes_date: String,
+    pub from: String,
+    pub to: String,
+    /// the window's return sessions: the length each name's span is a share of
+    pub sessions: usize,
+    pub min_sessions: usize,
+    pub names: Vec<RulerName>,
+    pub index_vol: f64,
+    pub basket_vol: f64,
+    pub corr: f64,
+    pub beta: f64,
+    pub vol_ratio: f64,
+    /// mean, min, max over the graded pairs
+    pub pair_corr: (f64, f64, f64),
+    /// median, min, max over the graded names
+    pub idio_share: (f64, f64, f64),
+    pub tail_coincidence: f64,
+    /// pair correlation on the index's worst decile, central decile, best decile
+    pub mechanism: (f64, f64, f64),
+    pub dials: Option<RulerDials>,
+}
+
+/// One basket row's record and band from a ruler.
+#[derive(Clone, Copy, Debug)]
+pub struct BasketBand {
+    pub row: &'static str,
+    pub record: f64,
+    pub lo: f64,
+    pub hi: f64,
+}
+
+impl BasketRuler {
+    /// Whether name `k` enters the per-name and pair ranges: `min_sessions` sessions or more.
+    #[must_use]
+    pub fn graded(&self, k: usize) -> bool {
+        self.names[k].sessions >= self.min_sessions
+    }
+
+    /// The pairs the ruler grades (`graded_pairs_of`).
+    #[must_use]
+    pub fn graded_pairs(&self) -> Vec<(usize, usize)> {
+        graded_pairs_of(&self.names, self.min_sessions)
+    }
+
+    /// Each `BASKET_ROWS` row's record and band. The names' vol ratio and gaps range over the
+    /// graded names, rounded outward to 0.1, the record the median ratio and the mean gaps (the
+    /// readings the model takes); corr +-0.10 at 0.01; beta +-0.25 and vol ratio +-0.30 outward to
+    /// 0.1; pair corr and idio share min-max outward to 0.01; tail coincidence -0.13 / +0.12 at
+    /// 0.01.
+    #[must_use]
+    pub fn bands(&self) -> [BasketBand; 8] {
+        let graded: Vec<&RulerName> = (0..self.names.len())
+            .filter(|&k| self.graded(k))
+            .map(|k| &self.names[k])
+            .collect();
+        let vr: Vec<f64> = graded.iter().map(|m| m.vol_ratio).collect();
+        let gp: Vec<f64> = graded.iter().map(|m| m.gaps10).collect();
+        let lo_of = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi_of = |v: &[f64]| v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let out1 = |lo: f64, hi: f64| ((lo * 10.0).floor() / 10.0, (hi * 10.0).ceil() / 10.0);
+        let out2 = |lo: f64, hi: f64| ((lo * 100.0).floor() / 100.0, (hi * 100.0).ceil() / 100.0);
+        let at2 = |x: f64| (x * 100.0).round() / 100.0;
+        let band = |row: &'static str, record: f64, (lo, hi): (f64, f64)| BasketBand {
+            row,
+            record,
+            lo,
+            hi,
+        };
+        [
+            band(BASKET_ROWS[0], med(&vr), out1(lo_of(&vr), hi_of(&vr))),
+            band(
+                BASKET_ROWS[1],
+                mean_finite(&gp),
+                out1(lo_of(&gp), hi_of(&gp)),
+            ),
+            band(
+                BASKET_ROWS[2],
+                self.corr,
+                (at2(self.corr - 0.10), at2(self.corr + 0.10)),
+            ),
+            band(
+                BASKET_ROWS[3],
+                self.beta,
+                out1(self.beta - 0.25, self.beta + 0.25),
+            ),
+            band(
+                BASKET_ROWS[4],
+                self.vol_ratio,
+                out1(self.vol_ratio - 0.30, self.vol_ratio + 0.30),
+            ),
+            band(
+                BASKET_ROWS[5],
+                self.pair_corr.0,
+                out2(self.pair_corr.1, self.pair_corr.2),
+            ),
+            band(
+                BASKET_ROWS[6],
+                self.idio_share.0,
+                out2(self.idio_share.1, self.idio_share.2),
+            ),
+            band(
+                BASKET_ROWS[7],
+                self.tail_coincidence,
+                (
+                    at2(self.tail_coincidence - 0.13),
+                    at2(self.tail_coincidence + 0.12),
+                ),
+            ),
+        ]
+    }
+}
+
+/// The ruler file's rows, `group name stat value`, in file order.
+fn ruler_rows(text: &str) -> Vec<[String; 4]> {
+    text.lines()
+        .map(|l| l.trim_end_matches('\r'))
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty() && !l.starts_with("group\t"))
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (f.len() == 4).then(|| [f[0], f[1], f[2], f[3]].map(str::to_string))
+        })
+        .collect()
+}
+
+/// A ruler from its text (`file` its name, for the sidecar and the messages). REFUSED: a row
+/// missing or unreadable, a name without coverage or rows, fewer than two graded names or no
+/// graded pair, and a record whose mechanism premise fails -- pair correlation on the index's
+/// worst decile not above its middle, against which the mechanism row cannot mean anything.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one check a ruler row in the file's order, the Scala twin's for-comprehension"
+)]
+pub fn parse_basket_ruler(text: &str, file: &str) -> Result<BasketRuler, String> {
+    let rows = ruler_rows(text);
+    let get = |g: &str, n: &str, s: &str| -> Result<&str, String> {
+        rows.iter()
+            .find(|r| r[0] == g && r[1] == n && r[2] == s)
+            .map(|r| r[3].as_str())
+            .ok_or_else(|| format!("{file}: no row [{g} {n} {s}]"))
+    };
+    let num = |g: &str, n: &str, s: &str| -> Result<f64, String> {
+        let v = get(g, n, s)?;
+        v.parse::<f64>()
+            .ok()
+            .filter(|x| x.is_finite())
+            .ok_or_else(|| format!("{file}: [{g} {n} {s}] is not a number: {v}"))
+    };
+    let int = |g: &str, n: &str, s: &str| -> Result<usize, String> {
+        let v = get(g, n, s)?;
+        v.parse::<usize>()
+            .map_err(|e| format!("{file}: [{g} {n} {s}] is not a count: {v} ({e})"))
+    };
+    let mut order: Vec<String> = Vec::new();
+    for r in rows.iter().filter(|r| r[0] == "coverage") {
+        if !order.contains(&r[1]) {
+            order.push(r[1].clone());
+        }
+    }
+    let sessions = int("meta", "ruler", "sessions")?;
+    let n_names = int("meta", "ruler", "names")?;
+    if order.len() != n_names {
+        return Err(format!(
+            "{file}: meta names {n_names} but coverage for {} names",
+            order.len()
+        ));
+    }
+    let names = order
+        .iter()
+        .map(|nm| -> Result<RulerName, String> {
+            let (start, end) = (int("coverage", nm, "start")?, int("coverage", nm, "end")?);
+            if start >= end || end > sessions {
+                return Err(format!(
+                    "{file}: {nm}'s coverage {start}..{end} is not inside the window's {sessions} sessions"
+                ));
+            }
+            Ok(RulerName {
+                name: nm.clone(),
+                first: get("coverage", nm, "first")?.to_string(),
+                last: get("coverage", nm, "last")?.to_string(),
+                start,
+                end,
+                sessions: int("coverage", nm, "sessions")?,
+                vol_ratio: num("names", nm, "volRatio")?,
+                gaps10: num("names", nm, "gaps10")?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let min_sessions = int("meta", "ruler", "minSessions")?;
+    let graded = names.iter().filter(|m| m.sessions >= min_sessions).count();
+    if graded < 2 || graded_pairs_of(&names, min_sessions).is_empty() {
+        return Err(format!(
+            "{file}: {graded} name(s) with {min_sessions} sessions or more and no pair of them overlapping that long; a basket ruler needs two"
+        ));
+    }
+    let mechanism = (
+        num("mechanism", "pairCorr", "worstDecile")?,
+        num("mechanism", "pairCorr", "middle")?,
+        num("mechanism", "pairCorr", "bestDecile")?,
+    );
+    if mechanism.0 <= mechanism.1 {
+        return Err(format!(
+            "{file}: the record's pair correlation on the index's worst decile ({}) is not above its middle ({}); the mechanism row cannot be read against this ruler",
+            mechanism.0, mechanism.1
+        ));
+    }
+    let index = get("meta", "ruler", "index")?.to_string();
+    let dials = if rows.iter().any(|r| r[0] == "dials") {
+        let readings = rows
+            .iter()
+            .filter(|r| r[0] == "dials" && r[1] == "reading")
+            .map(|r| -> Result<(String, f64), String> {
+                Ok((r[2].clone(), num("dials", "reading", &r[2])?))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Some(RulerDials {
+            basket_beta: num("dials", "ruler", "basketBeta")?,
+            basket_sector: num("dials", "ruler", "basketSector")?,
+            basket_idio: num("dials", "ruler", "basketIdio")?,
+            basket_gaps: num("dials", "ruler", "basketGaps")?,
+            version: get("dials", "ruler", "version")?.to_string(),
+            primary: get("dials", "ruler", "primary")?.to_string(),
+            paths: int("dials", "ruler", "paths")?,
+            years: int("dials", "ruler", "years")?,
+            seed: get("dials", "ruler", "seed")?
+                .parse::<u64>()
+                .map_err(|e| format!("{file}: [dials ruler seed] is not a seed ({e})"))?,
+            readings,
+        })
+    } else {
+        None
+    };
+    Ok(BasketRuler {
+        file: file.to_string(),
+        digest: format!("{:016x}", fnv1a64(text.as_bytes())),
+        basis: get("meta", "ruler", "basis")?.to_string(),
+        closes_date: get("meta", "ruler", "closesDate")?.to_string(),
+        from: get("meta", "ruler", "from")?.to_string(),
+        to: get("meta", "ruler", "to")?.to_string(),
+        sessions,
+        min_sessions,
+        names,
+        index_vol: num("basket", &index, "vol")?,
+        basket_vol: num("basket", "basket", "vol")?,
+        corr: num("basket", "basket", "corr")?,
+        beta: num("basket", "basket", "betaOn")?,
+        vol_ratio: num("basket", "basket", "volRatio")?,
+        pair_corr: (
+            num("cross", "pairCorr", "mean")?,
+            num("cross", "pairCorr", "min")?,
+            num("cross", "pairCorr", "max")?,
+        ),
+        idio_share: (
+            num("cross", "idioShare", "median")?,
+            num("cross", "idioShare", "min")?,
+            num("cross", "idioShare", "max")?,
+        ),
+        tail_coincidence: num("cross", "tailCoincidence", "value")?,
+        mechanism,
+        index,
+        dials,
+    })
+}
+
+/// The ruler named by `-basketruler`, read from `path`; the sidecar carries its file name alone.
+pub fn load_basket_ruler(path: &str) -> Result<BasketRuler, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let file = std::path::Path::new(path)
+        .file_name()
+        .map_or_else(|| path.to_string(), |f| f.to_string_lossy().into_owned());
+    parse_basket_ruler(&text, &file)
+}
+
+/// A ruler's text with its `dials` group replaced by `d`'s, every other line kept as it was.
+#[must_use]
+pub fn ruler_with_dials(text: &str, d: &RulerDials) -> String {
+    let mut out: Vec<String> = text
+        .lines()
+        .map(|l| l.trim_end_matches('\r'))
+        .filter(|l| !l.starts_with("dials\t"))
+        .map(str::to_string)
+        .collect();
+    let rows = [
+        ("basketBeta", ef(d.basket_beta)),
+        ("basketSector", ef(d.basket_sector)),
+        ("basketIdio", ef(d.basket_idio)),
+        ("basketGaps", ef(d.basket_gaps)),
+        ("version", d.version.clone()),
+        ("primary", d.primary.clone()),
+        ("paths", d.paths.to_string()),
+        ("years", d.years.to_string()),
+        ("seed", d.seed.to_string()),
+    ];
+    out.extend(rows.iter().map(|(k, v)| format!("dials\truler\t{k}\t{v}")));
+    out.extend(
+        d.readings
+            .iter()
+            .map(|(row, v)| format!("dials\treading\t{row}\t{}", ef(*v))),
+    );
+    format!("{}\n", out.join("\n"))
+}
+
+/// A client's closes for one basket: the index's and each name's adjusted closes by session, NaN
+/// where a name has none.
+#[derive(Clone, Debug)]
+pub struct BasketCloses {
+    pub dates: Vec<String>,
+    pub index: String,
+    pub index_close: Vec<f64>,
+    pub names: Vec<String>,
+    /// per name, one entry a session
+    pub closes: Vec<Vec<f64>>,
+}
+
+/// THE WIDE CLOSES FILE: `date`, then the index's column named by its ticker, then one column
+/// per name, a row a session in date order; a name's cell is empty where it has no close (before
+/// its listing). REFUSED: a row of another width, a date out of order, an index without a close,
+/// a close that is not a positive number.
+pub fn parse_basket_closes(text: &str) -> Result<BasketCloses, String> {
+    let mut lines = text
+        .lines()
+        .map(|l| l.trim_end_matches('\r'))
+        .filter(|l| !l.trim().is_empty());
+    let header: Vec<String> = lines
+        .next()
+        .ok_or("the closes file is empty")?
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect();
+    if header.len() < 4 || header[0] != "date" {
+        return Err(format!(
+            "the closes file's header must be `date,INDEX,NAME,NAME,...` with two names or more, not [{}]",
+            header.join(",")
+        ));
+    }
+    let width = header.len();
+    let mut out = BasketCloses {
+        dates: Vec::new(),
+        index: header[1].clone(),
+        index_close: Vec::new(),
+        names: header[2..].to_vec(),
+        closes: vec![Vec::new(); width - 2],
+    };
+    for l in lines {
+        let f: Vec<&str> = l.split(',').map(str::trim).collect();
+        if f.len() != width {
+            return Err(format!(
+                "row [{l}] has {} fields, the header {width}",
+                f.len()
+            ));
+        }
+        if out.dates.last().is_some_and(|d| d.as_str() >= f[0]) {
+            return Err(format!("row {} is not after the row before it", f[0]));
+        }
+        let close = |c: &str, col: &str| -> Result<f64, String> {
+            c.parse::<f64>()
+                .ok()
+                .filter(|x| x.is_finite() && *x > 0.0)
+                .ok_or_else(|| {
+                    format!("row {}: {col}'s close [{c}] is not a positive number", f[0])
+                })
+        };
+        if f[1].is_empty() {
+            return Err(format!(
+                "row {}: the index {} has no close",
+                f[0], out.index
+            ));
+        }
+        out.index_close.push(close(f[1], &out.index)?);
+        for (k, c) in f[2..].iter().enumerate() {
+            let v = if c.is_empty() {
+                f64::NAN
+            } else {
+                close(c, &out.names[k])?
+            };
+            out.closes[k].push(v);
+        }
+        out.dates.push(f[0].to_string());
+    }
+    Ok(out)
+}
+
+/// A name's reported rows from its returns in session order (absent sessions skipped): sessions
+/// past 5% a year, the deepest decline %, the share >10% below the running peak, the lag-1
+/// autocorrelation of |r| and the kurtosis (not excess).
+fn name_extras(r: &[f64]) -> (f64, f64, f64, f64, f64) {
+    let x: Vec<f64> = r.iter().copied().filter(|v| v.is_finite()).collect();
+    let n = x.len();
+    let gaps5 =
+        x.iter().filter(|v| v.abs() > 0.05).count() as f64 / (n as f64 / DAYS_PER_YEAR as f64);
+    let mut px = vec![1.0f64];
+    let mut cum = 0.0f64;
+    for v in &x {
+        cum += v;
+        px.push(cum.exp());
+    }
+    let (mut peak, mut worst) = (f64::NEG_INFINITY, 0.0f64);
+    for &p in &px {
+        peak = peak.max(p);
+        worst = worst.min(p / peak - 1.0);
+    }
+    let a: Vec<f64> = x.iter().map(|v| v.abs()).collect();
+    let acf1 = if n < 2 {
+        f64::NAN
+    } else {
+        moments_corr(present_moments(&a[..n - 1], &a[1..], 0..n - 1))
+    };
+    let m = x.iter().sum::<f64>() / n as f64;
+    let m2 = x.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / n as f64;
+    let m4 = x.iter().map(|v| (v - m).powi(4)).sum::<f64>() / n as f64;
+    (
+        gaps5,
+        100.0 * worst,
+        depth_shares(&px).1,
+        acf1,
+        m4 / (m2 * m2),
+    )
+}
+
+/// THE BASKET RULER from a client's closes (`record_bands -basket`): the window's returns from the
+/// first session dated on or after `from` to the last on or before `to` (either empty: the file's
+/// ends), each name read where it has a close on both sessions of a return, every row by
+/// `basket_read`. A name under `min_sessions` sessions stays in the aggregate and the tail
+/// coincidence and out of the per-name and pair ranges. REFUSED: a window under `min_sessions`
+/// sessions, a name with no return in it, fewer than two graded names or no graded pair, and a
+/// record whose mechanism premise fails (`parse_basket_ruler`'s rules, so what this writes reads).
+#[expect(
+    clippy::too_many_lines,
+    reason = "the ruler file row by row in its documented order, the Scala twin's line for line"
+)]
+pub fn basket_ruler_tsv(
+    c: &BasketCloses,
+    from: &str,
+    to: &str,
+    closes_date: &str,
+    min_sessions: usize,
+) -> Result<String, String> {
+    let ts: Vec<usize> = (1..c.dates.len())
+        .filter(|&t| {
+            (from.is_empty() || c.dates[t].as_str() >= from)
+                && (to.is_empty() || c.dates[t].as_str() <= to)
+        })
+        .collect();
+    let s = ts.len();
+    if s < min_sessions {
+        return Err(format!(
+            "the window holds {s} sessions, under the {min_sessions} a ruler reads"
+        ));
+    }
+    let rp: Vec<f64> = ts
+        .iter()
+        .map(|&t| (c.index_close[t] / c.index_close[t - 1]).ln())
+        .collect();
+    let rn: Vec<Vec<f64>> = c
+        .closes
+        .iter()
+        .map(|cl| {
+            ts.iter()
+                .map(|&t| {
+                    if cl[t].is_finite() && cl[t - 1].is_finite() {
+                        (cl[t] / cl[t - 1]).ln()
+                    } else {
+                        f64::NAN
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let mut cover: Vec<RulerName> = Vec::with_capacity(c.names.len());
+    for (nm, r) in c.names.iter().zip(&rn) {
+        let Some(start) = r.iter().position(|x| x.is_finite()) else {
+            return Err(format!("{nm} has no return in the window"));
+        };
+        let end = r
+            .iter()
+            .rposition(|x| x.is_finite())
+            .map_or(start, |k| k + 1);
+        cover.push(RulerName {
+            name: nm.clone(),
+            first: c.dates[ts[start]].clone(),
+            last: c.dates[ts[end - 1]].clone(),
+            start,
+            end,
+            sessions: r.iter().filter(|x| x.is_finite()).count(),
+            vol_ratio: f64::NAN,
+            gaps10: f64::NAN,
+        });
+    }
+    let pairs = graded_pairs_of(&cover, min_sessions);
+    let b = basket_read(&rp, &rn, &pairs);
+    let graded: Vec<usize> = (0..cover.len())
+        .filter(|&k| cover[k].sessions >= min_sessions)
+        .collect();
+    if graded.len() < 2 || pairs.is_empty() {
+        return Err(format!(
+            "{} name(s) with {min_sessions} sessions or more and no pair of them overlapping that long; a basket ruler needs two",
+            graded.len()
+        ));
+    }
+    // the premise on the printed values, the ones `parse_basket_ruler` will read
+    let at3 = |x: f64| jf(x, 0, 3).parse::<f64>().unwrap_or(f64::NAN);
+    if b.worst.is_nan() || at3(b.worst) <= at3(b.mid) {
+        return Err(format!(
+            "the record's pair correlation on the index's worst decile ({:.3}) is not above its middle ({:.3}); -basketruler would refuse this ruler",
+            b.worst, b.mid
+        ));
+    }
+    let ann = (DAYS_PER_YEAR as f64).sqrt();
+    let idio: Vec<f64> = graded.iter().map(|&k| b.idio[k]).collect();
+    let fin_min = |v: &[f64]| {
+        v.iter()
+            .copied()
+            .filter(|x| x.is_finite())
+            .fold(f64::INFINITY, f64::min)
+    };
+    let fin_max = |v: &[f64]| {
+        v.iter()
+            .copied()
+            .filter(|x| x.is_finite())
+            .fold(f64::NEG_INFINITY, f64::max)
+    };
+    let (_, saa, _, _) = present_moments(&rp, &rp, 0..s);
+    let index_vol = (saa / (s as f64 - 1.0)).sqrt() * ann * 100.0;
+    let mut rows: Vec<String> = vec![
+        format!(
+            "# THE BASKET RULER for `-basketruler`: {} names against {}, measured by",
+            c.names.len(),
+            c.index
+        ),
+        "# `record_bands -basket` from a wide closes file (adjusted closes, dividends reinvested, taken"
+            .to_string(),
+        format!(
+            "# {closes_date}) over {}..{}, {s} sessions.",
+            c.dates[ts[0]],
+            c.dates[ts[s - 1]]
+        ),
+        "# Every row is `basket_read`'s, the reading the model takes of each path under this file's"
+            .to_string(),
+        "# coverage: a name counts from its first close on, and a model path reads name k over its"
+            .to_string(),
+        "# coverage span (start..end of the window's sessions) scaled to the path. A name under"
+            .to_string(),
+        "# minSessions sessions stays in the aggregate and the tail coincidence and out of the per-name"
+            .to_string(),
+        "# and pair ranges. `-solvebasket` writes the `dials` group.".to_string(),
+        "group\tname\tstat\tvalue".to_string(),
+    ];
+    let meta = [
+        ("index", c.index.clone()),
+        ("basis", "adjusted-dividends-reinvested".to_string()),
+        ("closesDate", closes_date.to_string()),
+        ("from", c.dates[ts[0]].clone()),
+        ("to", c.dates[ts[s - 1]].clone()),
+        ("sessions", s.to_string()),
+        ("names", c.names.len().to_string()),
+        ("minSessions", min_sessions.to_string()),
+    ];
+    rows.extend(meta.iter().map(|(k, v)| format!("meta\truler\t{k}\t{v}")));
+    for m in &cover {
+        rows.push(format!("coverage\t{}\tfirst\t{}", m.name, m.first));
+        rows.push(format!("coverage\t{}\tlast\t{}", m.name, m.last));
+        rows.push(format!("coverage\t{}\tstart\t{}", m.name, m.start));
+        rows.push(format!("coverage\t{}\tend\t{}", m.name, m.end));
+        rows.push(format!("coverage\t{}\tsessions\t{}", m.name, m.sessions));
+    }
+    // every value at its printed decimals the JVM's way (`jf`), so the twins write one file
+    let cell =
+        |g: &str, n: &str, st: &str, v: f64, dp: i32| format!("{g}\t{n}\t{st}\t{}", jf(v, 0, dp));
+    for (k, m) in cover.iter().enumerate() {
+        let (gaps5, max_dd, d10, acf1, kurt) = name_extras(&rn[k]);
+        for (st, v, dp) in [
+            ("vol", b.sd[k] * ann * 100.0, 2),
+            ("volRatio", b.vol_ratio[k], 3),
+            ("gaps10", b.gaps10[k], 3),
+            ("gaps5", gaps5, 2),
+            ("maxDD", max_dd, 1),
+            ("d10", d10, 3),
+            ("d20", b.d20[k], 3),
+            ("acf1", acf1, 3),
+            ("kurt", kurt, 2),
+        ] {
+            rows.push(cell("names", &m.name, st, v, dp));
+        }
+    }
+    rows.push(cell("basket", &c.index, "vol", index_vol, 1));
+    rows.push(cell("basket", "basket", "vol", b.agg_sd * ann * 100.0, 1));
+    rows.push(cell("basket", "basket", "corr", b.agg_corr, 3));
+    rows.push(cell("basket", "basket", "betaOn", b.agg_beta, 3));
+    rows.push(cell("basket", "basket", "volRatio", b.agg_vol_ratio, 3));
+    rows.push(cell("cross", "pairCorr", "mean", mean_finite(&b.pair), 3));
+    rows.push(cell("cross", "pairCorr", "min", fin_min(&b.pair), 3));
+    rows.push(cell("cross", "pairCorr", "max", fin_max(&b.pair), 3));
+    rows.push(format!("cross\tpairCorr\tpairs\t{}", pairs.len()));
+    rows.push(cell("cross", "idioShare", "median", med(&idio), 3));
+    rows.push(cell("cross", "idioShare", "min", fin_min(&idio), 3));
+    rows.push(cell("cross", "idioShare", "max", fin_max(&idio), 3));
+    rows.push(cell(
+        "cross",
+        "tailCoincidence",
+        "value",
+        b.tail_coincidence,
+        3,
+    ));
+    rows.push(cell("mechanism", "pairCorr", "worstDecile", b.worst, 3));
+    rows.push(cell("mechanism", "pairCorr", "middle", b.mid, 3));
+    rows.push(cell("mechanism", "pairCorr", "bestDecile", b.best, 3));
+    Ok(format!("{}\n", rows.join("\n")))
+}
+
+/// A model path's returns as the ruler's record holds them: the primary's every session, and name
+/// k's only over its coverage span scaled to the path (`start * n / sessions` to
+/// `end * n / sessions`), NaN elsewhere -- THE COVERAGE MASK. A record's aggregate holds the
+/// names listed at each point of its window, and the rows built on it move with how many it
+/// holds (diversification goes as 1/N), so the model's aggregate is read the same way. A reading,
+/// not a simulation: the emitted names keep every session.
+fn masked_returns(s: &Path, r: &BasketRuler) -> (Vec<f64>, Vec<Vec<f64>>) {
+    let rp = daily_returns(&s.price);
+    let n = rp.len();
+    let rn = s
+        .names
+        .iter()
+        .zip(&r.names)
+        .map(|(lp, m)| {
+            let (lo, hi) = (m.start * n / r.sessions, m.end * n / r.sessions);
+            (0..n)
+                .map(|t| {
+                    if t >= lo && t < hi {
+                        lp[t + 1] - lp[t]
+                    } else {
+                        f64::NAN
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    (rp, rn)
+}
+
+/// One path's twelve basket readings under the ruler, in `BasketStats` field order.
+fn basket_path_stats(
+    s: &Path,
+    r: &BasketRuler,
+    graded: &[usize],
+    pairs: &[(usize, usize)],
+) -> [f64; 12] {
+    let (rp, rn) = masked_returns(s, r);
+    let b = basket_read(&rp, &rn, pairs);
+    let pick = |v: &[f64]| -> Vec<f64> { graded.iter().map(|&k| v[k]).collect() };
+    let d20s = pick(&b.d20);
     [
-        med(&vol_ratios),
-        gaps.iter().sum::<f64>() / gaps.len() as f64,
+        med(&pick(&b.vol_ratio)),
+        mean_finite(&pick(&b.gaps10)),
         med(&d20s),
-        pearson(&rp, &agg),
-        cov / var_p,
-        sd_of(&agg) / sd_p,
-        mean_pair_corr(&rn),
-        med(&idio),
-        coinc,
-        pair_on(&order[..dec]),
-        pair_on(&order[n / 2 - dec / 2..n / 2 + dec / 2]),
-        d20s.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
-            - d20s.iter().cloned().fold(f64::INFINITY, f64::min),
+        b.agg_corr,
+        b.agg_beta,
+        b.agg_vol_ratio,
+        mean_finite(&b.pair),
+        med(&pick(&b.idio)),
+        b.tail_coincidence,
+        b.worst,
+        b.mid,
+        d20s.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+            - d20s.iter().copied().fold(f64::INFINITY, f64::min),
     ]
 }
 
-fn basket_stats(sims: &[Path]) -> Option<BasketStats> {
-    if sims.is_empty() || sims[0].names.is_empty() {
+/// The basket's readings against a ruler, medians across paths; `None` unless the paths carry a
+/// basket of the ruler's size.
+#[must_use]
+pub fn basket_reading(r: &BasketRuler, sims: &[Path]) -> Option<BasketStats> {
+    if sims.is_empty() || sims[0].names.len() != r.names.len() {
         return None;
     }
-    // THE PATHS ACROSS CORES, gathered in path order. Each path's reading is a pure function of
-    // that path, so no median moves; sequential, these channel statistics were three quarters of
-    // a channel-emitting world's `measure` once the rest ran in parallel.
-    let per: Vec<_> = sims.par_iter().map(basket_path_stats).collect();
-    let mut cols: Vec<Vec<f64>> = (0..12).map(|_| Vec::with_capacity(sims.len())).collect();
-    for p in per {
-        for (c, v) in cols.iter_mut().zip(p) {
-            c.push(v);
+    let graded: Vec<usize> = (0..r.names.len()).filter(|&k| r.graded(k)).collect();
+    let pairs = r.graded_pairs();
+    // THE PATHS ACROSS CORES, gathered in path order: each path's reading is a pure function of
+    // that path, so no median moves
+    let per: Vec<[f64; 12]> = sims
+        .par_iter()
+        .map(|s| basket_path_stats(s, r, &graded, &pairs))
+        .collect();
+    let col = |c: usize| med(&per.iter().map(|p| p[c]).collect::<Vec<f64>>());
+    Some(BasketStats {
+        name_vol_ratio: col(0),
+        name_gaps: col(1),
+        name_d20: col(2),
+        agg_corr: col(3),
+        agg_beta: col(4),
+        agg_vol_ratio: col(5),
+        pair_corr: col(6),
+        idio_share: col(7),
+        tail_coincidence: col(8),
+        pair_corr_worst: col(9),
+        pair_corr_mid: col(10),
+        name_d20_spread: col(11),
+    })
+}
+
+/// A ruler of `n` names each covering its whole window: the basket read with no name absent.
+#[cfg(test)]
+fn full_coverage_ruler(n: usize) -> BasketRuler {
+    let names = (0..n)
+        .map(|k| RulerName {
+            name: format!("N{}", k + 1),
+            first: "2000-01-04".to_string(),
+            last: "2009-12-31".to_string(),
+            start: 0,
+            end: 2520,
+            sessions: 2520,
+            vol_ratio: 2.0,
+            gaps10: 1.0,
+        })
+        .collect();
+    BasketRuler {
+        file: "full.tsv".to_string(),
+        digest: String::new(),
+        index: "IDX".to_string(),
+        basis: "adjusted-dividends-reinvested".to_string(),
+        closes_date: "2010-01-04".to_string(),
+        from: "2000-01-04".to_string(),
+        to: "2009-12-31".to_string(),
+        sessions: 2520,
+        min_sessions: 252,
+        names,
+        index_vol: 20.0,
+        basket_vol: 30.0,
+        corr: 0.8,
+        beta: 1.4,
+        vol_ratio: 1.6,
+        pair_corr: (0.5, 0.4, 0.8),
+        idio_share: (0.4, 0.3, 0.6),
+        tail_coincidence: 0.45,
+        mechanism: (0.6, 0.3, 0.4),
+        dials: None,
+    }
+}
+
+/// `measure`, with the basket read against the anchors' ruler where a run named one: a basket is
+/// read only against a client's ruler, under its coverage (`basket_reading`).
+#[must_use]
+pub fn measure_for(a: Anchors, sims: &[Path], years: usize) -> WorldStats {
+    let mut st = measure(sims, years);
+    st.basket = a.basket_ruler.and_then(|r| basket_reading(r, sims));
+    st
+}
+
+/// The basket solve's distance from a ruler: each graded row's distance from its record in
+/// half-bands, plus 1 when the mechanism fails; infinite when a reading is missing.
+fn basket_loss(r: &BasketRuler, b: &BasketStats) -> f64 {
+    let mut loss = 0.0f64;
+    for (bd, got) in r.bands().iter().zip(b.graded()) {
+        loss += ((got - bd.record) / ((bd.hi - bd.lo) / 2.0)).abs();
+    }
+    if b.pair_corr_worst.is_nan() || b.pair_corr_worst <= b.pair_corr_mid {
+        loss += 1.0;
+    }
+    if loss.is_nan() { f64::INFINITY } else { loss }
+}
+
+/// THE BASKET SOLVE's ensemble, paths x years: small enough to step four dials by coordinate
+/// descent in a minute or two, one seed for every candidate so neighbours differ by their dials
+/// alone.
+pub const SOLVE_BASKET_SPEC: (usize, usize) = (12, 30);
+
+/// The descent's sweeps at most; each halves the steps when no dial moves.
+const SOLVE_BASKET_SWEEPS: usize = 60;
+
+/// `w` with the basket at the ruler's size and the four dials `d` (beta, sector, idio, gaps).
+#[must_use]
+pub fn with_basket_dials(w: &World, r: &BasketRuler, d: [f64; 4]) -> World {
+    let mut v = *w;
+    v.basket = r.names.len();
+    v.basket_beta = d[0];
+    v.basket_sector = d[1];
+    v.basket_idio = d[2];
+    v.basket_gaps = d[3];
+    v
+}
+
+/// The basket a run takes from its ruler: the ruler's size, and its fitted dials where no flag
+/// gave one (`dials` the world's after the flags, `flagged` which flags did). A solve from a ruler
+/// without dials starts from the world's, or from `SOLVE_BASKET_START` when the world has none.
+/// REFUSED: a `-basket` other than the ruler's size (0 included: the ruler grades a basket), and a
+/// ruler without fitted dials outside a solve.
+pub fn ruled_basket(
+    r: &BasketRuler,
+    basket: Option<usize>,
+    dials: [f64; 4],
+    flagged: [bool; 4],
+    solving: bool,
+) -> Result<(usize, [f64; 4]), String> {
+    let n = r.names.len();
+    if let Some(b) = basket.filter(|&b| b != n) {
+        return Err(format!(
+            "-basket {b} with a ruler of {n} names ({}): the ruler reads name k as its column k; drop -basket or give {n}",
+            r.file
+        ));
+    }
+    let fit = match (&r.dials, solving) {
+        (Some(d), _) => [d.basket_beta, d.basket_sector, d.basket_idio, d.basket_gaps],
+        (None, true) if dials[0] <= 0.0 => SOLVE_BASKET_START,
+        (None, true) => dials,
+        (None, false) => {
+            return Err(format!(
+                "-basketruler {}: the ruler carries no fitted dials; run -solvebasket first",
+                r.file
+            ));
+        }
+    };
+    let mut out = dials;
+    for ((o, f), g) in out.iter_mut().zip(fit).zip(flagged) {
+        if !g {
+            *o = f;
         }
     }
-    Some(BasketStats {
-        name_vol_ratio: med(&cols[0]),
-        name_gaps: med(&cols[1]),
-        name_d20: med(&cols[2]),
-        agg_corr: med(&cols[3]),
-        agg_beta: med(&cols[4]),
-        agg_vol_ratio: med(&cols[5]),
-        pair_corr: med(&cols[6]),
-        idio_share: med(&cols[7]),
-        tail_coincidence: med(&cols[8]),
-        pair_corr_worst: med(&cols[9]),
-        pair_corr_mid: med(&cols[10]),
-        name_d20_spread: med(&cols[11]),
-    })
+    Ok((n, out))
+}
+
+/// `-solvebasket`'s start when neither the ruler nor the world carries basket dials: beta, sector,
+/// idio, gaps a year.
+pub const SOLVE_BASKET_START: [f64; 4] = [1.0, 0.8, 0.8, 5.0];
+
+/// `-solvebasket`: fits the dials (`solve_basket`), confirms them on the run's own ensemble,
+/// prints both, and writes the ruler's `dials` group in place.
+fn run_basket_solve(
+    r: &BasketRuler,
+    path: &str,
+    w: &World,
+    (paths, years): (usize, usize),
+    seed: u64,
+) {
+    let (sp, sy) = SOLVE_BASKET_SPEC;
+    eprintln!(
+        "solving the basket's dials to {} ({} names on {}) at {sp} x {sy}",
+        r.file,
+        r.names.len(),
+        r.index
+    );
+    let (d, loss) = solve_basket(r, w, seed);
+    let solved = with_basket_dials(w, r, d);
+    let b = basket_reading(r, &sim_paths(&solved, paths, years, seed))
+        .unwrap_or_else(|| cli_die("the confirming ensemble read no basket"));
+    let dials_line = |x: [f64; 4]| {
+        format!(
+            "basketBeta {}  basketSector {}  basketIdio {}  basketGaps {}",
+            ef(x[0]),
+            ef(x[1]),
+            ef(x[2]),
+            ef(x[3])
+        )
+    };
+    println!(
+        "basket solve: {} -- {} names on {}, {}..{}",
+        r.file,
+        r.names.len(),
+        r.index,
+        r.from,
+        r.to
+    );
+    println!(
+        "  from    {}",
+        dials_line([w.basket_beta, w.basket_sector, w.basket_idio, w.basket_gaps])
+    );
+    println!(
+        "  fitted  {}   loss {} at {sp} x {sy}",
+        dials_line(d),
+        jf(loss, 0, 3)
+    );
+    println!("  confirmed at {paths} x {years}:");
+    for (bd, got) in r.bands().iter().zip(b.graded()) {
+        println!(
+            "    {:<26} {}   record {}   band {}-{}   {}",
+            bd.row,
+            jf(got, 7, 3),
+            jf(bd.record, 7, 3),
+            jf(bd.lo, 0, 2),
+            jf(bd.hi, 0, 2),
+            if got > bd.lo && got < bd.hi {
+                "PASS"
+            } else {
+                "MISS"
+            }
+        );
+    }
+    println!(
+        "    {:<26} worst {}   middle {}   {}",
+        "mechanism",
+        jf(b.pair_corr_worst, 0, 3),
+        jf(b.pair_corr_mid, 0, 3),
+        if b.pair_corr_worst > b.pair_corr_mid {
+            "PASS"
+        } else {
+            "FAIL"
+        }
+    );
+    let mut readings: Vec<(String, f64)> = BASKET_ROWS
+        .iter()
+        .zip(b.graded())
+        .map(|(n, v)| ((*n).to_string(), v))
+        .collect();
+    readings.push(("pair corr worst decile".to_string(), b.pair_corr_worst));
+    readings.push(("pair corr middle".to_string(), b.pair_corr_mid));
+    let dials = RulerDials {
+        basket_beta: d[0],
+        basket_sector: d[1],
+        basket_idio: d[2],
+        basket_gaps: d[3],
+        version: VERSION.to_string(),
+        primary: primary_digest(w),
+        paths,
+        years,
+        seed,
+        readings,
+    };
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| cli_die(&format!("cannot read {path}: {e}")));
+    write_or_die(path, &ruler_with_dials(&text, &dials));
+    eprintln!("wrote the fitted dials to {path}");
+}
+
+/// THE BASKET SOLVE (`-solvebasket`): the four dials fitted to a ruler by coordinate descent from
+/// `w`'s on `basket_loss` at `SOLVE_BASKET_SPEC` -- each dial stepped up, then down, by its step
+/// (0.2, 0.2, 0.2 and 2 gaps a year to start), the first improvement taken, every step halved
+/// when a sweep moves nothing, until each is under its floor (0.01, 0.01, 0.01, 0.1). Losses
+/// compare at 1e-9, so the twins' last-bit differences cannot pick different neighbours.
+/// Returns the dials and their loss.
+#[must_use]
+pub fn solve_basket(r: &BasketRuler, w: &World, seed: u64) -> ([f64; 4], f64) {
+    let (paths, years) = SOLVE_BASKET_SPEC;
+    let loss = |d: [f64; 4]| -> f64 {
+        basket_reading(
+            r,
+            &sim_paths(&with_basket_dials(w, r, d), paths, years, seed),
+        )
+        .map_or(f64::INFINITY, |b| (basket_loss(r, &b) * 1e9).round() / 1e9)
+    };
+    let lower = [0.05, 0.0, 0.0, 0.0];
+    let floor = [0.01, 0.01, 0.01, 0.1];
+    let mut step = [0.2, 0.2, 0.2, 2.0];
+    let mut d = [w.basket_beta, w.basket_sector, w.basket_idio, w.basket_gaps];
+    let mut best = loss(d);
+    for _ in 0..SOLVE_BASKET_SWEEPS {
+        if step.iter().zip(floor).all(|(s, f)| *s < f) {
+            break;
+        }
+        let mut moved = false;
+        for j in 0..4 {
+            for sign in [1.0, -1.0] {
+                let next = (d[j] + sign * step[j]).max(lower[j]);
+                if (next - d[j]).abs() < 1e-12 {
+                    continue;
+                }
+                let mut c = d;
+                c[j] = next;
+                let l = loss(c);
+                if l < best {
+                    best = l;
+                    d = c;
+                    moved = true;
+                    break;
+                }
+            }
+        }
+        if !moved {
+            for s in &mut step {
+                *s /= 2.0;
+            }
+        }
+    }
+    (d, best)
+}
+
+/// The digest of `w`'s primary alone: `world_digest` with every derived-series dial at the
+/// default world's. What a ruler's dials were solved on, the basket reading the primary only.
+#[must_use]
+pub fn primary_digest(w: &World) -> String {
+    let d = default_world();
+    let mut p = *w;
+    p.sat_beta = d.sat_beta;
+    p.sat_idio = d.sat_idio;
+    p.sat_cycle_sd = d.sat_cycle_sd;
+    p.sat_drift_half = d.sat_drift_half;
+    p.sat_level_half = d.sat_level_half;
+    p.range_scale = d.range_scale;
+    p.range_down = d.range_down;
+    p.vol_idio = d.vol_idio;
+    p.overnight = d.overnight;
+    p.div_yield = d.div_yield;
+    p.basket = d.basket;
+    p.basket_beta = d.basket_beta;
+    p.basket_sector = d.basket_sector;
+    p.basket_idio = d.basket_idio;
+    p.basket_gaps = d.basket_gaps;
+    p.basket_drift = d.basket_drift;
+    p.sectors = d.sectors;
+    p.sector_idio = d.sector_idio;
+    p.sector_drift_sd = d.sector_drift_sd;
+    p.sector_drift_half = d.sector_drift_half;
+    p.macro_panel = d.macro_panel;
+    p.macro_null = d.macro_null;
+    world_digest(&p)
 }
 
 /// THE SECTOR CHANNEL's readings, medians across paths of the ten-industry ruler's rows read on
@@ -10569,7 +11752,8 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         sat: sat_stats(sims, years),
         bars: bar_stats(sims),
         open: open_stats(sims),
-        basket: basket_stats(sims),
+        // read only against a ruler, under its coverage: `measure_for`
+        basket: None,
         sector: sector_stats(sims),
         macro_panel: macro_stats(sims),
         div_yield_mean: med_by(|p| p.div_yield),
@@ -11385,48 +12569,26 @@ fn gate_checks_with(
             Mechanism,
         ));
     }
-    // THE BASKET, graded when it ran — `basket-2026-10-03.tsv`, SMH's eight largest holdings as of
-    // 2026-10-02: level 1 as a POPULATION (the names' vol 1.9-3.5x SPY's or 1.5-2.8x QQQ's, gaps
-    // 0.4-5.1/yr — the eight's ranges rounded outward, graded on the pooled median), level 2 the
-    // aggregate against the set's primary (the eight's basket on SPY: corr 0.77, beta 1.54, vol
-    // 1.99x; on QQQ: 0.84, 1.35, 1.60x; +-0.10 / +-0.25 / +-0.3), level 3 the structure a basket
-    // rule reads (pairwise 0.55, idio share 0.40, tail coincidence 0.46), and the mechanism:
-    // pairwise correlation on the primary's worst decile above its central 45-55% (0.56 vs 0.22). The names' d20 is REPORTED, not graded: the eight's 0.08-0.61 is the time below
-    // peak of names selected today as winners (the survivorship the fixture discloses), and a
-    // name at the sector's drift and 2.6x the index's volatility spends most of a century more
-    // than 20% below its peak, as a real name of that drift would.
-    if let Some(b) = st.basket {
-        // level 2 bands from the set's anchor: corr +-0.10 at the row's 0.01 (the anchor carries a
-        // third decimal the row does not print), beta +-0.25 and vol ratio +-0.3 rounded outward
-        // to 0.1 — the satellite's tolerances
-        let at2 = |x: f64| (x * 100.0).round() / 100.0;
-        let out = |lo: f64, hi: f64| ((lo * 10.0).floor() / 10.0, (hi * 10.0).ceil() / 10.0);
-        let (beta_lo, beta_hi) = out(a.basket_beta - 0.25, a.basket_beta + 0.25);
-        let (vol_lo, vol_hi) = out(a.basket_vol_ratio - 0.30, a.basket_vol_ratio + 0.30);
-        for (name, got, lo, hi) in [
-            (
-                "basket name vol ratio",
-                b.name_vol_ratio,
-                a.basket_name_vol_band.0,
-                a.basket_name_vol_band.1,
-            ),
-            ("basket name gaps/yr", b.name_gaps, 0.40, 5.10),
-            (
-                "basket corr",
-                b.agg_corr,
-                at2(a.basket_corr - 0.10),
-                at2(a.basket_corr + 0.10),
-            ),
-            ("basket beta", b.agg_beta, beta_lo, beta_hi),
-            ("basket vol ratio", b.agg_vol_ratio, vol_lo, vol_hi),
-            ("basket pair corr", b.pair_corr, 0.39, 0.85),
-            ("basket idio share", b.idio_share, 0.26, 0.60),
-            ("basket tail coincidence", b.tail_coincidence, 0.33, 0.58),
-        ] {
-            v.push(band_check(name, got, lo, hi, GateClass::Fidelity, 2, ""));
+    // THE BASKET, graded only against a client's ruler (`-basketruler`, `BasketRuler::bands`):
+    // its names' vol ratio and gaps over the graded names' ranges, the aggregate's corr, beta and
+    // vol ratio on the index, pair corr and idio share over their ranges, tail coincidence, and
+    // the mechanism -- pairwise correlation on the primary's worst decile above its central one.
+    // The readings are taken under the ruler's coverage (`basket_reading`); without a ruler a
+    // basket is emitted ungraded.
+    if let (Some(b), Some(r)) = (st.basket, a.basket_ruler) {
+        for (bd, got) in r.bands().iter().zip(b.graded()) {
+            v.push(band_check(
+                bd.row,
+                got,
+                bd.lo,
+                bd.hi,
+                GateClass::Fidelity,
+                2,
+                "",
+            ));
         }
         v.push((
-            "basket pair corr rises on the worst decile".to_string(),
+            BASKET_MECHANISM_ROW.to_string(),
             b.pair_corr_worst > b.pair_corr_mid,
             Mechanism,
         ));
@@ -12019,14 +13181,10 @@ pub struct Anchors {
     /// `div_yield` dial is on — `dividend-2026-09-02.tsv`: the window's annual means rounded out.
     pub div_yield: f64,
     pub div_yield_band: (f64, f64),
-    /// THE BASKET's relation to this set's primary — `basket-2026-10-03.tsv`: the equal-weight
-    /// eight on SPY / on QQQ (corr, beta, vol ratio), and the eight's vol as a ratio to the
-    /// primary's, rounded outward. Level 3 of that fixture is a property of the names among
-    /// themselves and stays shared.
-    pub basket_corr: f64,
-    pub basket_beta: f64,
-    pub basket_vol_ratio: f64,
-    pub basket_name_vol_band: (f64, f64),
+    /// THE BASKET's ruler, when a run named one (`-basketruler`): a client's record of its own
+    /// names against one index, the only thing the basket rows grade against. No set carries a
+    /// default.
+    pub basket_ruler: Option<&'static BasketRuler>,
     /// THE SECTOR ROWS' record — `sectors-2026-09-30.tsv`, the ten industries over 1926-2026,
     /// one ruler for both sets (a property of industries, not of the index): the 12-1 momentum
     /// spread and the two trend readings with their 5-95 block-bootstrap bands, the shape rows.
@@ -12042,7 +13200,7 @@ pub struct Anchors {
     pub sector_pair_corr_mid: f64,
     pub sector_market_sd: f64,
     /// THE DERIVED SERIES' DIALS FOR THIS SET: what the verdict grades a world's satellite, bars,
-    /// open, dividends, basket and macro panel at when the caller left them off
+    /// open, dividends, sectors and macro panel at when the caller left them off
     /// (`verdict_world`). The channel recipe's own — `0.24.4-sp500-channels` here,
     /// `0.24.4-nasdaq-basket` for the Nasdaq — and a test pins each to its recipe. A published
     /// recipe never moves, so neither do these.
@@ -12128,8 +13286,9 @@ const NASDAQ_REPORTED: [ReportedRecord; 5] = [
     },
 ];
 
-/// The dials of the derived series: the satellite leg, the bars and their volume, the open, the
-/// dividend stream, the basket and the macro panel. Every one is observational — it draws from its
+/// The dials of the derived series the verdict supplies: the satellite leg, the bars and their
+/// volume, the open, the dividend stream, the sectors and the macro panel -- not the basket, which
+/// grades only against a client's ruler. Every one is observational — it draws from its
 /// own stream and reaches no price — so a world's primary is bit-identical whatever they are, and
 /// the verdict can grade all of them on any world at its anchor set's values.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -12144,12 +13303,6 @@ pub struct ChannelDials {
     pub vol_idio: f64,
     pub overnight: f64,
     pub div_yield: f64,
-    pub basket: usize,
-    pub basket_beta: f64,
-    pub basket_sector: f64,
-    pub basket_idio: f64,
-    pub basket_gaps: f64,
-    pub basket_drift: f64,
     pub sectors: usize,
     pub sector_idio: f64,
     pub sector_drift_sd: f64,
@@ -12172,12 +13325,6 @@ impl ChannelDials {
             vol_idio: w.vol_idio,
             overnight: w.overnight,
             div_yield: w.div_yield,
-            basket: w.basket,
-            basket_beta: w.basket_beta,
-            basket_sector: w.basket_sector,
-            basket_idio: w.basket_idio,
-            basket_gaps: w.basket_gaps,
-            basket_drift: w.basket_drift,
             sectors: w.sectors,
             sector_idio: w.sector_idio,
             sector_drift_sd: w.sector_drift_sd,
@@ -12200,12 +13347,6 @@ pub const SP500_CHANNEL_DIALS: ChannelDials = ChannelDials {
     vol_idio: 0.34,
     overnight: 0.14,
     div_yield: 2.95,
-    basket: 8,
-    basket_beta: 1.56,
-    basket_sector: 1.1,
-    basket_idio: 0.9,
-    basket_gaps: 6.0,
-    basket_drift: 0.0,
     sectors: 10,
     sector_idio: 0.7,
     sector_drift_sd: 0.25,
@@ -12225,12 +13366,6 @@ pub const NASDAQ_CHANNEL_DIALS: ChannelDials = ChannelDials {
     vol_idio: 0.34,
     overnight: 0.22,
     div_yield: 0.78,
-    basket: 8,
-    basket_beta: 1.37,
-    basket_sector: 0.8,
-    basket_idio: 0.85,
-    basket_gaps: 8.0,
-    basket_drift: 0.0,
     sectors: 10,
     sector_idio: 0.7,
     sector_drift_sd: 0.25,
@@ -12239,7 +13374,8 @@ pub const NASDAQ_CHANNEL_DIALS: ChannelDials = ChannelDials {
 };
 
 /// THE VERDICT WORLD: the caller's world with every derived series the caller left off set to
-/// the anchor set's dials, and the null panel off. The verdict is a property of the world, and
+/// the anchor set's dials, and the null panel off. The basket is the caller's alone: it grades
+/// only against a client's ruler, so a world without one simulates no basket here. The verdict is a property of the world, and
 /// the derived series are functions of its state, so a world is graded on all of them whatever
 /// the caller emits: a default's or a set member's PASS implies the bundle's. Before this, a
 /// channel's rows graded only when its dial was on, and the S&P default's macro build-up slid onto
@@ -12269,14 +13405,6 @@ pub fn verdict_world(a: Anchors, w: &World) -> World {
     }
     if w.div_yield <= 0.0 {
         v.div_yield = d.div_yield;
-    }
-    if w.basket == 0 {
-        v.basket = d.basket;
-        v.basket_beta = d.basket_beta;
-        v.basket_sector = d.basket_sector;
-        v.basket_idio = d.basket_idio;
-        v.basket_gaps = d.basket_gaps;
-        v.basket_drift = d.basket_drift;
     }
     if w.sectors == 0 {
         v.sectors = d.sectors;
@@ -12984,10 +14112,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     record_bands: &RECORD_BANDS_SP500,
     div_yield: 2.95,
     div_yield_band: (1.1, 5.8),
-    basket_corr: 0.773,
-    basket_beta: 1.536,
-    basket_vol_ratio: 1.986,
-    basket_name_vol_band: (1.9, 3.5),
+    basket_ruler: None,
     sector_momentum: 0.003923,
     sector_momentum_band: (0.002111, 0.005480),
     sector_trend12: 0.005545,
@@ -13134,10 +14259,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     record_bands: &RECORD_BANDS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),
-    basket_corr: 0.840,
-    basket_beta: 1.345,
-    basket_vol_ratio: 1.601,
-    basket_name_vol_band: (1.5, 2.8),
+    basket_ruler: None,
     sector_momentum: 0.003923,
     sector_momentum_band: (0.002111, 0.005480),
     sector_trend12: 0.005545,
@@ -19002,7 +20124,7 @@ pub fn verdict_of(
         Some((sims, st, at)) if at == (paths, years) && vw == *w => (Cow::Borrowed(sims), st),
         _ => {
             let sims = sim_paths(&vw, paths, years, seed);
-            let st = measure(&sims, years);
+            let st = measure_for(a, &sims, years);
             (Cow::Owned(sims), st)
         }
     };
@@ -19051,7 +20173,7 @@ pub fn write_emitted(a: Anchors, file: &str, p: &Path, k: usize, spec: EmitSpec<
     // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
     // before calling; here it PANICS, because this is also API and a `process::exit` in a library
     // function takes a test harness down whole rather than failing one test.
-    let table = emit_table(p);
+    let table = ruled_table(a, p);
     assert!(
         table_is_finite(&table),
         "path {k} holds a non-finite value; refusing {file}"
@@ -19250,6 +20372,17 @@ pub fn emit_table(p: &Path) -> Vec<EmitColumn<'_>> {
     t
 }
 
+/// The table a TSV carries: `emit_table`'s, less `logBasket` when a ruler drives the basket. Its
+/// rows read the names under the ruler's coverage, never the aggregate column, and nothing reads
+/// it; `-emitcols logBasket` names it back into a stream.
+fn ruled_table(a: Anchors, p: &Path) -> Vec<EmitColumn<'_>> {
+    let mut t = emit_table(p);
+    if a.basket_ruler.is_some() {
+        t.retain(|c| c.name != "logBasket");
+    }
+    t
+}
+
 fn table_is_finite(table: &[EmitColumn<'_>]) -> bool {
     table.iter().all(|c| c.values.iter().all(|x| x.is_finite()))
 }
@@ -19311,10 +20444,16 @@ fn f32_cell(x: f64) -> [u8; 4] {
 }
 
 /// The columns `want` names, in its order, as indices into a path's table, and the named columns
-/// the table does not carry because their channel did not run. An empty `want` is every column.
-fn select_columns(table: &[EmitColumn<'_>], want: &[String]) -> (Vec<usize>, Vec<String>) {
+/// the table does not carry because their channel did not run. An empty `want` is every column,
+/// less `logBasket` when a ruler drives the basket (`ruled_table`).
+fn select_columns(
+    table: &[EmitColumn<'_>],
+    want: &[String],
+    ruled: bool,
+) -> (Vec<usize>, Vec<String>) {
     if want.is_empty() {
-        return ((0..table.len()).collect(), Vec::new());
+        let every = (0..table.len()).filter(|&c| !(ruled && table[c].name == "logBasket"));
+        return (every.collect(), Vec::new());
     }
     let at = |w: &String| table.iter().position(|c| c.name == *w);
     let picked = want.iter().filter_map(at).collect();
@@ -19350,6 +20489,7 @@ fn stream_f32(
     spec: EmitSpec<'_>,
     (from, count): (usize, usize),
     want: &[String],
+    ruled: bool,
 ) -> Result<Streamed, String> {
     use std::io::Write as _;
     let cannot = |e: std::io::Error| format!("cannot write {file}: {e}");
@@ -19363,7 +20503,7 @@ fn stream_f32(
         let paths = sim_range_at(spec.world, level, start, n, spec.years, spec.seed);
         let (streamed, picked) = head.get_or_insert_with(|| {
             let table = emit_table(&paths[0]);
-            let (picked, absent) = select_columns(&table, want);
+            let (picked, absent) = select_columns(&table, want, ruled);
             let streamed = Streamed {
                 p: paths[0].clone(),
                 names: picked.iter().map(|&c| table[c].name.clone()).collect(),
@@ -19401,7 +20541,7 @@ fn stream_f32(
 /// THE F32 STREAM (`-emitf32`): paths `from..from + count` as ONE chunk file of `F32_FORMAT`,
 /// path-major -- each path's columns in the sidecar's order, each column's sessions in order --
 /// beside one sidecar for the chunk. A chunk of thousands of paths never sits in memory whole.
-/// `want` selects the columns, all of them when empty. `Err` names the first path holding a
+/// `want` selects the columns, all of them when empty (`select_columns`). `Err` names the first path holding a
 /// non-finite value: the partial file is removed and no sidecar written. `Ok` is the columns
 /// written and the sessions a path.
 pub fn write_f32_chunk(
@@ -19412,7 +20552,7 @@ pub fn write_f32_chunk(
     want: &[String],
     v: &Verdict,
 ) -> Result<(usize, usize), String> {
-    let s = stream_f32(file, spec, range, want).inspect_err(|_| {
+    let s = stream_f32(file, spec, range, want, a.basket_ruler.is_some()).inspect_err(|_| {
         std::fs::remove_file(file).ok();
     })?;
     let dates = session_dates(s.p.price.len(), spec.start_ymd);
@@ -19658,7 +20798,7 @@ fn level_block(p: &Path) -> String {
     )
 }
 
-fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
+fn channel_readings_block(a: Anchors, st: &WorldStats, gate_w: &World, p: &Path) -> String {
     let num = |x: f64| {
         if x.is_nan() {
             "null".to_string()
@@ -19670,7 +20810,7 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
     if st.sat.is_some()
         || st.bars.is_some()
         || st.open.is_some()
-        || st.basket.is_some()
+        || gate_w.basket > 0
         || st.div_yield_mean.is_finite()
         || st.macro_panel.is_some()
     {
@@ -19722,12 +20862,12 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
             num(os.all_gap_share)
         ));
     }
-    if let Some(b) = st.basket {
+    if let (Some(b), Some(r)) = (st.basket, a.basket_ruler) {
         blocks.push(format!(
             "    \"basket\": {{ \"nameVolRatio\": {}, \"nameGaps\": {}, \"nameD20\": {}, \"aggCorr\": {}, \
              \"aggBeta\": {}, \"aggVolRatio\": {}, \"pairCorr\": {}, \"idioShare\": {}, \
              \"tailCoincidence\": {}, \"pairCorrWorst\": {}, \"pairCorrMid\": {}, \
-             \"nameD20Spread\": {} }}",
+             \"nameD20Spread\": {}, \"graded\": true,\n{} }}",
             num(b.name_vol_ratio),
             num(b.name_gaps),
             num(b.name_d20),
@@ -19739,8 +20879,11 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
             num(b.tail_coincidence),
             num(b.pair_corr_worst),
             num(b.pair_corr_mid),
-            num(b.name_d20_spread)
+            num(b.name_d20_spread),
+            ruler_block(r)
         ));
+    } else if gate_w.basket > 0 {
+        blocks.push("    \"basket\": { \"ruler\": null, \"graded\": false }".to_string());
     }
     if let Some(s) = st.sector {
         blocks.push(sector_readings_block(&s, &num));
@@ -19751,6 +20894,88 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
     } else {
         format!("  \"channels\": {{\n{}\n  }},", blocks.join(",\n"))
     }
+}
+
+/// `channels.basket.ruler`: the ruler a run graded the basket against, whole enough that a bundle
+/// describes its basket without the file -- where its closes came from and when, each name's
+/// coverage, the rows with their records and bands, the dials with the solve's terms -- and that
+/// the rows were read under its coverage.
+fn ruler_block(r: &BasketRuler) -> String {
+    let num = |x: f64| ef(x);
+    let coverage: Vec<String> = r
+        .names
+        .iter()
+        .enumerate()
+        .map(|(k, m)| {
+            format!(
+                "        {{ \"name\": {}, \"first\": {}, \"last\": {}, \"sessions\": {}, \"graded\": {} }}",
+                json_str(&m.name),
+                json_str(&m.first),
+                json_str(&m.last),
+                m.sessions,
+                r.graded(k)
+            )
+        })
+        .collect();
+    let rows: Vec<String> = r
+        .bands()
+        .iter()
+        .map(|b| {
+            format!(
+                "        {{ \"row\": {}, \"record\": {}, \"band\": [{}, {}] }}",
+                json_str(b.row),
+                num(b.record),
+                num(b.lo),
+                num(b.hi)
+            )
+        })
+        .collect();
+    let dials = r.dials.as_ref().map_or_else(
+        || "null".to_string(),
+        |d| {
+            format!(
+                "{{ \"basketBeta\": {}, \"basketSector\": {}, \"basketIdio\": {}, \"basketGaps\": {}, \
+                 \"version\": {}, \"primary\": {}, \"paths\": {}, \"years\": {}, \"seed\": {} }}",
+                num(d.basket_beta),
+                num(d.basket_sector),
+                num(d.basket_idio),
+                num(d.basket_gaps),
+                json_str(&d.version),
+                json_str(&d.primary),
+                d.paths,
+                d.years,
+                d.seed
+            )
+        },
+    );
+    [
+        "      \"ruler\": {".to_string(),
+        format!("        \"file\": {},", json_str(&r.file)),
+        format!("        \"digest\": {},", json_str(&r.digest)),
+        format!("        \"index\": {},", json_str(&r.index)),
+        format!("        \"basis\": {},", json_str(&r.basis)),
+        format!("        \"closesDate\": {},", json_str(&r.closes_date)),
+        format!("        \"from\": {},", json_str(&r.from)),
+        format!("        \"to\": {},", json_str(&r.to)),
+        format!("        \"sessions\": {},", r.sessions),
+        format!("        \"names\": {},", r.names.len()),
+        format!("        \"minSessions\": {},", r.min_sessions),
+        "        \"readUnder\": \"coverage\",".to_string(),
+        format!(
+            "        \"coverage\": [\n{}\n        ],",
+            coverage.join(",\n")
+        ),
+        format!("        \"rows\": [\n{}\n        ],", rows.join(",\n")),
+        format!(
+            "        \"mechanism\": {{ \"worstDecile\": {}, \"middle\": {}, \"bestDecile\": {} }},",
+            num(r.mechanism.0),
+            num(r.mechanism.1),
+            num(r.mechanism.2)
+        ),
+        format!("        \"dials\": {dials}"),
+        "      }".to_string(),
+    ]
+    .join("\n")
 }
 
 /// `channels.sector`: the readings the `sector *` rows grade.
@@ -19898,7 +21123,6 @@ fn verdict_series_of(gate_st: &WorldStats, gate_w: &World) -> Vec<String> {
         verdict_series.push("logOpen".to_string());
     }
     if gate_st.basket.is_some() {
-        verdict_series.push("logBasket".to_string());
         verdict_series.extend((1..=gate_w.basket).map(|q| format!("logName{q}")));
     }
     if gate_st.sector.is_some() {
@@ -19921,10 +21145,17 @@ fn gate_scope_lines(
     let p = shape.p;
     // The presence conditions are `sat_stats`'/`bar_stats`' own — they return `Some` exactly
     // when these columns are non-empty — so a column is listed the session its rows exist.
-    let basket_cols = [basket_columns(p), sector_columns(p)].concat();
+    // the names grade only against a ruler, and the aggregate column never: the rows read the
+    // names under the ruler's coverage
+    let basket_cols = basket_columns(p);
+    let (agg_col, name_cols) = basket_cols.split_at(basket_cols.len().min(1));
+    let sector_cols = sector_columns(p);
     let mut graded = vec!["price", "bond"];
     graded.extend(channel_columns(p));
-    graded.extend(basket_cols.iter().map(String::as_str));
+    if gate_st.basket.is_some() {
+        graded.extend(name_cols.iter().map(String::as_str));
+    }
+    graded.extend(sector_cols.iter().map(String::as_str));
     let verdict_series = verdict_series_of(gate_st, gate_w);
     let num = |x: f64| ef(x);
     let source = |emitted: bool| json_str(if emitted { "emitted" } else { "anchored" });
@@ -19961,14 +21192,16 @@ fn gate_scope_lines(
         ),
         format!(
             "\"basket\": {{ \"basket\": {}, \"basketBeta\": {}, \"basketSector\": {}, \
-             \"basketIdio\": {}, \"basketGaps\": {}, \"basketDrift\": {}, \"source\": {} }}",
+             \"basketIdio\": {}, \"basketGaps\": {}, \"basketDrift\": {}, \"source\": {}, \
+             \"graded\": {} }}",
             gate_w.basket,
             num(gate_w.basket_beta),
             num(gate_w.basket_sector),
             num(gate_w.basket_idio),
             num(gate_w.basket_gaps),
             num(gate_w.basket_drift),
-            source(w.basket > 0)
+            json_str(if w.basket > 0 { "emitted" } else { "off" }),
+            gate_st.basket.is_some()
         ),
         sector_scope_block(gate_w, w.sectors > 0),
         format!(
@@ -19988,6 +21221,10 @@ fn gate_scope_lines(
     } else {
         Vec::new()
     };
+    ungraded.extend(agg_col.iter().map(String::as_str));
+    if gate_st.basket.is_none() {
+        ungraded.extend(name_cols.iter().map(String::as_str));
+    }
     ungraded.extend(null_macro_columns(p));
     if !null_panel {
         graded.extend(macro_columns(p));
@@ -20433,7 +21670,7 @@ fn write_emit_sidecar(a: Anchors, file: &str, shape: &SidecarShape<'_>, w: &Worl
         "  },".to_string(),
         // the verdict's readings, led by the level ITS channels were sampled at: the level is a
         // function of the primary alone, so it is this file's level wherever this file has one
-        channel_readings_block(gate_st, &v.level),
+        channel_readings_block(a, gate_st, gate_w, &v.level),
         shape.episodes.clone(),
         "  \"fidelity\": [".to_string(),
         fidelity.join(",\n"),
@@ -20850,6 +22087,10 @@ pub fn main() {
     let mut basket_idio = dw.basket_idio;
     let mut basket_gaps = dw.basket_gaps;
     let mut basket_drift = dw.basket_drift;
+    let mut basket_given = false;
+    let mut basket_dial_given = [false; 4];
+    let mut basket_ruler_file = String::new();
+    let mut solve_basket_flag = false;
     let mut sectors = dw.sectors;
     let mut sector_idio = dw.sector_idio;
     let mut sector_drift_sd = dw.sector_drift_sd;
@@ -21046,11 +22287,28 @@ pub fn main() {
             "-volidio" => vol_idio = req_f64(&mut it, "-volidio"),
             "-divyield" => div_yield = req_f64(&mut it, "-divyield"),
             "-overnight" => overnight = req_f64(&mut it, "-overnight"),
-            "-basket" => basket = req_usize(&mut it, "-basket"),
-            "-basketbeta" => basket_beta = req_f64(&mut it, "-basketbeta"),
-            "-basketsector" => basket_sector = req_f64(&mut it, "-basketsector"),
-            "-basketidio" => basket_idio = req_f64(&mut it, "-basketidio"),
-            "-basketgaps" => basket_gaps = req_f64(&mut it, "-basketgaps"),
+            "-basket" => {
+                basket = req_usize(&mut it, "-basket");
+                basket_given = true;
+            }
+            "-basketbeta" => {
+                basket_beta = req_f64(&mut it, "-basketbeta");
+                basket_dial_given[0] = true;
+            }
+            "-basketsector" => {
+                basket_sector = req_f64(&mut it, "-basketsector");
+                basket_dial_given[1] = true;
+            }
+            "-basketidio" => {
+                basket_idio = req_f64(&mut it, "-basketidio");
+                basket_dial_given[2] = true;
+            }
+            "-basketgaps" => {
+                basket_gaps = req_f64(&mut it, "-basketgaps");
+                basket_dial_given[3] = true;
+            }
+            "-basketruler" => basket_ruler_file = req_arg(&mut it, "-basketruler").clone(),
+            "-solvebasket" => solve_basket_flag = true,
             "-basketdrift" => basket_drift = req_f64(&mut it, "-basketdrift"),
             "-sectors" => sectors = req_usize(&mut it, "-sectors"),
             "-sectoridio" => sector_idio = req_f64(&mut it, "-sectoridio"),
@@ -21129,6 +22387,33 @@ pub fn main() {
         cli_die("-emitfrom applies to -emitall; use -emitpath for one path");
     }
     check_stream_flags(&emit, &emit_f32, &emit_cols, emit_gate, validate);
+    // THE BASKET RULER: the client's names set the basket's size and, where no dial flag gave its
+    // own, its four dials -- resolved into the world like any other dial, so the sidecar's `world`
+    // block and the world digest carry them
+    let basket_ruler: Option<&'static BasketRuler> = if basket_ruler_file.is_empty() {
+        if solve_basket_flag {
+            cli_die(
+                "-solvebasket fits the basket's dials to a ruler; name it with -basketruler FILE",
+            );
+        }
+        None
+    } else {
+        let r: &'static BasketRuler = Box::leak(Box::new(
+            load_basket_ruler(&basket_ruler_file)
+                .unwrap_or_else(|m| cli_die(&format!("-basketruler: {m}"))),
+        ));
+        let (n, dials) = ruled_basket(
+            r,
+            basket_given.then_some(basket),
+            [basket_beta, basket_sector, basket_idio, basket_gaps],
+            basket_dial_given,
+            solve_basket_flag,
+        )
+        .unwrap_or_else(|m| cli_die(&m));
+        basket = n;
+        [basket_beta, basket_sector, basket_idio, basket_gaps] = dials;
+        Some(r)
+    };
     // A bad index here is the one place the rule list has to be discoverable: the report names
     // the rules but not their numbers, and the numbers are what the flag takes. Without this,
     // `-powerarms 99` panicked on an out-of-bounds index and `-powerarms 0` underflowed usize.
@@ -21492,7 +22777,10 @@ pub fn main() {
             "unknown -crowd [{crowd_name}]; use momentum, trendNNN, volscaled, or drawdownNN"
         )),
     };
-    let anchors = anchors_named(&anchor_spec);
+    let anchors = Anchors {
+        basket_ruler,
+        ..anchors_named(&anchor_spec)
+    };
     let w = World {
         trend_share,
         depth,
@@ -21627,6 +22915,21 @@ pub fn main() {
     if digest_only {
         println!("{}", world_digest(&w));
         return;
+    }
+    if let Some(r) = basket_ruler {
+        if solve_basket_flag {
+            run_basket_solve(r, &basket_ruler_file, &w, (paths, years), seed);
+            return;
+        }
+        if let Some(d) = r.dials.as_ref() {
+            let here = primary_digest(&w);
+            if d.primary != here {
+                eprintln!(
+                    "NOTE: {}'s dials were solved on primary {}; this world's primary is {here}, and its basket rows grade them here",
+                    r.file, d.primary
+                );
+            }
+        }
     }
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
@@ -21810,7 +23113,7 @@ pub fn main() {
 
     eprintln!("simulating {paths} paths x {years} years");
     let sims = sim_paths(&w, paths, years, seed);
-    let st = measure(&sims, years);
+    let st = measure_for(anchors, &sims, years);
 
     // The verdict is a property of the WORLD, so it is measured on an ensemble large enough for
     // the conditional mechanism statistics to exist AND at the horizon the bands were calibrated
@@ -21902,7 +23205,7 @@ pub fn main() {
         eprintln!(
             "wrote {} path(s), {} columns x {sessions} sessions, to {}{span} (+ sidecar {})",
             written.len(),
-            1 + emit_table(&first).len(),
+            1 + ruled_table(anchors, &first).len(),
             written[0],
             sidecar_name(&written[0])
         );
@@ -24510,12 +25813,6 @@ mod contract_tests {
         w.sat_level_half = c.sat_level_half;
         w.overnight = c.overnight;
         w.div_yield = c.div_yield;
-        w.basket = c.basket;
-        w.basket_beta = c.basket_beta;
-        w.basket_sector = c.basket_sector;
-        w.basket_idio = c.basket_idio;
-        w.basket_gaps = c.basket_gaps;
-        w.basket_drift = c.basket_drift;
         w.sectors = c.sectors;
         w.sector_idio = c.sector_idio;
         w.sector_drift_sd = c.sector_drift_sd;
@@ -24555,8 +25852,8 @@ mod contract_tests {
     /// The anchor sets' channel dials ARE the channel recipes' (the verdict grades a world's
     /// derived series at exactly the dials the shipped channel worlds run), the verdict world of a
     /// channels-off world is that world with every channel at them and its primary untouched, a
-    /// channel the caller turned on keeps the caller's dials, and a null panel is graded as a real
-    /// one.
+    /// channel the caller turned on keeps the caller's dials, a null panel is graded as a real
+    /// one, and the basket is the caller's alone.
     #[test]
     fn the_verdict_world_runs_every_channel_at_the_anchor_sets_dials_over_an_untouched_primary() {
         let (sp, _) = named_world("0.24.5-sp500").expect("recipe");
@@ -24578,8 +25875,8 @@ mod contract_tests {
         w.macro_null = 1;
         let v = verdict_world(SP500_ANCHORS, &w);
         assert!(
-            v.sat_beta == 1.5 && v.sat_idio == 0.5 && v.macro_null == 0 && v.basket == 8,
-            "a channel the caller turned on keeps its dials; the rest are anchored"
+            v.sat_beta == 1.5 && v.sat_idio == 0.5 && v.macro_null == 0 && v.basket == 0,
+            "a channel the caller turned on keeps its dials; the rest are anchored but the basket"
         );
         assert_eq!(verdict_world(SP500_ANCHORS, &sp), sp);
     }
@@ -24597,7 +25894,6 @@ mod contract_tests {
             "bar volume sd",
             "dividend yield",
             "bar overnight share",
-            "basket corr",
             "macro cond build-up",
         ] {
             assert!(
@@ -24605,6 +25901,10 @@ mod contract_tests {
                 "the default's verdict has no `{prefix}` row"
             );
         }
+        assert!(
+            st.basket.is_none() && !rows.iter().any(|(n, _, _)| n.starts_with("basket")),
+            "the basket grades only against a client's ruler"
+        );
     }
 
     /// Pins the recipe to the docs' "A Nasdaq world that passes the gate" and to the ANCHORED
@@ -28831,164 +30131,403 @@ mod open_tests {
     }
 }
 
-/// The basket's anchors are MEASURED numbers; this re-derives the graded bands from the
-/// checked-in fixture (the eight names' ranges at level 1 and 3, SMH's relation to SPY at level
-/// 2) so the code and the record cannot drift apart, and pins the channel's contracts: off is
-/// bit-identical, the names are observational, the mechanism row discriminates. The Scala twin
-/// carries the same checks in `BasketAnchorSuite`, against the same file.
+/// THE BASKET RULER: the twins write the pinned synthetic ruler from its closes to the printed
+/// decimals (blanks before a listing, a delisting, a name under the session rule); a ruler reads
+/// back what it states and its bands follow the documented rules; a ruler that cannot grade is
+/// refused; the coverage mask reads the record's composition; the basket rows grade only against
+/// a named ruler, whose dials resolve into the world and the sidecar; the example ruler's fitted
+/// basket sits inside its bands; off is bit-identical and the names observational. The Scala twin
+/// carries the same checks in `BasketRulerSuite`, against the same files.
 #[cfg(test)]
-mod basket_anchor_tests {
+mod basket_ruler_tests {
     use super::*;
 
-    const FIXTURE: &str = "../test-data/equity-anchors/basket-2026-10-03.tsv";
+    const CLOSES: &str = "../test-data/equity-anchors/basket-closes-synthetic-2026-10-04.csv";
+    const SYNTHETIC: &str = "../test-data/equity-anchors/basket-ruler-synthetic-2026-10-04.tsv";
+    const EXAMPLE: &str = "../test-data/equity-anchors/basket-ruler-smh8-qqq-2026-10-04.tsv";
 
-    fn rows() -> Option<Vec<Vec<String>>> {
-        let text = std::fs::read_to_string(FIXTURE).ok()?;
-        Some(
-            text.lines()
-                .filter(|l| {
-                    !l.starts_with('#') && !l.starts_with("group\t") && !l.trim().is_empty()
-                })
-                .map(|l| l.split('\t').map(str::to_string).collect())
-                .collect(),
-        )
+    fn read(f: &str) -> Option<String> {
+        std::fs::read_to_string(f).ok()
     }
 
-    fn value(rs: &[Vec<String>], group: &str, name: &str, stat: &str) -> f64 {
-        rs.iter()
-            .find(|r| r[0] == group && r[1] == name && r[2] == stat)
-            .unwrap_or_else(|| panic!("fixture row [{group} {name} {stat}] missing"))[3]
-            .parse()
-            .expect("numeric fixture value")
-    }
-
-    fn eight(rs: &[Vec<String>], stat: &str) -> Vec<f64> {
-        rs.iter()
-            .filter(|r| r[0] == "eight" && r[2] == stat)
-            .map(|r| r[3].parse().expect("numeric"))
+    fn data_rows(t: &str) -> Vec<&str> {
+        t.lines()
+            .filter(|l| !l.starts_with('#') && !l.starts_with("group\t") && !l.trim().is_empty())
             .collect()
     }
 
-    fn anchored() -> World {
-        let mut w = default_world();
-        w.basket = 8;
-        w.basket_beta = 1.56;
-        w.basket_sector = 1.1;
-        w.basket_idio = 0.9;
-        w.basket_gaps = 6.0;
-        w
+    fn example() -> Option<(String, &'static BasketRuler)> {
+        let t = read(EXAMPLE)?;
+        let r = parse_basket_ruler(&t, "basket-ruler-smh8-qqq-2026-10-04.tsv")
+            .expect("the example ruler");
+        Some((t, Box::leak(Box::new(r))))
     }
 
-    fn fmin(v: &[f64]) -> f64 {
-        v.iter().cloned().fold(f64::INFINITY, f64::min)
-    }
-    fn fmax(v: &[f64]) -> f64 {
-        v.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
-    }
-    fn near(a: f64, b: f64) -> bool {
-        (a - b).abs() < 1e-9
-    }
-
-    /// The bands live in `gate_checks`' names, derived from the bounds they test; read them back
-    /// off a measured world so the test grades the code that runs, not a copy.
-    fn gate(a: Anchors, name: &str) -> (f64, f64) {
-        let st = measure(&sim_paths(&anchored(), 2, 10, DEFAULT_SEED), 10);
-        let row = gate_checks(a, &st)
-            .into_iter()
-            .map(|r| r.0)
-            .find(|n| n.starts_with(&format!("{name} ")))
-            .unwrap_or_else(|| panic!("no gate row [{name}]"));
-        let rest = row[name.len() + 1..].to_string();
-        let (lo, hi) = rest.split_once('-').expect("lo-hi");
-        (lo.parse().expect("lo"), hi.parse().expect("hi"))
-    }
-
-    fn out1(lo: f64, hi: f64) -> (f64, f64) {
-        ((lo * 10.0).floor() / 10.0, (hi * 10.0).ceil() / 10.0)
-    }
-    fn out2(lo: f64, hi: f64) -> (f64, f64) {
-        ((lo * 100.0).floor() / 100.0, (hi * 100.0).ceil() / 100.0)
-    }
-    fn at2(x: f64) -> f64 {
-        (x * 100.0).round() / 100.0
-    }
-    fn same(g: (f64, f64), w: (f64, f64)) -> bool {
-        near(g.0, w.0) && near(g.1, w.1)
+    fn fitted(r: &BasketRuler) -> [f64; 4] {
+        let d = r
+            .dials
+            .as_ref()
+            .expect("the example ruler carries its dials");
+        [d.basket_beta, d.basket_sector, d.basket_idio, d.basket_gaps]
     }
 
     #[test]
-    fn the_graded_bands_are_the_fixtures_per_anchor_set() {
-        let Some(rs) = rows() else {
+    fn the_synthetic_closes_write_the_pinned_ruler_row_for_row() {
+        let (Some(c), Some(want)) = (read(CLOSES), read(SYNTHETIC)) else {
             return;
         };
-        for (a, primary, sfx) in [
-            (anchors_named("sp500"), "SPY", "Spy"),
-            (anchors_named("nasdaq"), "QQQ", "Qqq"),
-        ] {
-            let pv = value(&rs, "basket", primary, "vol");
-            let vr: Vec<f64> = eight(&rs, "vol").iter().map(|v| v / pv).collect();
-            assert!(
-                same(gate(a, "basket name vol ratio"), out1(fmin(&vr), fmax(&vr))),
-                "{} name vol ratio",
-                a.name
-            );
-            let gp = eight(&rs, "gaps10");
-            assert!(same(
-                gate(a, "basket name gaps/yr"),
-                out1(fmin(&gp), fmax(&gp))
-            ));
-            let corr = value(&rs, "basket", "basket", &format!("corr{sfx}"));
-            assert!(
-                same(gate(a, "basket corr"), (at2(corr - 0.10), at2(corr + 0.10))),
-                "{} corr",
-                a.name
-            );
-            let beta = value(&rs, "basket", "basket", &format!("betaOn{sfx}"));
-            assert!(
-                same(gate(a, "basket beta"), out1(beta - 0.25, beta + 0.25)),
-                "{} beta",
-                a.name
-            );
-            let volr = value(&rs, "basket", "basket", &format!("volRatio{sfx}"));
-            assert!(
-                same(gate(a, "basket vol ratio"), out1(volr - 0.30, volr + 0.30)),
-                "{} vol ratio",
-                a.name
-            );
-            assert!(same(
-                gate(a, "basket pair corr"),
-                out2(
-                    value(&rs, "cross", "pairCorr", "min"),
-                    value(&rs, "cross", "pairCorr", "max")
-                )
-            ));
-            assert!(same(
-                gate(a, "basket idio share"),
-                out2(
-                    value(&rs, "cross", "idioShare", "min"),
-                    value(&rs, "cross", "idioShare", "max")
-                )
-            ));
-            let tc = value(&rs, "cross", "tailCoincidence", "value");
-            assert!(same(
-                gate(a, "basket tail coincidence"),
-                (
-                    ((tc - 0.13) * 100.0).round() / 100.0,
-                    ((tc + 0.12) * 100.0).round() / 100.0
-                )
-            ));
-        }
+        let got = basket_ruler_tsv(
+            &parse_basket_closes(&c).expect("the closes"),
+            "",
+            "",
+            "2026-10-04",
+            252,
+        )
+        .expect("a ruler");
+        assert_eq!(data_rows(&got), data_rows(&want));
         assert!(
-            value(&rs, "mechanism", "pairCorr", "spyWorstDecile")
-                > value(&rs, "mechanism", "pairCorr", "spyMiddleDecile"),
-            "the mechanism row's premise must hold in the record"
+            parse_basket_ruler(&got, "written").is_ok(),
+            "what it writes reads"
         );
     }
 
     #[test]
+    fn a_listing_a_delisting_and_a_short_name_are_read_on_the_names_present() {
+        let Some(t) = read(SYNTHETIC) else {
+            return;
+        };
+        let r = parse_basket_ruler(&t, "synthetic").expect("the synthetic ruler");
+        let at = |n: &str| {
+            r.names
+                .iter()
+                .position(|m| m.name == n)
+                .unwrap_or_else(|| panic!("no name {n}"))
+        };
+        assert_eq!(r.sessions, 1799);
+        let (ddd, fff, ggg) = (at("DDD"), at("FFF"), at("GGG"));
+        assert_eq!((r.names[ddd].start, r.names[ddd].end), (400, 1799));
+        assert_eq!((r.names[ggg].start, r.names[ggg].end), (0, 1299));
+        assert_eq!(r.names[fff].sessions, 199);
+        assert!(!r.graded(fff) && r.graded(ddd) && r.graded(ggg));
+        let pairs = r.graded_pairs();
+        assert_eq!(pairs.len(), 15, "the six graded names' pairs");
+        assert!(pairs.iter().all(|&(a, b)| a != fff && b != fff));
+    }
+
+    #[test]
+    fn the_bands_follow_the_documented_rules() {
+        let Some((t, r)) = example() else {
+            return;
+        };
+        let rows: Vec<Vec<&str>> = data_rows(&t)
+            .iter()
+            .map(|l| l.split('\t').collect())
+            .collect();
+        let val = |g: &str, n: &str, s: &str| -> f64 {
+            rows.iter()
+                .find(|x| x[0] == g && x[1] == n && x[2] == s)
+                .unwrap_or_else(|| panic!("no row [{g} {n} {s}]"))[3]
+                .parse()
+                .expect("a number")
+        };
+        let per =
+            |s: &str| -> Vec<f64> { r.names.iter().map(|m| val("names", &m.name, s)).collect() };
+        let lo_of = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi_of = |v: &[f64]| v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let out1 = |lo: f64, hi: f64| ((lo * 10.0).floor() / 10.0, (hi * 10.0).ceil() / 10.0);
+        let out2 = |lo: f64, hi: f64| ((lo * 100.0).floor() / 100.0, (hi * 100.0).ceil() / 100.0);
+        let at2 = |x: f64| (x * 100.0).round() / 100.0;
+        let (vr, gp) = (per("volRatio"), per("gaps10"));
+        let (corr, beta, volr, tail) = (
+            val("basket", "basket", "corr"),
+            val("basket", "basket", "betaOn"),
+            val("basket", "basket", "volRatio"),
+            val("cross", "tailCoincidence", "value"),
+        );
+        let want = [
+            out1(lo_of(&vr), hi_of(&vr)),
+            out1(lo_of(&gp), hi_of(&gp)),
+            (at2(corr - 0.10), at2(corr + 0.10)),
+            out1(beta - 0.25, beta + 0.25),
+            out1(volr - 0.30, volr + 0.30),
+            out2(
+                val("cross", "pairCorr", "min"),
+                val("cross", "pairCorr", "max"),
+            ),
+            out2(
+                val("cross", "idioShare", "min"),
+                val("cross", "idioShare", "max"),
+            ),
+            (at2(tail - 0.13), at2(tail + 0.12)),
+        ];
+        let bands = r.bands();
+        for (b, (lo, hi)) in bands.iter().zip(want) {
+            assert!(
+                (b.lo - lo).abs() < 1e-12 && (b.hi - hi).abs() < 1e-12,
+                "{}: {}-{} against {lo}-{hi}",
+                b.row,
+                b.lo,
+                b.hi
+            );
+        }
+        // the numbers the docs quote for the example
+        let printed: Vec<String> = bands
+            .iter()
+            .map(|b| format!("{}-{}", jf(b.lo, 0, 2), jf(b.hi, 0, 2)))
+            .collect();
+        assert_eq!(
+            printed,
+            [
+                "1.50-2.80",
+                "0.40-5.10",
+                "0.74-0.94",
+                "1.00-1.60",
+                "1.30-2.00",
+                "0.39-0.85",
+                "0.25-0.53",
+                "0.32-0.57"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_ruler_that_cannot_grade_is_refused_and_one_without_dials_waits_for_a_solve() {
+        let Some((t, r)) = example() else {
+            return;
+        };
+        let flipped = t.replace("worstDecile\t0.511", "worstDecile\t0.200");
+        assert!(
+            parse_basket_ruler(&flipped, "flipped")
+                .expect_err("a failed premise")
+                .contains("the mechanism row cannot be read")
+        );
+        let short = t.replace("cross\tidioShare\tmedian", "cross\tidioShare\tmid");
+        assert!(
+            parse_basket_ruler(&short, "short")
+                .expect_err("a missing row")
+                .contains("no row [cross idioShare median]")
+        );
+        let bare: String = t
+            .lines()
+            .filter(|l| !l.starts_with("dials\t"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let b = parse_basket_ruler(&bare, "bare").expect("a ruler without dials reads");
+        assert!(b.dials.is_none());
+        assert!(
+            ruled_basket(&b, None, [0.0; 4], [false; 4], false)
+                .expect_err("no dials")
+                .contains("run -solvebasket first")
+        );
+        assert_eq!(
+            ruled_basket(&b, None, [0.0; 4], [false; 4], true),
+            Ok((8, SOLVE_BASKET_START))
+        );
+        assert_eq!(
+            ruled_basket(&b, None, [1.2, 0.7, 0.9, 4.0], [false; 4], true),
+            Ok((8, [1.2, 0.7, 0.9, 4.0])),
+            "a solve starts from the world's dials"
+        );
+        for n in [0, 45] {
+            assert!(ruled_basket(r, Some(n), [0.0; 4], [false; 4], false).is_err());
+        }
+        let d = fitted(r);
+        assert_eq!(
+            ruled_basket(r, Some(8), [9.0; 4], [false, true, false, false], false),
+            Ok((8, [d[0], 9.0, d[2], d[3]])),
+            "the ruler's dials apply where no flag gave one"
+        );
+    }
+
+    /// THE COVERAGE MASK: names listing late leave the early aggregate to fewer names, and the
+    /// model's reading holds the same composition -- the aggregate's vol rises toward the names'
+    /// own as names drop out of it -- while the emitted names keep every session.
+    #[test]
+    fn the_coverage_mask_reads_the_records_composition() {
+        let mut w = default_world();
+        w.basket = 8;
+        w.basket_beta = 1.35;
+        w.basket_sector = 0.8;
+        w.basket_idio = 1.0;
+        w.basket_gaps = 7.0;
+        let sims = sim_paths(&w, 4, 40, DEFAULT_SEED);
+        let full = full_coverage_ruler(8);
+        let mut late = full.clone();
+        for m in late.names.iter_mut().skip(2) {
+            m.start = 2016;
+            m.sessions = 504;
+        }
+        let a = basket_reading(&full, &sims).expect("a reading");
+        let b = basket_reading(&late, &sims).expect("a reading");
+        assert!(
+            b.agg_vol_ratio > a.agg_vol_ratio + 0.02,
+            "two names alone for four fifths of the window: {} against {}",
+            b.agg_vol_ratio,
+            a.agg_vol_ratio
+        );
+        let (rp, rn) = masked_returns(&sims[0], &late);
+        let lo = 2016 * rp.len() / 2520;
+        assert!(rn[2][lo - 1].is_nan() && rn[2][lo].is_finite() && rn[0][0].is_finite());
+        assert!(sims[0].names[2].iter().all(|x| x.is_finite()));
+        let mut short = full.clone();
+        short.names.truncate(7);
+        assert!(
+            basket_reading(&short, &sims).is_none(),
+            "a basket of another size reads nothing"
+        );
+    }
+
+    /// The example ruler's own dials on the world they were solved on: every basket row and the
+    /// mechanism inside the ruler's bands at 8 x 100, and nothing graded without the ruler.
+    #[test]
+    fn the_basket_rows_grade_only_against_a_named_ruler() {
+        let Some((_, r)) = example() else {
+            return;
+        };
+        let (nq, _) = named_world("0.24.6-nasdaq-basket").expect("the recipe");
+        let w = with_basket_dials(&nq, r, fitted(r));
+        let sims = sim_paths(&w, 8, 100, DEFAULT_SEED);
+        let ruled = Anchors {
+            basket_ruler: Some(r),
+            ..NASDAQ_ANCHORS
+        };
+        let st = measure_for(ruled, &sims, 100);
+        let b = st.basket.expect("a reading against the ruler");
+        let rows: Vec<(String, bool, GateClass)> = gate_checks(ruled, &st)
+            .into_iter()
+            .filter(|x| x.0.starts_with("basket"))
+            .collect();
+        assert_eq!(rows.len(), 9);
+        for (nm, ok, _) in &rows {
+            assert!(ok, "{nm} failed: {b:?}");
+        }
+        let bare = measure_for(NASDAQ_ANCHORS, &sims, 100);
+        assert!(
+            bare.basket.is_none()
+                && !gate_checks(NASDAQ_ANCHORS, &bare)
+                    .iter()
+                    .any(|x| x.0.starts_with("basket"))
+        );
+    }
+
+    /// A ruler's dials resolve into the sidecar's `world` block and the world digest, `channels.basket`
+    /// carries the ruler and the rows graded, the names are graded series and `logBasket` leaves the
+    /// file; without a ruler the same basket is emitted whole and ungraded.
+    #[test]
+    fn the_sidecar_names_the_ruler_and_what_it_graded() {
+        let Some((_, r)) = example() else {
+            return;
+        };
+        let (years, seed) = (2usize, 20261004u64);
+        let w = with_basket_dials(&default_world(), r, fitted(r));
+        let p = simulate(&w, years, seed);
+        let dir = std::env::temp_dir().join(format!("basket_ruler_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let emit = |a: Anchors, tag: &str| -> (String, String) {
+            let st = measure_for(a, std::slice::from_ref(&p), years);
+            let v = Verdict {
+                paths: 1,
+                years,
+                world: w,
+                st,
+                rows: Vec::new(),
+                reported: Vec::new(),
+                level: p.clone(),
+            };
+            let file = dir
+                .join(format!("{tag}.tsv"))
+                .to_string_lossy()
+                .into_owned();
+            let spec = EmitSpec {
+                world: &w,
+                years,
+                seed,
+                start_ymd: "",
+            };
+            write_emitted(a, &file, &p, 0, spec, &v);
+            let tsv = std::fs::read_to_string(&file).expect("tsv");
+            let side = std::fs::read_to_string(sidecar_name(&file)).expect("sidecar");
+            std::fs::remove_file(&file).ok();
+            std::fs::remove_file(sidecar_name(&file)).ok();
+            (tsv.lines().next().unwrap_or_default().to_string(), side)
+        };
+        let ruled = Anchors {
+            basket_ruler: Some(r),
+            ..NASDAQ_ANCHORS
+        };
+        let (head, side) = emit(ruled, "ruled");
+        let (head0, side0) = emit(NASDAQ_ANCHORS, "bare");
+        std::fs::remove_dir(&dir).ok();
+        let d = fitted(r);
+        for line in [
+            format!("    \"basketBeta\": {},", ef(d[0])),
+            format!("    \"basketIdio\": {},", ef(d[2])),
+            format!("  \"worldDigest\": {},", json_str(&world_digest(&w))),
+            "        \"readUnder\": \"coverage\",".to_string(),
+            "        \"index\": \"QQQ\",".to_string(),
+        ] {
+            assert!(side.lines().any(|l| l == line), "sidecar lacks [{line}]");
+        }
+        assert!(side.contains("\"graded\": true,\n      \"ruler\": {"));
+        assert!(side.contains("\"gradedSeries\": [\"price\", \"bond\", \"logName1\""));
+        assert!(!head.split('\t').any(|c| c == "logBasket") && head.contains("\tlogName8"));
+        assert!(side0.contains("\"basket\": { \"ruler\": null, \"graded\": false }"));
+        assert!(head0.split('\t').any(|c| c == "logBasket"));
+        assert!(side0.contains("\"ungradedChannelSeries\": [\"logBasket\", \"logName1\""));
+        assert!(side0.contains("\"source\": \"emitted\", \"graded\": false }"));
+    }
+
+    /// A pinned path's masked readings, the Scala twin's to the last bit it prints.
+    #[test]
+    fn a_pinned_ensembles_basket_reading_is_the_scala_twins() {
+        let Some((_, r)) = example() else {
+            return;
+        };
+        let w = with_basket_dials(&default_world(), r, fitted(r));
+        let b = basket_reading(r, &sim_paths(&w, 2, 10, DEFAULT_SEED)).expect("a reading");
+        let got = [
+            b.name_vol_ratio,
+            b.name_gaps,
+            b.name_d20,
+            b.agg_corr,
+            b.agg_beta,
+            b.agg_vol_ratio,
+            b.pair_corr,
+            b.idio_share,
+            b.tail_coincidence,
+            b.pair_corr_worst,
+            b.pair_corr_mid,
+            b.name_d20_spread,
+        ];
+        let pin: [f64; 12] = [
+            2.952982519731829,
+            2.438467645891227,
+            0.684920634920635,
+            0.882278025939869,
+            1.415325860661501,
+            1.801703026235104,
+            0.590152284566778,
+            0.605510294761377,
+            0.543269230769231,
+            0.738192358420497,
+            0.194299133765872,
+            0.436904761904762,
+        ];
+        for (g, p) in got.iter().zip(pin) {
+            assert!((g - p).abs() < 1e-9, "{got:?}");
+        }
+    }
+
+    #[test]
     fn off_is_bit_identical_and_carries_no_names_and_every_frozen_world_keeps_the_basket_off() {
+        let mut anchored = default_world();
+        anchored.basket = 8;
+        anchored.basket_beta = 1.56;
+        anchored.basket_sector = 1.1;
+        anchored.basket_idio = 0.9;
+        anchored.basket_gaps = 6.0;
         let off = simulate(&default_world(), 3, DEFAULT_SEED);
-        let on = simulate(&anchored(), 3, DEFAULT_SEED);
+        let on = simulate(&anchored, 3, DEFAULT_SEED);
         assert!(off.names.is_empty());
         assert_eq!(on.names.len(), 8);
         assert!(
@@ -29024,60 +30563,6 @@ mod basket_anchor_tests {
         assert!(
             a.sat == b.sat && a.log_hi == b.log_hi,
             "the basket reads its own stream only"
-        );
-    }
-
-    /// A small ensemble at the verdict horizon; the bands are the eight's own ranges, wide enough
-    /// that 8 paths read inside them wherever 200 do.
-    #[test]
-    fn the_anchored_basket_sits_on_its_anchors_and_the_mechanism_row_discriminates() {
-        let Some(rs) = rows() else {
-            return;
-        };
-        let st = measure(&sim_paths(&anchored(), 8, 100, DEFAULT_SEED), 100);
-        let b = st.basket.expect("no basket readings with the channel on");
-        let rows: Vec<(String, bool, GateClass)> = gate_checks(anchors_named("sp500"), &st)
-            .into_iter()
-            .filter(|r| r.0.starts_with("basket"))
-            .collect();
-        assert_eq!(rows.len(), 9);
-        for (nm, ok, _) in &rows {
-            assert!(
-                ok,
-                "{nm} failed: names vol {:.2} gaps {:.2} corr {:.3} beta {:.2} volr {:.2} pair {:.3} idio {:.3} coinc {:.3}",
-                b.name_vol_ratio,
-                b.name_gaps,
-                b.agg_corr,
-                b.agg_beta,
-                b.agg_vol_ratio,
-                b.pair_corr,
-                b.idio_share,
-                b.tail_coincidence
-            );
-        }
-        assert!(
-            b.pair_corr_worst > b.pair_corr_mid + 0.15,
-            "stress must raise pairwise correlation materially: {:.3} vs {:.3}",
-            b.pair_corr_worst,
-            b.pair_corr_mid
-        );
-        // A DISCLOSED reading, not a gate. The model lands inside the eight's 0.08-0.61 but above
-        // their median (0.331): what is left of the gap is their COMMON drift, +0.297/yr against
-        // the shared leg's, which is the survivorship the fixture discloses — see
-        // `basket-drift-2026-10-03.tsv`.
-        let mut eight_d20 = eight(&rs, "d20");
-        eight_d20.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
-        assert!(
-            b.name_d20 > eight_d20[eight_d20.len() / 2],
-            "the names' time below peak is a disclosed reading, expected above the winners' median: {}",
-            b.name_d20
-        );
-        let off = measure(&sim_paths(&default_world(), 4, 20, DEFAULT_SEED), 20);
-        assert!(
-            off.basket.is_none()
-                && !gate_checks(anchors_named("sp500"), &off)
-                    .iter()
-                    .any(|r| r.0.starts_with("basket"))
         );
     }
 }
@@ -29625,7 +31110,11 @@ mod basket_drift_tests {
         let stats = |d: f64| {
             let mut w = basket();
             w.basket_drift = d;
-            basket_stats(&sim_paths(&w, 4, 100, DEFAULT_SEED)).expect("basket")
+            basket_reading(
+                &full_coverage_ruler(8),
+                &sim_paths(&w, 4, 100, DEFAULT_SEED),
+            )
+            .expect("basket")
         };
         let a = stats(0.0);
         let b = stats(0.8);

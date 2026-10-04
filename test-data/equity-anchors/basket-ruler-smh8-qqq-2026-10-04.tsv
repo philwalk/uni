@@ -1,0 +1,171 @@
+# AN EXAMPLE BASKET RULER, not a default: no set grades a basket unless a run names a ruler
+# (`-basketruler`). SMH's eight largest holdings as of 2026-10-02 -- NVDA TSM AMD AVGO MU INTC AMAT
+# KLAC -- against QQQ, adjusted closes from Yahoo's public chart API. To re-measure: write the nine
+# symbols' adjusted closes as one wide CSV (`date,QQQ,NVDA,...`) and run `record_bands -basket
+# -closes WIDE.csv -closesdate D -from 2012-01-04 -to 2026-08-31`; a later fetch reads slightly
+# differently, every distribution since recomputing the adjusted series. The `dials` group is
+# `-solvebasket`'s on `0.24.6-nasdaq-basket`.
+# THE BASKET RULER for `-basketruler`: 8 names against QQQ, measured by
+# `record_bands -basket` from a wide closes file (adjusted closes, dividends reinvested, taken
+# 2026-10-03) over 2012-01-04..2026-08-31, 3685 sessions.
+# Every row is `basket_read`'s, the reading the model takes of each path under this file's
+# coverage: a name counts from its first close on, and a model path reads name k over its
+# coverage span (start..end of the window's sessions) scaled to the path. A name under
+# minSessions sessions stays in the aggregate and the tail coincidence and out of the per-name
+# and pair ranges. `-solvebasket` writes the `dials` group.
+group	name	stat	value
+meta	ruler	index	QQQ
+meta	ruler	basis	adjusted-dividends-reinvested
+meta	ruler	closesDate	2026-10-03
+meta	ruler	from	2012-01-04
+meta	ruler	to	2026-08-31
+meta	ruler	sessions	3685
+meta	ruler	names	8
+meta	ruler	minSessions	252
+coverage	NVDA	first	2012-01-04
+coverage	NVDA	last	2026-08-31
+coverage	NVDA	start	0
+coverage	NVDA	end	3685
+coverage	NVDA	sessions	3685
+coverage	TSM	first	2012-01-04
+coverage	TSM	last	2026-08-31
+coverage	TSM	start	0
+coverage	TSM	end	3685
+coverage	TSM	sessions	3685
+coverage	AMD	first	2012-01-04
+coverage	AMD	last	2026-08-31
+coverage	AMD	start	0
+coverage	AMD	end	3685
+coverage	AMD	sessions	3685
+coverage	AVGO	first	2012-01-04
+coverage	AVGO	last	2026-08-31
+coverage	AVGO	start	0
+coverage	AVGO	end	3685
+coverage	AVGO	sessions	3685
+coverage	MU	first	2012-01-04
+coverage	MU	last	2026-08-31
+coverage	MU	start	0
+coverage	MU	end	3685
+coverage	MU	sessions	3685
+coverage	INTC	first	2012-01-04
+coverage	INTC	last	2026-08-31
+coverage	INTC	start	0
+coverage	INTC	end	3685
+coverage	INTC	sessions	3685
+coverage	AMAT	first	2012-01-04
+coverage	AMAT	last	2026-08-31
+coverage	AMAT	start	0
+coverage	AMAT	end	3685
+coverage	AMAT	sessions	3685
+coverage	KLAC	first	2012-01-04
+coverage	KLAC	last	2026-08-31
+coverage	KLAC	start	0
+coverage	KLAC	end	3685
+coverage	KLAC	sessions	3685
+names	NVDA	vol	44.36
+names	NVDA	volRatio	2.158
+names	NVDA	gaps10	1.641
+names	NVDA	gaps5	17.30
+names	NVDA	maxDD	-66.3
+names	NVDA	d10	0.427
+names	NVDA	d20	0.232
+names	NVDA	acf1	0.189
+names	NVDA	kurt	10.75
+names	TSM	vol	31.77
+names	TSM	volRatio	1.545
+names	TSM	gaps10	0.410
+names	TSM	gaps5	6.70
+names	TSM	maxDD	-56.5
+names	TSM	d10	0.411
+names	TSM	d20	0.155
+names	TSM	acf1	0.152
+names	TSM	kurt	7.21
+names	AMD	vol	57.01
+names	AMD	volRatio	2.773
+names	AMD	gaps10	5.061
+names	AMD	gaps5	30.71
+names	AMD	maxDD	-80.4
+names	AMD	d10	0.784
+names	AMD	d20	0.610
+names	AMD	acf1	0.139
+names	AMD	kurt	12.15
+names	AVGO	vol	38.02
+names	AVGO	volRatio	1.849
+names	AVGO	gaps10	1.368
+names	AVGO	gaps5	9.92
+names	AVGO	maxDD	-48.3
+names	AVGO	d10	0.329
+names	AVGO	d20	0.084
+names	AVGO	acf1	0.198
+names	AVGO	kurt	12.47
+names	MU	vol	49.33
+names	MU	volRatio	2.399
+names	MU	gaps10	2.735
+names	MU	gaps5	22.02
+names	MU	maxDD	-73.8
+names	MU	d10	0.722
+names	MU	d20	0.549
+names	MU	acf1	0.156
+names	MU	kurt	6.98
+names	INTC	vol	39.61
+names	INTC	volRatio	1.927
+names	INTC	gaps10	2.120
+names	INTC	gaps5	12.38
+names	INTC	maxDD	-70.8
+names	INTC	d10	0.666
+names	INTC	d20	0.425
+names	INTC	acf1	0.258
+names	INTC	kurt	18.65
+names	AMAT	vol	39.69
+names	AMAT	volRatio	1.930
+names	AMAT	gaps10	1.299
+names	AMAT	gaps5	13.81
+names	AMAT	maxDD	-55.1
+names	AMAT	d10	0.505
+names	AMAT	d20	0.331
+names	AMAT	acf1	0.239
+names	AMAT	kurt	8.49
+names	KLAC	vol	38.51
+names	KLAC	volRatio	1.873
+names	KLAC	gaps10	1.573
+names	KLAC	gaps5	12.65
+names	KLAC	maxDD	-43.6
+names	KLAC	d10	0.371
+names	KLAC	d20	0.124
+names	KLAC	acf1	0.217
+names	KLAC	kurt	9.51
+basket	QQQ	vol	20.6
+basket	basket	vol	32.9
+basket	basket	corr	0.840
+basket	basket	betaOn	1.345
+basket	basket	volRatio	1.601
+cross	pairCorr	mean	0.554
+cross	pairCorr	min	0.396
+cross	pairCorr	max	0.841
+cross	pairCorr	pairs	28
+cross	idioShare	median	0.414
+cross	idioShare	min	0.251
+cross	idioShare	max	0.529
+cross	tailCoincidence	value	0.446
+mechanism	pairCorr	worstDecile	0.511
+mechanism	pairCorr	middle	0.205
+mechanism	pairCorr	bestDecile	0.449
+dials	ruler	basketBeta	1.345000
+dials	ruler	basketSector	0.800000
+dials	ruler	basketIdio	1.025000
+dials	ruler	basketGaps	7.000000
+dials	ruler	version	0.24.6
+dials	ruler	primary	f8ff17276e15693f
+dials	ruler	paths	200
+dials	ruler	years	100
+dials	ruler	seed	20260813
+dials	reading	basket name vol ratio	2.091472
+dials	reading	basket name gaps/yr	4.028910
+dials	reading	basket corr	0.822035
+dials	reading	basket beta	1.345577
+dials	reading	basket vol ratio	1.639545
+dials	reading	basket pair corr	0.561954
+dials	reading	basket idio share	0.384051
+dials	reading	basket tail coincidence	0.481647
+dials	reading	pair corr worst decile	0.499844
+dials	reading	pair corr middle	0.184164

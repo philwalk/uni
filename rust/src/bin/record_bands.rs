@@ -38,6 +38,8 @@ const USAGE: &str =
        record_bands -sectors DIR [-resamples N] [-seed S]
        record_bands -volexit (-closes FILE | -french FILE) -fred DFF -from -to -set -series
                     [-resamples N] [-seed S] [-joint A] [-of N] [-header]
+       record_bands -basket -closes WIDE.csv -closesdate YYYY-MM-DD [-from D] [-to D]
+                    [-minsessions N] [-out RULER.tsv]
 
   -rateafter    THE CONDITIONAL RATE ROWS (`RATE_AFTER_ROWS`): the -fred rate on the equity window's
                 session dates, the two years after each 20% decline's trough; the record by
@@ -54,6 +56,13 @@ const USAGE: &str =
                 block resamples (`vol_exit_resamples`), their joint band. -closes FILE is a
                 `date,close,adj_close` CSV (Yahoo's printed and adjusted closes); -french FILE reads
                 CRSP's daily total return as both, having no printed close
+  -basket       THE BASKET RULER for `-basketruler` (`basket_ruler_tsv`): -closes WIDE.csv is one row a
+                session, `date`, the index's column named by its ticker, then one column per name,
+                a name's cell empty before its listing (adjusted closes, dividends reinvested);
+                -closesdate is the day they were taken, since an adjusted series is recomputed on
+                every later distribution. -from / -to bound the window (default the file's);
+                -minsessions (default 252) is the sessions a name needs to enter the per-name and
+                pair ranges. Writes -out, or prints
   -sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,
                 `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the
                 library publishes them (unzipped), the first monthly block of each; prints the
@@ -606,6 +615,45 @@ fn volexit_mode(args: &[String]) -> bool {
     true
 }
 
+/// `-basket`: the ruler from a wide closes file, written to `-out` or printed.
+fn basket_mode(args: &[String]) -> bool {
+    if !args.iter().any(|a| a == "-basket") {
+        return false;
+    }
+    let opt = |flag: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let closes = opt("-closes").unwrap_or_else(|| usage("-basket wants -closes WIDE.csv"));
+    let closes_date =
+        opt("-closesdate").unwrap_or_else(|| usage("-basket wants -closesdate YYYY-MM-DD"));
+    let min_sessions: usize =
+        opt("-minsessions").map_or(252, |v| num(&v, "-minsessions wants a session count"));
+    let text = std::fs::read_to_string(&closes)
+        .unwrap_or_else(|e| usage(&format!("cannot read {closes}: {e}")));
+    let tsv = ms::parse_basket_closes(&text)
+        .and_then(|c| {
+            ms::basket_ruler_tsv(
+                &c,
+                &opt("-from").unwrap_or_default(),
+                &opt("-to").unwrap_or_default(),
+                &closes_date,
+                min_sessions,
+            )
+        })
+        .unwrap_or_else(|m| usage(&format!("-basket {closes}: {m}")));
+    match opt("-out") {
+        Some(out) => {
+            std::fs::write(&out, &tsv)
+                .unwrap_or_else(|e| usage(&format!("cannot write {out}: {e}")));
+            eprintln!("wrote {out}");
+        }
+        None => print!("{tsv}"),
+    }
+    true
+}
+
 fn sector_mode(args: &[String]) -> bool {
     let Some(k) = args.iter().position(|a| a == "-sectors") else {
         return false;
@@ -630,7 +678,7 @@ fn sector_mode(args: &[String]) -> bool {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // a mode that reads its own arguments runs and is done
-    if sector_mode(&args) || timing_mode(&args) || volexit_mode(&args) {
+    if basket_mode(&args) || sector_mode(&args) || timing_mode(&args) || volexit_mode(&args) {
         return;
     }
     let o = parse_args(&args);

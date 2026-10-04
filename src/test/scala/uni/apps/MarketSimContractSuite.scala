@@ -907,7 +907,8 @@ class MarketSimContractSuite extends FunSuite:
     // the anchor sets' channel dials ARE the channel recipes' (the verdict grades a world's
     // derived series at exactly the dials the shipped channel worlds run), the verdict world of a
     // channels-off world is that world with every channel at them and its primary untouched, a
-    // channel the caller turned on keeps the caller's dials, and a null panel is graded as a real one
+    // channel the caller turned on keeps the caller's dials, a null panel is graded as a real one,
+    // and the basket is the caller's alone
     val sp = MarketSim.namedWorld("0.24.5-sp500").get._1
     val nq = MarketSim.namedWorld("0.24.5-nasdaq-basket").get._1
     assertEquals(MarketSim.ChannelDials.of(sp), MarketSim.SP500Anchors.channelDials)
@@ -918,17 +919,15 @@ class MarketSimContractSuite extends FunSuite:
     val c = MarketSim.ChannelDials.of(d)
     assertEquals(vw.copy(satBeta = c.satBeta, satIdio = c.satIdio, satCycleSd = c.satCycleSd, satDriftHalf = c.satDriftHalf, satLevelHalf = c.satLevelHalf, rangeScale = c.rangeScale,
                          rangeDown = c.rangeDown, volIdio = c.volIdio, overnight = c.overnight,
-                         divYield = c.divYield, basket = c.basket, basketBeta = c.basketBeta,
-                         basketSector = c.basketSector, basketIdio = c.basketIdio,
-                         basketGaps = c.basketGaps, basketDrift = c.basketDrift,
+                         divYield = c.divYield,
                          sectors = c.sectors, sectorIdio = c.sectorIdio, sectorDriftSd = c.sectorDriftSd,
                          sectorDriftHalf = c.sectorDriftHalf, macroPanel = c.macroPanel), d)
     assertEquals(MarketSim.ChannelDials.of(MarketSim.verdictWorld(MarketSim.NasdaqAnchors, d)),
                  MarketSim.NasdaqChannelDials)
     val w = d.copy(satBeta = 1.5, satIdio = 0.5, macroPanel = 1, macroNull = 1)
     val v = MarketSim.verdictWorld(MarketSim.SP500Anchors, w)
-    assert(v.satBeta == 1.5 && v.satIdio == 0.5 && v.macroNull == 0 && v.basket == 8,
-           "a channel the caller turned on keeps its dials; the rest are anchored")
+    assert(v.satBeta == 1.5 && v.satIdio == 0.5 && v.macroNull == 0 && v.basket == 0,
+           "a channel the caller turned on keeps its dials; the rest are anchored but the basket")
     assertEquals(MarketSim.verdictWorld(MarketSim.SP500Anchors, sp), sp)
   }
 
@@ -1042,8 +1041,9 @@ class MarketSimContractSuite extends FunSuite:
     val st = MarketSim.measure(MarketSim.simPaths(vw, 8, 40, MarketSim.DefaultSeed), 40)
     val rows = MarketSim.gateChecks(MarketSim.SP500Anchors, st)
     for prefix <- Seq("satellite corr", "bar range vs cc vol", "bar volume sd", "dividend yield",
-                      "bar overnight share", "basket corr", "macro cond build-up") do
+                      "bar overnight share", "macro cond build-up") do
       assert(rows.exists(_._1.startsWith(prefix)), s"the default's verdict has no `$prefix` row")
+    assert(st.basket.isEmpty && !rows.exists(_._1.startsWith("basket")), "the basket grades only against a client's ruler")
   }
 
   test("each direct extreme reading is what measure reads on that path") {

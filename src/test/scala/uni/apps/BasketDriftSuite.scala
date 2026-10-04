@@ -60,8 +60,8 @@ class BasketDriftSuite extends FunSuite:
     // At a CENTURY the off-state spread is only what estimation noise leaves (the shorter the
     // window the more of it there is), so this is where the dial's own contribution is legible.
     def stats(d: Double) =
-      MarketSim.basketStats(MarketSim.simPaths(Basket.copy(basketDrift = d), 4, 100,
-                                               MarketSim.DefaultSeed)).getOrElse(fail("no basket"))
+      MarketSim.basketReading(BasketRulers.fullCoverage(8),
+        MarketSim.simPaths(Basket.copy(basketDrift = d), 4, 100, MarketSim.DefaultSeed)).getOrElse(fail("no basket"))
     val a = stats(0.0)
     val b = stats(0.8)
     assert(b.nameD20Spread > a.nameD20Spread * 2.0,

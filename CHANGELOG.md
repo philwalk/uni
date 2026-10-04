@@ -7,8 +7,8 @@ price indexes read from Yahoo's public ^IXIC and ^NDX series. A row that reads t
 rule earns cannot test whether it lasts when it is read off the window the rule was selected on,
 and the Nasdaq consumer's rules were selected on the NDX from 1990. The same rows read off the NDX
 from 1990, QQQ 1999-2026 (the multi-year rows' equity window) and CRSP's century (the timing rows)
-are reported, not graded. The unconditional rows (volatility, tails, the up-day share, the basket)
-stay on QQQ. The S&P set is unchanged.
+are reported, not graded. The unconditional rows (volatility, tails, the up-day share) stay on QQQ.
+The S&P set is unchanged.
 
 | Nasdaq row | graded record (splice) | previously graded |
 |---|---|---|
@@ -70,15 +70,33 @@ included. Every chunk carries the `-emitgate` ensemble's verdict, whatever its s
 the TSV's at single precision. The Scala twin's chunk differs from the Rust one in about one cell
 in three million, by one f32 ulp.
 
-**The basket ruler, fixed and public.** The basket is graded against SMH's eight largest holdings as
-of 2026-10-02 (NVDA, TSM, AMD, AVGO, MU, INTC, AMAT, KLAC), held fixed, read from Yahoo's public
-adjusted closes over 2012-2026 (`basket-2026-10-03.tsv` and `basket-drift-2026-10-03.tsv` replace the
-2026-09-02 and 2026-09-03 fixtures). Four bands move: beta 1.2-1.8 on the S&P (1.3-1.9) and 1.0-1.6
-on the Nasdaq (1.1-1.7), the S&P vol ratio 1.6-2.3 (1.7-2.4), pairwise correlation 0.39-0.85
-(0.42-0.86) and tail coincidence 0.33-0.58 (0.35-0.60). No verdict changes: every member of both
-sets reads inside every basket band on seeds 1-4, the closest 0.055 from an edge. The names' drift
-dispersion now reads 0.062 a year beyond the window's noise, all of it INTC's; `-basketdrift` still
-ships at 0, ungraded.
+**The basket is a null world, graded only against the client's own ruler.** The basket's names
+are exchangeable by construction: a shared leg on the primary plus each name's own idio and
+symmetric jumps, every name at the same expected drift. A rule that ranks them has zero expected
+edge, so the basket measures a rule's false-positive rate, and with `-basketdrift` swept up the
+dispersion it would need. No set grades a basket any more; a run grades one against a ruler it
+names:
+
+- `record_bands -basket -closes WIDE.csv -closesdate D` measures a ruler from one wide CSV: `date`,
+  the index named by its ticker, one column per name, a cell empty before a listing or after a
+  delisting. Each row is read on the names present, with each name's coverage recorded. A name
+  under 252 sessions stays in the aggregate and the tail coincidence but out of the per-name and
+  pair ranges. Every row uses the model's own definition, so idio share is read on the aggregate.
+  The Scala twin is `jsrc/recordBands.sc -basket`, byte-identical.
+- `-basketruler FILE` grades the eight basket rows and the mechanism row against the ruler. It sets
+  N to the ruler's names and the four dials to its fitted ones. The model reads under the ruler's
+  coverage: name k counts over its listing's share of each path. A 45-name model's aggregate is
+  therefore read against the 10 to 45 names the record held, not all 45, since diversification
+  moves the aggregate rows by most of a band. A ruler whose record fails the mechanism premise is
+  refused, and so is one without fitted dials.
+- `-solvebasket` fits the dials to a ruler by coordinate descent at 12 × 30, confirms them at
+  `-paths` × `-years`, and writes them into the ruler with the solve's version, seed and primary.
+- `basket-ruler-smh8-qqq-2026-10-04.tsv` is an example ruler: SMH's eight largest holdings as of
+  2026-10-02, against QQQ, from Yahoo's public closes. At its fitted dials on `0.24.6-nasdaq-basket`
+  every basket row and the mechanism pass at 200 × 100. `basket-2026-10-03.tsv` is gone.
+- The `*-basket` recipes keep their dials and eight names, emitted ungraded without a ruler. A
+  basket costs about 0.2 ms and 0.23 MB a name per 100-year path: a 200 × 100 verdict reads in
+  1.2 s at 8 names and 2.4 s at 45.
 
 **Satellite depth rows at the record's drift.** The satellite's d5, d10 and crash ratios read both
 legs with their own realized drift replaced by SPY's and QQQ's over 1999-2026 (8.24% and 10.26% a
@@ -90,15 +108,27 @@ window and blocks beside it. Every member of both sets passes all three rows on 
 
 **Upgrading**
 
-- **Sidecar schema 28 → 29.** `reportedRows` follows `fidelity`: each a `fidelity` row led by its
+- **Sidecar schema 28 → 30.** `reportedRows` follows `fidelity`: each a `fidelity` row led by its
   `window`, never in a verdict (`miss` says only where the record would fall); `[]` where the set
   reports nothing. The Nasdaq's `fidelity` list no longer holds the eight QQQ multi-year rows.
+- **The basket's verdict.** No world is graded on a basket unless the run names a ruler:
+  - The verdict world no longer turns a basket on, so a world without one simulates none.
+  - The sets' verdicts drop the basket rows; the members are unchanged.
+  - `verdictSeries` loses `logBasket` and `logName*`.
+  - `verdictChannels.basket` reads `source` `emitted` or `off` and gains `graded`.
+  - `channels.basket` is `{ "ruler": null, "graded": false }` for a basket run without a ruler. With
+    one it carries the readings, `graded: true` and `ruler`: file, digest, index, basis,
+    closesDate, window, names, minSessions, `readUnder`, per-name coverage, the rows with records
+    and bands, the mechanism and the dials.
+  - `logName*` are graded series only with a ruler; `logBasket` is never graded.
+  - A run with a ruler omits `logBasket` from the TSV and the stream; an `-emitf32` run's
+    `-emitcols logBasket` brings it back.
 - The 250-session rung reads each era's record among the world's histories cut to that era's
   length, and a set grades the era of its own index nearest the run's years. The S&P at 100 years
   reads as before.
 - The Nasdaq's loss spreads at the splice's 56 years: the avoided share 0.27, the coupling 0.32,
   the long window's variance ratios 0.22 / 0.33 and decline gap 0.43.
-- Schema 29 also covers the `-emitf32` chunk's sidecar: `format`, `layout`, `columnsAbsent` and
+- Schema 30 also covers the `-emitf32` chunk's sidecar: `format`, `layout`, `columnsAbsent` and
   `paths` (`first`, `count`, the seeds and the calendar) where a TSV's carries `header` and `path`;
   `episodes.paths` holds each path's index and rows; `gate.gradedSeries` and
   `gate.ungradedChannelSeries` list only the file's columns. The TSV and its sidecar are unchanged.
@@ -111,9 +141,18 @@ window and blocks beside it. Every member of both sets passes all three rows on 
 - `record_bands`: `-splice FILE -at DATE` continues a `-yahoo` series with a second file's returns
   dated after DATE; `-timing` reads `-yahoo`; `-coupling` also prints `variance ratio 250d`.
 - New `SAT_REF_DRIFT` (`SatRefDrift`): the satellite depth rows' reference drifts.
-- `Anchors`' basket fields: S&P corr 0.773, beta 1.536, vol ratio 1.986; Nasdaq 0.840, 1.345,
-  1.601. The basket fixtures carry no population rows.
-- `fidelity` gains `vol-exit timing pts/yr` and `vol-exit 3x interaction pts/yr` (schema 29 covers
+- API, the basket:
+  - `Anchors` loses `basket_corr`, `basket_beta`, `basket_vol_ratio` and `basket_name_vol_band`, and
+    gains `basket_ruler`.
+  - `ChannelDials` loses its basket fields.
+  - `measure` no longer reads the basket; `measure_for` reads it against the anchors' ruler.
+  - `basket_stats` gives way to `basket_reading` and `basket_read`.
+  - New: `BasketRuler`, `RulerName`, `RulerDials`, `BasketBand`, `BasketRead`, `BasketCloses`,
+    `parse_basket_ruler`, `load_basket_ruler`, `parse_basket_closes`, `basket_ruler_tsv`,
+    `ruler_with_dials`, `ruled_basket`, `solve_basket`, `with_basket_dials`, `primary_digest`,
+    `BASKET_ROWS`, `BASKET_MECHANISM_ROW`, `SOLVE_BASKET_SPEC` and `SOLVE_BASKET_START`.
+  - The Scala twin matches.
+- `fidelity` gains `vol-exit timing pts/yr` and `vol-exit 3x interaction pts/yr` (schema 30 covers
   them). New `VOL_EXIT_ROWS`, `VolExitDay`, `vol_exit_of`, `vol_exit_days_of_path` and
   `vol_exit_resamples`; each set carries 22 `RecordBand`s. `record_bands -volexit` reads a
   `date,close,adj_close` file (`-closes`) or CRSP (`-french`) beside a `-fred` rate.

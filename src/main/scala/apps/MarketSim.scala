@@ -286,7 +286,16 @@ object MarketSim:
   // rows.  An `-emitf32` chunk's sidecar (`F32SidecarKeys`) carries `format`, `layout`,
   // `columnsAbsent` and `paths` where a TSV's carries `header` and `path`, and its `episodes` lists
   // each path's rows.
-  val EmitSchema: Int = 29
+  // 29 -> 30: THE BASKET GRADES ONLY AGAINST A CLIENT'S RULER (`-basketruler`).  The verdict no
+  // longer supplies a basket: `verdictChannels.basket` gained `graded` and reads `source` "emitted"
+  // or "off"; `channels.basket` is `{ "ruler": null, "graded": false }` for a basket run without a
+  // ruler, and with one carries the readings, `graded: true` and `ruler` (file, digest, index,
+  // basis, closesDate, window, names, minSessions, `readUnder`, per-name coverage, the rows with
+  // their records and bands, the mechanism, the fitted dials).  `logName*` are in `gradedSeries`
+  // only with a ruler, `ungradedChannelSeries` otherwise; `logBasket` is never graded, and a run
+  // with a ruler omits it unless an `-emitf32` run's `-emitcols` names it.  A world without a
+  // basket loses the basket rows, readings and `verdictSeries` entries the verdict used to supply.
+  val EmitSchema: Int = 30
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -474,7 +483,16 @@ object MarketSim:
     "              ;   primary's observed return + -basketsector idio riding state x spiral) plus",
     "              ;   its own idio (-basketidio, on the vol state alone -- so correlation rises",
     "              ;   in stress) and its own gaps (-basketgaps per year, t-jumps).  The aggregate",
-    "              ;   is the sector.  Graded N 8 on SMH's top holdings.  Default 0 = off",
+    "              ;   is the sector.  A NULL WORLD of exchangeable names: graded only against",
+    "              ;   a -basketruler.  About 0.2 ms and 0.23 MB a name per 100-year path.",
+    "              ;   Default 0 = off",
+    "-basketruler FILE ; THE CLIENT'S RULER (`record_bands -basket` from its closes): grades the",
+    "              ;   basket's rows, read under the ruler's coverage; sets N to its names and",
+    "              ;   the four dials to its fitted ones (a -basket* flag overrides one).  A",
+    "              ;   ruler without fitted dials is refused",
+    "-solvebasket  ; with -basketruler: fit the four dials to the ruler (coordinate descent at",
+    "              ;   12 x 30, from the ruler's or the world's dials), confirm them at -paths x",
+    "              ;   -years, and write them into the ruler's `dials` group",
     "-basketdrift X; cross-sectional DRIFT DISPERSION: sd of the names' own annual log-drift",
     "              ;   offsets as a fraction of the primary's vol, centred so the sector is",
     "              ;   untouched.  SHIPS AT 0, ungraded: the ruler's eight show 0.062 beyond a",
@@ -1288,17 +1306,18 @@ object MarketSim:
                            // gaps.  The sector leg is the satellite construction (beta on the
                            // primary's observed return plus idio riding the re-levelled state
                            // factor) and is shared by every name: the model has no sector index,
-                           // so the basket's equal-weight aggregate IS the sector, graded against
-                           // SMH's own relation to SPY.  A name's idio rides the VOL STATE only,
+                           // so the basket's equal-weight aggregate IS the sector.  A name's idio
+                           // rides the VOL STATE only,
                            // not the spiral's amplification, so in stress the shared variance
                            // dominates and pairwise correlation rises -- the mechanism the record
                            // shows (0.56 on SPY's worst decile vs 0.22 mid).  Own gaps: a
                            // per-name Student-t jump (JumpNu, the primary's skew) at `basketGaps`
                            // per year past ~10%.  Reaches no price; 0 = off, no columns,
-                           // bit-identical.  Graded against SMH's eight largest holdings as of
-                           // 2026-10-02 (`basket-2026-10-03.tsv`): N = 8.
-    basketBeta: Double = 0.0,   // sector leg: beta on the primary's observed return (anchored
-                                // 1.56, the basket's beta on SPY)
+                           // bit-identical.  A NULL WORLD of exchangeable names, graded only
+                           // against a client's ruler (`BasketRuler`, `-basketruler`), whose
+                           // names set N; one basket a world.  Costs about 0.2 ms and 0.23 MB a
+                           // name per 100-year path.
+    basketBeta: Double = 0.0,   // sector leg: beta on the primary's observed return
     basketSector: Double = 0.0, // sector leg: idio sd as a FRACTION of the primary's realized
                                 // vol, riding the vol state x spiral (the satellite's `satIdio`
                                 // construction)
@@ -5049,22 +5068,6 @@ object MarketSim:
   final case class BarStats(rangeOverCcvol: Double, rangeAcf1: Double, rangeDownup: Double,
                             volSd: Double, volCorrRange: Double)
 
-  /** THE BASKET's readings, medians across paths, at the three levels of `basket-2026-10-03.tsv`.
-    * Level 1 per name, pooled over names and paths: vol as a ratio to the primary's, sessions
-    * past 10% per year, the share of sessions >20% below the running peak.  Level 2 the
-    * equal-weight aggregate against the primary: correlation and beta, and vol ratio.  Level 3:
-    * mean pairwise correlation, idio share (1 - R^2 of a name on the aggregate), same-day tail
-    * coincidence, and the mechanism -- mean pairwise correlation on the primary's worst decile
-    * against its middle decile.  The equal-weight basket is the mean of simple returns, as a log
-    * series, the fixture's convention. */
-  final case class BasketStats(nameVolRatio: Double, nameGaps: Double, nameD20: Double,
-                               aggCorr: Double, aggBeta: Double, aggVolRatio: Double,
-                               pairCorr: Double, idioShare: Double, tailCoincidence: Double,
-                               pairCorrWorst: Double, pairCorrMid: Double,
-                               // the SPREAD of time-below-peak across the names (max - min),
-                               // which is what `basketDrift` moves; the eight span 0.53
-                               nameD20Spread: Double)
-
   /** THE SECTOR CHANNEL's readings, medians across paths of the ten-industry ruler's rows read on
     * the legs aggregated to calendar months (`monthEnds`; the primary as the market, cash from
     * the rate as the bill): the 12-1 cross-sectional momentum (mean monthly long-minus-short
@@ -5113,50 +5116,620 @@ object MarketSim:
       def col(k: Int): Double = medOf(per.map(_(k)))
       Some(SectorStats(col(0), col(1), col(2), col(3), col(4), col(5), col(6), col(7), col(8), col(9)))
 
-  def basketStats(sims: Vector[Path]): Option[BasketStats] =
-    if sims.isEmpty || sims.head.names.isEmpty then None
+  /** THE BASKET's readings against a client's ruler (`BasketRuler`), medians across paths, each
+    * path read under the ruler's coverage (`maskedReturns`, `basketRead`).  Level 1 over the
+    * ruler's graded names: vol as a ratio to the primary's over each name's own span, sessions past
+    * 10% per year, the share of sessions >20% below the running peak.  Level 2 the equal-weight
+    * aggregate of the names present against the primary: correlation, beta, vol ratio.  Level 3 the
+    * mean pairwise correlation over the graded pairs, the median idio share (1 - R^2 of a name on
+    * the aggregate), same-day tail coincidence, and the mechanism -- mean pairwise correlation on
+    * the primary's worst decile against its middle decile.  The aggregate is the mean of the
+    * present names' simple returns, as a log series. */
+  final case class BasketStats(nameVolRatio: Double, nameGaps: Double, nameD20: Double,
+                               aggCorr: Double, aggBeta: Double, aggVolRatio: Double,
+                               pairCorr: Double, idioShare: Double, tailCoincidence: Double,
+                               pairCorrWorst: Double, pairCorrMid: Double,
+                               // the SPREAD of time-below-peak across the graded names (max - min),
+                               // which is what `basketDrift` moves
+                               nameD20Spread: Double):
+    /** The readings `BasketRows` grade, in their order. */
+    def graded: Vector[Double] =
+      Vector(nameVolRatio, nameGaps, aggCorr, aggBeta, aggVolRatio, pairCorr, idioShare, tailCoincidence)
+
+  /** The basket's fidelity rows, graded only against a ruler, in gate order: the readings are
+    * `BasketStats.graded`'s, the bands `BasketRuler.bands`'. */
+  val BasketRows: Vector[String] = Vector("basket name vol ratio", "basket name gaps/yr", "basket corr",
+    "basket beta", "basket vol ratio", "basket pair corr", "basket idio share", "basket tail coincidence")
+
+  /** The basket's mechanism row: pairwise correlation rises on the primary's worst decile. */
+  val BasketMechanismRow = "basket pair corr rises on the worst decile"
+
+  /** One history's basket readings, each name present exactly where its return is finite: a
+    * record's name before its listing, and a model path's outside its coverage span, is NaN.
+    * `record_bands -basket` reads the record with `basketRead` and the model reads each path with
+    * it, so a ruler's rows and the readings graded against them are one definition.  Per name: the
+    * daily sd of its returns, that over the index's on the same sessions, sessions past 10% per
+    * year of its sessions, the share of its levels more than 20% below their running peak, and
+    * 1 - R^2 on the aggregate; the aggregate's daily sd, correlation, beta and vol ratio on the
+    * index over the sessions with a name present; each requested pair's correlation over its
+    * common sessions; on the aggregate's worst 1% of sessions, the share of the names present
+    * below their own 1% cut; mean pair correlation on the index's worst, central and best deciles. */
+  final case class BasketRead(sd: Vector[Double], volRatio: Vector[Double], gaps10: Vector[Double],
+                              d20: Vector[Double], idio: Vector[Double], aggSd: Double, aggCorr: Double,
+                              aggBeta: Double, aggVolRatio: Double, pair: Vector[Double],
+                              tailCoincidence: Double, worst: Double, mid: Double, best: Double)
+
+  /** The finite pairs of `a` and `b` at `at(0) until at(m - 1)`, in that order: their count, and
+    * the sums of squared deviations of each and of their product about the pairs' own means. */
+  private def presentMoments(a: Array[Double], b: Array[Double], m: Int, at: Int => Int): (Int, Double, Double, Double) =
+    var n = 0; var sa = 0.0; var sb = 0.0; var i = 0
+    while i < m do
+      val t = at(i)
+      if a(t).isFinite && b(t).isFinite then
+        n += 1; sa += a(t); sb += b(t)
+      i += 1
+    if n == 0 then (0, Double.NaN, Double.NaN, Double.NaN)
     else
-      val per = parMap(sims) { s =>
-        val rp  = dailyReturns(s.price)
-        val n   = rp.length
-        val rn  = s.names.map(lp => Array.tabulate(n)(t => lp(t + 1) - lp(t)))
-        val agg = Array.tabulate(n)(t => math.log(rn.map(r => math.exp(r(t))).sum / rn.size))
-        def sdOf(r: Array[Double]) =
-          val m = r.sum / r.length
-          math.sqrt(r.map(v => (v - m) * (v - m)).sum / (r.length - 1))
-        val sdP = sdOf(rp)
-        val volRatios = rn.map(r => sdOf(r) / sdP)
-        val gaps = rn.map(r => r.count(v => math.abs(v) > 0.10).toDouble / (n / DaysPerYear.toDouble))
-        val d20s = s.names.map(lp => depthShares(lp.map(math.exp))._3)
-        val mp = rp.sum / n; val ma = agg.sum / n
-        var cov = 0.0; var varP = 0.0
-        for t <- 0 until n do
-          cov += (rp(t) - mp) * (agg(t) - ma); varP += (rp(t) - mp) * (rp(t) - mp)
-        val pairs = for a <- rn.indices; b <- rn.indices if a < b yield pearson(rn(a), rn(b))
-        val idio = rn.map { r =>
-          val ba = pearson(r, agg); 1.0 - ba * ba }
-        val cuts = rn.map(r => pctile(r.toVector, 0.01))
-        val aggCut = pctile(agg.toVector, 0.01)
-        val worstAgg = (0 until n).filter(t => agg(t) <= aggCut)
-        val coinc =
-          if worstAgg.isEmpty then Double.NaN
-          else worstAgg.map(t => rn.indices.count(q => rn(q)(t) < cuts(q)).toDouble / rn.size).sum / worstAgg.size
-        val order = (0 until n).sortBy(rp(_))
-        def pairCorrOn(idx: IndexedSeq[Int]) =
-          val sub = rn.map(r => idx.map(r(_)).toArray)
-          val ps = for a <- sub.indices; b <- sub.indices if a < b yield pearson(sub(a), sub(b))
-          ps.sum / ps.size
-        val dec = n / 10
-        (medOf(volRatios), gaps.sum / gaps.size, medOf(d20s),
-         pearson(rp, agg), cov / varP, sdOf(agg) / sdP,
-         pairs.sum / pairs.size, medOf(idio), coinc,
-         pairCorrOn(order.take(dec)), pairCorrOn(order.slice(n / 2 - dec / 2, n / 2 + dec / 2)),
-         d20s.max - d20s.min)
-      }
-      Some(BasketStats(medOf(per.map(_._1)), medOf(per.map(_._2)), medOf(per.map(_._3)),
-                       medOf(per.map(_._4)), medOf(per.map(_._5)), medOf(per.map(_._6)),
-                       medOf(per.map(_._7)), medOf(per.map(_._8)), medOf(per.map(_._9)),
-                       medOf(per.map(_._10)), medOf(per.map(_._11)), medOf(per.map(_._12))))
+      val ma = sa / n; val mb = sb / n
+      var saa = 0.0; var sbb = 0.0; var sab = 0.0
+      i = 0
+      while i < m do
+        val t = at(i)
+        if a(t).isFinite && b(t).isFinite then
+          val x = a(t) - ma; val y = b(t) - mb
+          saa += x * x; sbb += y * y; sab += x * y
+        i += 1
+      (n, saa, sbb, sab)
+
+  /** `presentMoments` over the sessions `lo until hi`. */
+  private def momentsOver(a: Array[Double], b: Array[Double], lo: Int, hi: Int): (Int, Double, Double, Double) =
+    presentMoments(a, b, math.max(hi - lo, 0), lo + _)
+
+  /** Pearson correlation from `presentMoments`; NaN under three pairs or without variance. */
+  private def momentsCorr(m: (Int, Double, Double, Double)): Double =
+    val (n, saa, sbb, sab) = m
+    val den = math.sqrt(saa * sbb)
+    if n < 3 || den.isNaN || den <= 0.0 then Double.NaN else sab / den
+
+  /** The mean of the finite entries; NaN when there are none. */
+  private def meanFinite(v: Seq[Double]): Double =
+    var s = 0.0; var n = 0
+    v.foreach(x => if x.isFinite then { s += x; n += 1 })
+    if n == 0 then Double.NaN else s / n
+
+  /** The basket readings of one history: `rp` the index's daily log returns, `rn` each name's (NaN
+    * where absent), `pairs` the pairs whose correlations are read.  See `BasketRead`. */
+  def basketRead(rp: Array[Double], rn: Vector[Array[Double]], pairs: Vector[(Int, Int)]): BasketRead =
+    val n = rp.length
+    // each name's first and one-past-last present session, so a pair scans only its overlap
+    val spans = rn.map { r =>
+      val lo = { val i = r.indexWhere(_.isFinite); if i < 0 then n else i }
+      val last = r.lastIndexWhere(_.isFinite)
+      (lo, if last < 0 then lo else last + 1)
+    }
+    def overlap(a: Int, b: Int): (Int, Int) =
+      val lo = math.max(spans(a)._1, spans(b)._1)
+      (lo, math.max(math.min(spans(a)._2, spans(b)._2), lo))
+    val agg = Array.tabulate(n) { t =>
+      var s = 0.0; var m = 0; var k = 0
+      while k < rn.length do
+        val x = rn(k)(t)
+        if x.isFinite then
+          s += math.exp(x); m += 1
+        k += 1
+      if m == 0 then Double.NaN else math.log(s / m)
+    }
+    val perName = rn.zip(spans).map { case (r, (lo, hi)) =>
+      val (cnt, saa, sbb, _) = momentsOver(r, rp, lo, hi)
+      var gaps = 0; var cum = 0.0
+      val px = Vector.newBuilder[Double]
+      px += 1.0
+      var t = lo
+      while t < hi do
+        val x = r(t)
+        if x.isFinite then
+          if math.abs(x) > 0.10 then gaps += 1
+          cum += x
+          px += math.exp(cum)
+        t += 1
+      val c = momentsCorr(momentsOver(r, agg, lo, hi))
+      (math.sqrt(saa / (cnt - 1.0)), math.sqrt(saa / sbb), gaps / (cnt / DaysPerYear.toDouble),
+       depthShares(px.result().toArray)._3, 1.0 - c * c)
+    }
+    val am = momentsOver(agg, rp, 0, n)
+    val pair = pairs.map((a, b) => { val (lo, hi) = overlap(a, b); momentsCorr(momentsOver(rn(a), rn(b), lo, hi)) })
+    val cut = pctileOf(finiteSorted(agg), 0.01)
+    val cuts = rn.map(r => pctileOf(finiteSorted(r), 0.01))
+    var shares = 0.0; var worstDays = 0; var t = 0
+    while t < n do
+      if agg(t).isFinite && agg(t) <= cut then
+        var present = 0; var below = 0; var k = 0
+        while k < rn.length do
+          val x = rn(k)(t)
+          if x.isFinite then
+            present += 1
+            if x < cuts(k) then below += 1
+          k += 1
+        shares += below.toDouble / present
+        worstDays += 1
+      t += 1
+    val order = (0 until n).sortBy(rp(_)).toArray
+    val dec = n / 10
+    def on(from: Int, until: Int): Double =
+      meanFinite(pairs.map((a, b) => momentsCorr(presentMoments(rn(a), rn(b), until - from, i => order(from + i)))))
+    BasketRead(perName.map(_._1), perName.map(_._2), perName.map(_._3), perName.map(_._4), perName.map(_._5),
+               math.sqrt(am._2 / (am._1 - 1.0)), momentsCorr(am), am._4 / am._3, math.sqrt(am._2 / am._3),
+               pair, if worstDays == 0 then Double.NaN else shares / worstDays,
+               on(0, dec), on(n / 2 - dec / 2, n / 2 + dec / 2), on(n - dec, n))
+
+  /** One basket name's coverage in a ruler's window, in the window's return sessions: its first
+    * and one-past-last (`start`, `end`), how many it has, the dates of the first and last, and the
+    * record's vol over the index's on its sessions and its sessions past 10% a year -- the
+    * per-name rows the bands range over. */
+  final case class RulerName(name: String, first: String, last: String, start: Int, end: Int,
+                             sessions: Int, volRatio: Double, gaps10: Double)
+
+  /** The pairs a ruler grades: both names graded (`minSessions` sessions or more) and their spans
+    * overlapping by `minSessions` sessions or more, in (a, b) order with a < b. */
+  private def gradedPairsOf(names: Vector[RulerName], minSessions: Int): Vector[(Int, Int)] =
+    for
+      a <- names.indices.toVector
+      b <- (a + 1) until names.length
+      if names(a).sessions >= minSessions && names(b).sessions >= minSessions &&
+         math.min(names(a).end, names(b).end) >= math.max(names(a).start, names(b).start) + minSessions
+    yield (a, b)
+
+  /** The dials `-solvebasket` fitted to a ruler, the solve's terms (`primary` is the
+    * `primaryDigest` of the world solved on), and each graded row's reading at its confirming
+    * ensemble. */
+  final case class RulerDials(basketBeta: Double, basketSector: Double, basketIdio: Double, basketGaps: Double,
+                              version: String, primary: String, paths: Int, years: Int, seed: Long,
+                              readings: Vector[(String, Double)])
+
+  /** One basket row's record and band from a ruler. */
+  final case class BasketBand(row: String, record: Double, lo: Double, hi: Double)
+
+  /** THE BASKET RULER (`-basketruler FILE`): a client's record of its own names against one index,
+    * measured by `record_bands -basket` (`basketRulerTsv`) from a wide closes file, with the four
+    * basket dials `-solvebasket` fitted to it.  The basket rows grade only against one; without it
+    * a basket is emitted ungraded.  A null world either way: the closes decide only whose
+    * co-movement the names reproduce.  `sessions` is the window's return sessions, the length each
+    * name's span is a share of; `pairCorr` is (mean, min, max) over the graded pairs, `idioShare`
+    * (median, min, max) over the graded names, `mechanism` pair correlation on the index's worst,
+    * central and best deciles. */
+  final case class BasketRuler(file: String, digest: String, index: String, basis: String, closesDate: String,
+                               from: String, to: String, sessions: Int, minSessions: Int,
+                               names: Vector[RulerName], indexVol: Double, basketVol: Double, corr: Double,
+                               beta: Double, volRatio: Double, pairCorr: (Double, Double, Double),
+                               idioShare: (Double, Double, Double), tailCoincidence: Double,
+                               mechanism: (Double, Double, Double), dials: Option[RulerDials]):
+    /** Whether name `k` enters the per-name and pair ranges: `minSessions` sessions or more. */
+    def graded(k: Int): Boolean = names(k).sessions >= minSessions
+
+    /** The pairs the ruler grades (`gradedPairsOf`). */
+    def gradedPairs: Vector[(Int, Int)] = gradedPairsOf(names, minSessions)
+
+    /** Each `BasketRows` row's record and band.  The names' vol ratio and gaps range over the
+      * graded names, rounded outward to 0.1, the record the median ratio and the mean gaps (the
+      * readings the model takes); corr +-0.10 at 0.01; beta +-0.25 and vol ratio +-0.30 outward to
+      * 0.1; pair corr and idio share min-max outward to 0.01; tail coincidence -0.13 / +0.12 at
+      * 0.01. */
+    def bands: Vector[BasketBand] =
+      val g = names.indices.filter(graded).map(names(_))
+      val vr = g.map(_.volRatio)
+      val gp = g.map(_.gaps10)
+      def out1(lo: Double, hi: Double) = (math.floor(lo * 10.0) / 10.0, math.ceil(hi * 10.0) / 10.0)
+      def out2(lo: Double, hi: Double) = (math.floor(lo * 100.0) / 100.0, math.ceil(hi * 100.0) / 100.0)
+      def at2(x: Double) = math.round(x * 100.0) / 100.0
+      def band(k: Int, record: Double, b: (Double, Double)) = BasketBand(BasketRows(k), record, b._1, b._2)
+      Vector(
+        band(0, medOf(vr), out1(vr.min, vr.max)),
+        band(1, meanFinite(gp), out1(gp.min, gp.max)),
+        band(2, corr, (at2(corr - 0.10), at2(corr + 0.10))),
+        band(3, beta, out1(beta - 0.25, beta + 0.25)),
+        band(4, volRatio, out1(volRatio - 0.30, volRatio + 0.30)),
+        band(5, pairCorr._1, out2(pairCorr._2, pairCorr._3)),
+        band(6, idioShare._1, out2(idioShare._2, idioShare._3)),
+        band(7, tailCoincidence, (at2(tailCoincidence - 0.13), at2(tailCoincidence + 0.12))))
+
+  /** A ruler from its text (`file` its name, for the sidecar and the messages).  REFUSED: a row
+    * missing or unreadable, a name without coverage or rows, fewer than two graded names or no
+    * graded pair, and a record whose mechanism premise fails -- pair correlation on the index's
+    * worst decile not above its middle, against which the mechanism row cannot mean anything. */
+  def parseBasketRuler(text: String, file: String): Either[String, BasketRuler] =
+    val rows = text.split("\n", -1).toVector.map(_.stripSuffix("\r"))
+      .filter(l => !l.startsWith("#") && l.trim.nonEmpty && !l.startsWith("group\t"))
+      .map(_.split("\t", -1)).filter(_.length == 4).map(_.toVector)
+    def get(g: String, n: String, s: String): Either[String, String] =
+      rows.find(r => r(0) == g && r(1) == n && r(2) == s).map(_(3)).toRight(s"$file: no row [$g $n $s]")
+    def num(g: String, n: String, s: String): Either[String, Double] =
+      get(g, n, s).flatMap(v => v.toDoubleOption.filter(_.isFinite).toRight(s"$file: [$g $n $s] is not a number: $v"))
+    def int(g: String, n: String, s: String): Either[String, Int] =
+      get(g, n, s).flatMap(v => v.toIntOption.filter(_ >= 0).toRight(s"$file: [$g $n $s] is not a count: $v"))
+    val order = rows.filter(_(0) == "coverage").map(_(1)).distinct
+    def name(nm: String, sessions: Int): Either[String, RulerName] =
+      for
+        start <- int("coverage", nm, "start")
+        end <- int("coverage", nm, "end")
+        _ <- Either.cond(start < end && end <= sessions, (),
+               s"$file: $nm's coverage $start..$end is not inside the window's $sessions sessions")
+        first <- get("coverage", nm, "first")
+        last <- get("coverage", nm, "last")
+        count <- int("coverage", nm, "sessions")
+        vr <- num("names", nm, "volRatio")
+        g10 <- num("names", nm, "gaps10")
+      yield RulerName(nm, first, last, start, end, count, vr, g10)
+    def dialsOf: Either[String, Option[RulerDials]] =
+      if !rows.exists(_(0) == "dials") then Right(None)
+      else
+        val readings = rows.filter(r => r(0) == "dials" && r(1) == "reading")
+          .foldLeft(Right(Vector.empty): Either[String, Vector[(String, Double)]]) { (acc, r) =>
+            acc.flatMap(v => num("dials", "reading", r(2)).map(x => v :+ (r(2), x)))
+          }
+        for
+          bb <- num("dials", "ruler", "basketBeta")
+          bs <- num("dials", "ruler", "basketSector")
+          bi <- num("dials", "ruler", "basketIdio")
+          bg <- num("dials", "ruler", "basketGaps")
+          version <- get("dials", "ruler", "version")
+          primary <- get("dials", "ruler", "primary")
+          paths <- int("dials", "ruler", "paths")
+          years <- int("dials", "ruler", "years")
+          seed <- get("dials", "ruler", "seed").flatMap(v =>
+                    v.toLongOption.filter(_ >= 0).toRight(s"$file: [dials ruler seed] is not a seed: $v"))
+          rs <- readings
+        yield Some(RulerDials(bb, bs, bi, bg, version, primary, paths, years, seed, rs))
+    for
+      sessions <- int("meta", "ruler", "sessions")
+      nNames <- int("meta", "ruler", "names")
+      _ <- Either.cond(order.length == nNames, (), s"$file: meta names $nNames but coverage for ${order.length} names")
+      names <- order.foldLeft(Right(Vector.empty): Either[String, Vector[RulerName]]) { (acc, nm) =>
+                 acc.flatMap(v => name(nm, sessions).map(v :+ _)) }
+      minSessions <- int("meta", "ruler", "minSessions")
+      graded = names.count(_.sessions >= minSessions)
+      _ <- Either.cond(graded >= 2 && gradedPairsOf(names, minSessions).nonEmpty, (),
+             s"$file: $graded name(s) with $minSessions sessions or more and no pair of them overlapping that long; a basket ruler needs two")
+      worst <- num("mechanism", "pairCorr", "worstDecile")
+      middle <- num("mechanism", "pairCorr", "middle")
+      best <- num("mechanism", "pairCorr", "bestDecile")
+      _ <- Either.cond(worst > middle, (),
+             s"$file: the record's pair correlation on the index's worst decile ($worst) is not above its middle ($middle); the mechanism row cannot be read against this ruler")
+      index <- get("meta", "ruler", "index")
+      basis <- get("meta", "ruler", "basis")
+      closesDate <- get("meta", "ruler", "closesDate")
+      from <- get("meta", "ruler", "from")
+      to <- get("meta", "ruler", "to")
+      indexVol <- num("basket", index, "vol")
+      basketVol <- num("basket", "basket", "vol")
+      corr <- num("basket", "basket", "corr")
+      beta <- num("basket", "basket", "betaOn")
+      volRatio <- num("basket", "basket", "volRatio")
+      pm <- num("cross", "pairCorr", "mean")
+      pmin <- num("cross", "pairCorr", "min")
+      pmax <- num("cross", "pairCorr", "max")
+      im <- num("cross", "idioShare", "median")
+      imin <- num("cross", "idioShare", "min")
+      imax <- num("cross", "idioShare", "max")
+      tail <- num("cross", "tailCoincidence", "value")
+      dials <- dialsOf
+    yield BasketRuler(file, f"${fnv1a64(utf8(text))}%016x", index, basis, closesDate, from, to, sessions,
+                      minSessions, names, indexVol, basketVol, corr, beta, volRatio, (pm, pmin, pmax),
+                      (im, imin, imax), tail, (worst, middle, best), dials)
+
+  /** The ruler named by `-basketruler`, read from `path`; the sidecar carries its file name alone. */
+  def loadBasketRuler(path: String): Either[String, BasketRuler] =
+    val p = path.asPath
+    if !p.toFile.isFile then Left(s"cannot read $path")
+    else parseBasketRuler(p.contentAsString, p.getFileName.toString)
+
+  /** A ruler's text with its `dials` group replaced by `d`'s, every other line kept as it was. */
+  def rulerWithDials(text: String, d: RulerDials): String =
+    val kept = text.split("\n", -1).toVector.map(_.stripSuffix("\r")).filterNot(_.startsWith("dials\t"))
+    val body = kept.reverse.dropWhile(_.isEmpty).reverse
+    val rows = Vector(("basketBeta", ef(d.basketBeta)), ("basketSector", ef(d.basketSector)),
+                      ("basketIdio", ef(d.basketIdio)), ("basketGaps", ef(d.basketGaps)),
+                      ("version", d.version), ("primary", d.primary), ("paths", d.paths.toString),
+                      ("years", d.years.toString), ("seed", d.seed.toString))
+    (body ++ rows.map((k, v) => s"dials\truler\t$k\t$v") ++
+       d.readings.map((row, v) => s"dials\treading\t$row\t${ef(v)}")).mkString("", "\n", "\n")
+
+  /** A client's closes for one basket: the index's and each name's adjusted closes by session,
+    * NaN where a name has none; `closes` one array a name. */
+  final case class BasketCloses(dates: Vector[String], index: String, indexClose: Array[Double],
+                                names: Vector[String], closes: Vector[Array[Double]])
+
+  /** THE WIDE CLOSES FILE: `date`, then the index's column named by its ticker, then one column
+    * per name, a row a session in date order; a name's cell is empty where it has no close
+    * (before its listing).  REFUSED: a row of another width, a date out of order, an index without
+    * a close, a close that is not a positive number. */
+  def parseBasketCloses(text: String): Either[String, BasketCloses] =
+    val lines = text.split("\n", -1).toVector.map(_.stripSuffix("\r")).filter(_.trim.nonEmpty)
+    if lines.isEmpty then Left("the closes file is empty")
+    else
+      val header = lines.head.split(",", -1).toVector.map(_.trim)
+      if header.length < 4 || header(0) != "date" then
+        Left(s"the closes file's header must be `date,INDEX,NAME,NAME,...` with two names or more, not [${header.mkString(",")}]")
+      else
+        val width = header.length
+        val (index, names) = (header(1), header.drop(2))
+        def close(date: String, c: String, col: String): Either[String, Double] =
+          c.toDoubleOption.filter(x => x.isFinite && x > 0.0)
+            .toRight(s"row $date: $col's close [$c] is not a positive number")
+        val parsed = lines.tail.foldLeft(Right(Vector.empty): Either[String, Vector[(String, Double, Vector[Double])]]) {
+          (acc, l) => acc.flatMap { done =>
+            val f = l.split(",", -1).toVector.map(_.trim)
+            if f.length != width then Left(s"row [$l] has ${f.length} fields, the header $width")
+            else if done.lastOption.exists(_._1 >= f(0)) then Left(s"row ${f(0)} is not after the row before it")
+            else if f(1).isEmpty then Left(s"row ${f(0)}: the index $index has no close")
+            else
+              for
+                ic <- close(f(0), f(1), index)
+                cs <- f.drop(2).zip(names).foldLeft(Right(Vector.empty): Either[String, Vector[Double]]) {
+                        case (a, (c, nm)) => a.flatMap(v => (if c.isEmpty then Right(Double.NaN) else close(f(0), c, nm)).map(v :+ _))
+                      }
+              yield done :+ (f(0), ic, cs)
+          }
+        }
+        parsed.map { rs =>
+          BasketCloses(rs.map(_._1), index, rs.map(_._2).toArray, names,
+                       names.indices.toVector.map(k => rs.map(_._3(k)).toArray))
+        }
+
+  /** A name's reported rows from its returns in session order (absent sessions skipped): sessions
+    * past 5% a year, the deepest decline %, the share >10% below the running peak, the lag-1
+    * autocorrelation of |r| and the kurtosis (not excess). */
+  private def nameExtras(r: Array[Double]): (Double, Double, Double, Double, Double) =
+    val x = r.filter(_.isFinite)
+    val n = x.length
+    val gaps5 = x.count(v => math.abs(v) > 0.05) / (n / DaysPerYear.toDouble)
+    val px = new Array[Double](n + 1)
+    px(0) = 1.0
+    var cum = 0.0; var i = 0
+    while i < n do
+      cum += x(i); px(i + 1) = math.exp(cum); i += 1
+    var peak = Double.NegativeInfinity; var worst = 0.0
+    px.foreach { p => peak = math.max(peak, p); worst = math.min(worst, p / peak - 1.0) }
+    val a = x.map(math.abs)
+    val acf1 = if n < 2 then Double.NaN else momentsCorr(presentMoments(a.slice(0, n - 1), a.slice(1, n), n - 1, j => j))
+    var s = 0.0; i = 0
+    while i < n do { s += x(i); i += 1 }
+    val m = s / n
+    var m2 = 0.0; var m4 = 0.0; i = 0
+    while i < n do
+      val d = x(i) - m
+      m2 += d * d; i += 1
+    i = 0
+    while i < n do
+      val d = x(i) - m
+      m4 += (d * d) * (d * d); i += 1
+    m2 /= n; m4 /= n
+    (gaps5, 100.0 * worst, depthShares(px)._2, acf1, m4 / (m2 * m2))
+
+  /** THE BASKET RULER from a client's closes (`record_bands -basket`): the window's returns from
+    * the first session dated on or after `from` to the last on or before `to` (either empty: the
+    * file's ends), each name read where it has a close on both sessions of a return, every row by
+    * `basketRead`.  A name under `minSessions` sessions stays in the aggregate and the tail
+    * coincidence and out of the per-name and pair ranges.  REFUSED: a window under `minSessions`
+    * sessions, a name with no return in it, fewer than two graded names or no graded pair, and a
+    * record whose mechanism premise fails (`parseBasketRuler`'s rules, so what this writes reads). */
+  def basketRulerTsv(c: BasketCloses, from: String, to: String, closesDate: String,
+                     minSessions: Int): Either[String, String] =
+    val ts = (1 until c.dates.length).filter(t =>
+      (from.isEmpty || c.dates(t) >= from) && (to.isEmpty || c.dates(t) <= to)).toVector
+    val s = ts.length
+    if s < minSessions then Left(s"the window holds $s sessions, under the $minSessions a ruler reads")
+    else
+      val rp = ts.map(t => math.log(c.indexClose(t) / c.indexClose(t - 1))).toArray
+      val rn = c.closes.map(cl => ts.map(t =>
+        if cl(t).isFinite && cl(t - 1).isFinite then math.log(cl(t) / cl(t - 1)) else Double.NaN).toArray)
+      val missing = c.names.indices.find(k => !rn(k).exists(_.isFinite))
+      missing match
+        case Some(k) => Left(s"${c.names(k)} has no return in the window")
+        case None =>
+          val cover = c.names.indices.toVector.map { k =>
+            val r = rn(k)
+            val start = r.indexWhere(_.isFinite)
+            val end = r.lastIndexWhere(_.isFinite) + 1
+            RulerName(c.names(k), c.dates(ts(start)), c.dates(ts(end - 1)), start, end, r.count(_.isFinite),
+                      Double.NaN, Double.NaN)
+          }
+          val pairs = gradedPairsOf(cover, minSessions)
+          val b = basketRead(rp, rn, pairs)
+          val graded = cover.indices.filter(cover(_).sessions >= minSessions)
+          // every value at its printed decimals the JVM's way, which the Rust twin's `jf` follows
+          def fmt(v: Double, dp: Int): String = String.format(s"%.${dp}f", Double.box(v))
+          def at3(x: Double): Double = fmt(x, 3).toDoubleOption.getOrElse(Double.NaN)
+          if graded.length < 2 || pairs.isEmpty then
+            Left(s"${graded.length} name(s) with $minSessions sessions or more and no pair of them overlapping that long; a basket ruler needs two")
+          else if b.worst.isNaN || at3(b.worst) <= at3(b.mid) then
+            Left(s"the record's pair correlation on the index's worst decile (${fmt(b.worst, 3)}) is not above its middle (${fmt(b.mid, 3)}); -basketruler would refuse this ruler")
+          else
+            val ann = math.sqrt(DaysPerYear.toDouble)
+            val idio = graded.map(b.idio(_))
+            def finMin(v: Seq[Double]) = v.filter(_.isFinite).foldLeft(Double.PositiveInfinity)(math.min)
+            def finMax(v: Seq[Double]) = v.filter(_.isFinite).foldLeft(Double.NegativeInfinity)(math.max)
+            val (_, saa, _, _) = momentsOver(rp, rp, 0, s)
+            val indexVol = math.sqrt(saa / (s - 1.0)) * ann * 100.0
+            def cell(g: String, n: String, st: String, v: Double, dp: Int) = s"$g\t$n\t$st\t${fmt(v, dp)}"
+            val head = Vector(
+              s"# THE BASKET RULER for `-basketruler`: ${c.names.length} names against ${c.index}, measured by",
+              "# `record_bands -basket` from a wide closes file (adjusted closes, dividends reinvested, taken",
+              s"# $closesDate) over ${c.dates(ts(0))}..${c.dates(ts(s - 1))}, $s sessions.",
+              "# Every row is `basket_read`'s, the reading the model takes of each path under this file's",
+              "# coverage: a name counts from its first close on, and a model path reads name k over its",
+              "# coverage span (start..end of the window's sessions) scaled to the path. A name under",
+              "# minSessions sessions stays in the aggregate and the tail coincidence and out of the per-name",
+              "# and pair ranges. `-solvebasket` writes the `dials` group.",
+              "group\tname\tstat\tvalue")
+            val meta = Vector(("index", c.index), ("basis", "adjusted-dividends-reinvested"),
+                              ("closesDate", closesDate), ("from", c.dates(ts(0))), ("to", c.dates(ts(s - 1))),
+                              ("sessions", s.toString), ("names", c.names.length.toString),
+                              ("minSessions", minSessions.toString)).map((k, v) => s"meta\truler\t$k\t$v")
+            val coverage = cover.flatMap(m => Vector(
+              s"coverage\t${m.name}\tfirst\t${m.first}", s"coverage\t${m.name}\tlast\t${m.last}",
+              s"coverage\t${m.name}\tstart\t${m.start}", s"coverage\t${m.name}\tend\t${m.end}",
+              s"coverage\t${m.name}\tsessions\t${m.sessions}"))
+            val perName = cover.indices.toVector.flatMap { k =>
+              val (gaps5, maxDd, d10, acf1, kurt) = nameExtras(rn(k))
+              Vector(("vol", b.sd(k) * ann * 100.0, 2), ("volRatio", b.volRatio(k), 3), ("gaps10", b.gaps10(k), 3),
+                     ("gaps5", gaps5, 2), ("maxDD", maxDd, 1), ("d10", d10, 3), ("d20", b.d20(k), 3),
+                     ("acf1", acf1, 3), ("kurt", kurt, 2)).map((st, v, dp) => cell("names", cover(k).name, st, v, dp))
+            }
+            val rest = Vector(
+              cell("basket", c.index, "vol", indexVol, 1),
+              cell("basket", "basket", "vol", b.aggSd * ann * 100.0, 1),
+              cell("basket", "basket", "corr", b.aggCorr, 3),
+              cell("basket", "basket", "betaOn", b.aggBeta, 3),
+              cell("basket", "basket", "volRatio", b.aggVolRatio, 3),
+              cell("cross", "pairCorr", "mean", meanFinite(b.pair), 3),
+              cell("cross", "pairCorr", "min", finMin(b.pair), 3),
+              cell("cross", "pairCorr", "max", finMax(b.pair), 3),
+              s"cross\tpairCorr\tpairs\t${pairs.length}",
+              cell("cross", "idioShare", "median", medOf(idio), 3),
+              cell("cross", "idioShare", "min", finMin(idio), 3),
+              cell("cross", "idioShare", "max", finMax(idio), 3),
+              cell("cross", "tailCoincidence", "value", b.tailCoincidence, 3),
+              cell("mechanism", "pairCorr", "worstDecile", b.worst, 3),
+              cell("mechanism", "pairCorr", "middle", b.mid, 3),
+              cell("mechanism", "pairCorr", "bestDecile", b.best, 3))
+            Right((head ++ meta ++ coverage ++ perName ++ rest).mkString("", "\n", "\n"))
+
+  /** A model path's returns as the ruler's record holds them: the primary's every session, and
+    * name k's only over its coverage span scaled to the path (`start * n / sessions` until
+    * `end * n / sessions`), NaN elsewhere -- THE COVERAGE MASK.  A record's aggregate holds the
+    * names listed at each point of its window, and the rows built on it move with how many it
+    * holds (diversification goes as 1/N), so the model's aggregate is read the same way.  A
+    * reading, not a simulation: the emitted names keep every session. */
+  private def maskedReturns(s: Path, r: BasketRuler): (Array[Double], Vector[Array[Double]]) =
+    val rp = dailyReturns(s.price)
+    val n = rp.length
+    val rn = s.names.zip(r.names).map { (lp, m) =>
+      val lo = (m.start.toLong * n / r.sessions).toInt
+      val hi = (m.end.toLong * n / r.sessions).toInt
+      Array.tabulate(n)(t => if t >= lo && t < hi then lp(t + 1) - lp(t) else Double.NaN)
+    }
+    (rp, rn)
+
+  /** One path's twelve basket readings under the ruler, in `BasketStats` field order. */
+  private def basketPathStats(s: Path, r: BasketRuler, graded: Vector[Int], pairs: Vector[(Int, Int)]): Vector[Double] =
+    val (rp, rn) = maskedReturns(s, r)
+    val b = basketRead(rp, rn, pairs)
+    val d20s = graded.map(b.d20(_))
+    Vector(medOf(graded.map(b.volRatio(_))), meanFinite(graded.map(b.gaps10(_))), medOf(d20s),
+           b.aggCorr, b.aggBeta, b.aggVolRatio, meanFinite(b.pair), medOf(graded.map(b.idio(_))),
+           b.tailCoincidence, b.worst, b.mid,
+           d20s.foldLeft(Double.NegativeInfinity)(math.max) - d20s.foldLeft(Double.PositiveInfinity)(math.min))
+
+  /** The basket's readings against a ruler, medians across paths; `None` unless the paths carry a
+    * basket of the ruler's size. */
+  def basketReading(r: BasketRuler, sims: Vector[Path]): Option[BasketStats] =
+    if sims.isEmpty || sims.head.names.length != r.names.length then None
+    else
+      val graded = r.names.indices.filter(r.graded).toVector
+      val pairs = r.gradedPairs
+      val per = parMap(sims)(basketPathStats(_, r, graded, pairs))
+      def col(k: Int): Double = medOf(per.map(_(k)))
+      Some(BasketStats(col(0), col(1), col(2), col(3), col(4), col(5), col(6), col(7), col(8), col(9), col(10), col(11)))
+
+  /** `measure`, with the basket read against the anchors' ruler where a run named one: a basket is
+    * read only against a client's ruler, under its coverage (`basketReading`). */
+  def measureFor(a: Anchors, sims: Vector[Path], years: Int): WorldStats =
+    measure(sims, years).copy(basket = a.basketRuler.flatMap(basketReading(_, sims)))
+
+  /** The basket solve's distance from a ruler: each graded row's distance from its record in
+    * half-bands, plus 1 when the mechanism fails; infinite when a reading is missing. */
+  private def basketLoss(r: BasketRuler, b: BasketStats): Double =
+    var loss = 0.0
+    r.bands.zip(b.graded).foreach((bd, got) => loss += math.abs((got - bd.record) / ((bd.hi - bd.lo) / 2.0)))
+    if b.pairCorrWorst.isNaN || b.pairCorrWorst <= b.pairCorrMid then loss += 1.0
+    if loss.isNaN then Double.PositiveInfinity else loss
+
+  /** THE BASKET SOLVE's ensemble, paths x years: small enough to step four dials by coordinate
+    * descent in a minute or two, one seed for every candidate so neighbours differ by their dials
+    * alone. */
+  val SolveBasketSpec: (Int, Int) = (12, 30)
+
+  /** The descent's sweeps at most; each halves the steps when no dial moves. */
+  private val SolveBasketSweeps = 60
+
+  /** The basket a run takes from its ruler: the ruler's size, and its fitted dials where no flag
+    * gave one (`dials` the world's after the flags, `flagged` which flags did).  A solve from a ruler
+    * without dials starts from the world's, or from `SolveBasketStart` when the world has none.
+    * REFUSED: a `-basket` other than the ruler's size (0 included: the ruler grades a basket), and
+    * a ruler without fitted dials outside a solve. */
+  def ruledBasket(r: BasketRuler, basket: Option[Int], dials: Vector[Double], flagged: Vector[Boolean],
+                  solving: Boolean): Either[String, (Int, Vector[Double])] =
+    val n = r.names.length
+    basket.filter(_ != n) match
+      case Some(b) =>
+        Left(s"-basket $b with a ruler of $n names (${r.file}): the ruler reads name k as its column k; drop -basket or give $n")
+      case None =>
+        val fit = (r.dials, solving) match
+          case (Some(d), _) => Right(Vector(d.basketBeta, d.basketSector, d.basketIdio, d.basketGaps))
+          case (None, true) if dials(0) <= 0.0 => Right(SolveBasketStart)
+          case (None, true) => Right(dials)
+          case (None, false) => Left(s"-basketruler ${r.file}: the ruler carries no fitted dials; run -solvebasket first")
+        fit.map(f => (n, dials.indices.toVector.map(k => if flagged(k) then dials(k) else f(k))))
+
+  /** `-solvebasket`'s start when neither the ruler nor the world carries basket dials: beta,
+    * sector, idio, gaps a year. */
+  val SolveBasketStart: Vector[Double] = Vector(1.0, 0.8, 0.8, 5.0)
+
+  /** `w` with the basket at the ruler's size and the four dials `d` (beta, sector, idio, gaps). */
+  def withBasketDials(w: World, r: BasketRuler, d: Vector[Double]): World =
+    w.copy(basket = r.names.length, basketBeta = d(0), basketSector = d(1), basketIdio = d(2), basketGaps = d(3))
+
+  /** THE BASKET SOLVE (`-solvebasket`): the four dials fitted to a ruler by coordinate descent from
+    * `w`'s on `basketLoss` at `SolveBasketSpec` -- each dial stepped up, then down, by its step
+    * (0.2, 0.2, 0.2 and 2 gaps a year to start), the first improvement taken, every step halved
+    * when a sweep moves nothing, until each is under its floor (0.01, 0.01, 0.01, 0.1).  Losses
+    * compare at 1e-9, so the twins' last-bit differences cannot pick different neighbours.
+    * Returns the dials and their loss. */
+  def solveBasket(r: BasketRuler, w: World, seed: Long): (Vector[Double], Double) =
+    val (paths, years) = SolveBasketSpec
+    def loss(d: Vector[Double]): Double =
+      basketReading(r, simPaths(withBasketDials(w, r, d), paths, years, seed))
+        .fold(Double.PositiveInfinity) { b =>
+          val x = basketLoss(r, b)
+          if x.isInfinite then x else math.round(x * 1e9) / 1e9
+        }
+    val lower = Vector(0.05, 0.0, 0.0, 0.0)
+    val floor = Vector(0.01, 0.01, 0.01, 0.1)
+    var step = Vector(0.2, 0.2, 0.2, 2.0)
+    var d = Vector(w.basketBeta, w.basketSector, w.basketIdio, w.basketGaps)
+    var best = loss(d)
+    var sweep = 0
+    while sweep < SolveBasketSweeps && !step.zip(floor).forall((s, f) => s < f) do
+      var moved = false
+      var j = 0
+      while j < 4 do
+        var tried = 0
+        var took = false
+        while tried < 2 && !took do
+          val sign = if tried == 0 then 1.0 else -1.0
+          val next = math.max(d(j) + sign * step(j), lower(j))
+          if math.abs(next - d(j)) >= 1e-12 then
+            val c = d.updated(j, next)
+            val l = loss(c)
+            if l < best then
+              best = l; d = c; moved = true; took = true
+          tried += 1
+        j += 1
+      if !moved then step = step.map(_ / 2.0)
+      sweep += 1
+    (d, best)
+
+  /** The digest of `w`'s primary alone: `worldDigest` with every derived-series dial at the
+    * default world's.  What a ruler's dials were solved on, the basket reading the primary only. */
+  def primaryDigest(w: World): String =
+    val d = Defaults
+    worldDigest(w.copy(satBeta = d.satBeta, satIdio = d.satIdio, satCycleSd = d.satCycleSd,
+      satDriftHalf = d.satDriftHalf, satLevelHalf = d.satLevelHalf, rangeScale = d.rangeScale,
+      rangeDown = d.rangeDown, volIdio = d.volIdio, overnight = d.overnight, divYield = d.divYield,
+      basket = d.basket, basketBeta = d.basketBeta, basketSector = d.basketSector, basketIdio = d.basketIdio,
+      basketGaps = d.basketGaps, basketDrift = d.basketDrift, sectors = d.sectors, sectorIdio = d.sectorIdio,
+      sectorDriftSd = d.sectorDriftSd, sectorDriftHalf = d.sectorDriftHalf, macroPanel = d.macroPanel,
+      macroNull = d.macroNull))
 
   /** The open's readings, medians across paths: the overnight share of close-to-close variance
     * (sample variances), and the regression share of the overnight in the session -- sum(o r) /
@@ -5986,7 +6559,8 @@ object MarketSim:
       retAc1 = med(per.map(_.retAc1)),
       annRet = med(per.map(_.annRet)),
       sat = satStats(sims), bars = barStats(sims), open = openStats(sims),
-      basket = basketStats(sims), sector = sectorStats(sims), macroPanel = macroStats(sims),
+      // the basket is read only against a ruler, under its coverage: `measureFor`
+      basket = None, sector = sectorStats(sims), macroPanel = macroStats(sims),
       divYieldMean = med(per.map(_.divYield)),
       nEpisodes = eps.size, epPerPath = eps.size.toDouble / sims.size,
       depthMed = med(eps.map(_.depthPct)), worstDepth = eps.map(_.depthPct).minOption.getOrElse(Double.NaN),
@@ -6368,36 +6942,17 @@ object MarketSim:
         Vector(bandCheck("bar overnight share", os.overnightShare, 0.23, 0.43, Fidelity),
                ("overnight gap share rises on the worst sessions",
                 os.worstGapShare > os.allGapShare, Mechanism))
-    // THE BASKET, graded when it ran -- `basket-2026-10-03.tsv`, SMH's eight largest holdings as
-    // of 2026-10-02: level 1 as a POPULATION (the names' vol 1.9-3.5x SPY's or 1.5-2.8x QQQ's,
-    // gaps 0.4-5.1/yr -- the eight's ranges rounded outward, graded on the pooled median), level 2
-    // the aggregate against the set's primary (the eight's basket on SPY: corr 0.77, beta 1.54,
-    // vol 1.99x; on QQQ: 0.84, 1.35, 1.60x; +-0.10 / +-0.25 / +-0.3), level 3 the structure a
-    // basket rule reads (pairwise 0.55, idio share 0.40, tail coincidence 0.46), and the
-    // mechanism: pairwise correlation on the primary's worst decile above its central 45-55%
-    // (0.56 vs 0.22).  The names' d20 is REPORTED, not graded: the eight's 0.08-0.61 is the time
-    // below peak of names selected today as winners (the survivorship the fixture discloses), and
-    // a name at the sector's drift and 2.6x the index's volatility spends most of a century more
-    // than 20% below its peak, as a real name of that drift would.
-    val basketBands = st.basket match
-      case None => Vector.empty
-      case Some(b) =>
-        // level 2 bands from the set's anchor: corr +-0.10 at the row's 0.01 (the anchor carries a
-        // third decimal the row does not print), beta +-0.25 and vol ratio +-0.3 rounded outward
-        // to 0.1 -- the satellite's tolerances
-        def at2(x: Double) = math.round(x * 100) / 100.0
-        def out(lo: Double, hi: Double) = (math.floor(lo * 10) / 10, math.ceil(hi * 10) / 10)
-        val (betaLo, betaHi) = out(a.basketBeta - 0.25, a.basketBeta + 0.25)
-        val (volLo, volHi)   = out(a.basketVolRatio - 0.30, a.basketVolRatio + 0.30)
-        Vector(bandCheck("basket name vol ratio", b.nameVolRatio, a.basketNameVolBand._1, a.basketNameVolBand._2, Fidelity),
-               bandCheck("basket name gaps/yr", b.nameGaps, 0.40, 5.10, Fidelity),
-               bandCheck("basket corr", b.aggCorr, at2(a.basketCorr - 0.10), at2(a.basketCorr + 0.10), Fidelity),
-               bandCheck("basket beta", b.aggBeta, betaLo, betaHi, Fidelity),
-               bandCheck("basket vol ratio", b.aggVolRatio, volLo, volHi, Fidelity),
-               bandCheck("basket pair corr", b.pairCorr, 0.39, 0.85, Fidelity),
-               bandCheck("basket idio share", b.idioShare, 0.26, 0.60, Fidelity),
-               bandCheck("basket tail coincidence", b.tailCoincidence, 0.33, 0.58, Fidelity),
-               ("basket pair corr rises on the worst decile", b.pairCorrWorst > b.pairCorrMid, Mechanism))
+    // THE BASKET, graded only against a client's ruler (`-basketruler`, `BasketRuler.bands`): its
+    // names' vol ratio and gaps over the graded names' ranges, the aggregate's corr, beta and vol
+    // ratio on the index, pair corr and idio share over their ranges, tail coincidence, and the
+    // mechanism -- pairwise correlation on the primary's worst decile above its central one.  The
+    // readings are taken under the ruler's coverage (`basketReading`); without a ruler a basket is
+    // emitted ungraded.
+    val basketBands = (st.basket, a.basketRuler) match
+      case (Some(b), Some(r)) =>
+        r.bands.zip(b.graded).map((bd, got) => bandCheck(bd.row, got, bd.lo, bd.hi, Fidelity)) :+
+          (BasketMechanismRow, b.pairCorrWorst > b.pairCorrMid, Mechanism)
+      case _ => Vector.empty
     // THE SECTOR CHANNEL, graded when it ran -- `sectors-2026-09-30.tsv`, the ten industries, in
     // the forms that carry across primaries of different volatility: the 12-1 momentum spread and
     // the two trend readings over the cross-sectional sd, at the record's 5-95 block-bootstrap
@@ -6798,12 +7353,6 @@ object MarketSim:
     // The dividend yield at fair value (%/yr) and the band its level is graded against when the
     // `divYield` dial is on -- `dividend-2026-09-02.tsv`: the window's annual means rounded out.
     divYield: Double, divYieldBand: (Double, Double),
-    // THE BASKET's relation to this set's primary -- `basket-2026-10-03.tsv`: the equal-weight
-    // eight on SPY / on QQQ (corr, beta, vol ratio), and the eight's vol as a ratio to the
-    // primary's, rounded outward.  Level 3 of that fixture is a property of the names among
-    // themselves and stays shared.
-    basketCorr: Double, basketBeta: Double, basketVolRatio: Double,
-    basketNameVolBand: (Double, Double),
     // THE SECTOR ROWS' record -- `sectors-2026-09-30.tsv`, the ten industries over 1926-2026, one
     // ruler for both sets: the 12-1 momentum spread and the two trend readings with their 5-95
     // block-bootstrap bands, the shape rows, the market's monthly sd
@@ -6813,14 +7362,17 @@ object MarketSim:
     sectorXsSd: Double, sectorPairCorr: Double, sectorPairCorrWorst: Double, sectorPairCorrMid: Double,
     sectorMarketSd: Double,
     // THE DERIVED SERIES' DIALS FOR THIS SET: what the verdict grades a world's satellite, bars,
-    // open, dividends, basket and macro panel at when the caller left them off (`verdictWorld`).
+    // open, dividends, sectors and macro panel at when the caller left them off (`verdictWorld`).
     // The channel recipe's own -- `0.24.4-sp500-channels` here, `0.24.4-nasdaq-basket` for the
     // Nasdaq -- and a test pins each to its recipe.  A published recipe never moves, so neither
     // do these.
     channelDials: ChannelDials,
     // THE REPORTED RECORDS: the set's graded single-history rows read off windows it does not
     // grade on, each placed among the world's histories of that window's length.  Never graded.
-    reported: Vector[ReportedRecord])
+    reported: Vector[ReportedRecord],
+    // THE BASKET's ruler, when a run named one (`-basketruler`): a client's record of its own names
+    // against one index, the only thing the basket rows grade against.  No set carries a default.
+    basketRuler: Option[BasketRuler] = None)
 
   /** A family of single-history rows a `ReportedRecord` is read on. */
   enum RowFamily:
@@ -6857,15 +7409,15 @@ object MarketSim:
     ReportedRecord(RowFamily.MultiYear, "QQQ 1999-2026", 27,
                    Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182)))
 
-  /** The dials of the derived series: the satellite leg, the bars and their volume, the open, the
-    * dividend stream, the basket and the macro panel.  Every one is observational -- it draws from
+  /** The dials of the derived series the verdict supplies: the satellite leg, the bars and their
+    * volume, the open, the dividend stream, the sectors and the macro panel -- not the basket,
+    * which grades only against a client's ruler.  Every one is observational -- it draws from
     * its own stream and reaches no price -- so a world's primary is bit-identical whatever they
     * are, and the verdict can grade all of them on any world at its anchor set's values. */
   final case class ChannelDials(
     satBeta: Double, satIdio: Double, satCycleSd: Double, satDriftHalf: Double,
     satLevelHalf: Double, rangeScale: Double, rangeDown: Double, volIdio: Double,
-    overnight: Double, divYield: Double, basket: Int, basketBeta: Double, basketSector: Double,
-    basketIdio: Double, basketGaps: Double, basketDrift: Double,
+    overnight: Double, divYield: Double,
     sectors: Int, sectorIdio: Double, sectorDriftSd: Double, sectorDriftHalf: Double, macroPanel: Int)
 
   object ChannelDials:
@@ -6873,8 +7425,7 @@ object MarketSim:
     def of(w: World): ChannelDials =
       ChannelDials(w.satBeta, w.satIdio, w.satCycleSd, w.satDriftHalf, w.satLevelHalf,
                    w.rangeScale, w.rangeDown, w.volIdio, w.overnight,
-                   w.divYield, w.basket, w.basketBeta, w.basketSector, w.basketIdio, w.basketGaps,
-                   w.basketDrift,
+                   w.divYield,
                    w.sectors, w.sectorIdio, w.sectorDriftSd, w.sectorDriftHalf, w.macroPanel)
 
   /** The S&P set's derived-series dials: `0.24.5-sp500`'s (its `levGain` is a primary
@@ -6882,20 +7433,19 @@ object MarketSim:
   val Sp500ChannelDials: ChannelDials = ChannelDials(
     satBeta = 1.2, satIdio = 0.77, satCycleSd = 0.0003, satDriftHalf = 0.2, satLevelHalf = 0.5,
     rangeScale = 0.78, rangeDown = 0.13, volIdio = 0.34,
-    overnight = 0.14, divYield = 2.95, basket = 8, basketBeta = 1.56, basketSector = 1.1,
-    basketIdio = 0.9, basketGaps = 6.0, basketDrift = 0.0,
+    overnight = 0.14, divYield = 2.95,
     sectors = 10, sectorIdio = 0.7, sectorDriftSd = 0.25, sectorDriftHalf = 2.0, macroPanel = 1)
 
   /** The Nasdaq set's derived-series dials: `0.24.5-nasdaq-basket`'s. */
   val NasdaqChannelDials: ChannelDials = ChannelDials(
     satBeta = 1.2, satIdio = 0.77, satCycleSd = 0.0003, satDriftHalf = 0.2, satLevelHalf = 0.5,
     rangeScale = 0.78, rangeDown = 0.13, volIdio = 0.34,
-    overnight = 0.22, divYield = 0.78, basket = 8, basketBeta = 1.37, basketSector = 0.8,
-    basketIdio = 0.85, basketGaps = 8.0, basketDrift = 0.0,
+    overnight = 0.22, divYield = 0.78,
     sectors = 10, sectorIdio = 0.7, sectorDriftSd = 0.25, sectorDriftHalf = 2.0, macroPanel = 1)
 
   /** THE VERDICT WORLD: the caller's world with every derived series the caller left off set to
-    * the anchor set's dials, and the null panel off.  The verdict is a property of the world, and
+    * the anchor set's dials, and the null panel off.  The basket is the caller's alone: it grades
+    * only against a client's ruler, so a world without one simulates no basket here.  The verdict is a property of the world, and
     * the derived series are functions of its state, so a world is graded on all of them whatever
     * the caller emits: a default's or a set member's PASS implies the bundle's.  Before this, a
     * channel's rows graded only when its dial was on, and the S&P default's macro build-up slid
@@ -6913,16 +7463,11 @@ object MarketSim:
     val vol  = if w.volIdio <= 0.0 then bars.copy(volIdio = d.volIdio) else bars
     val open = if w.overnight <= 0.0 then vol.copy(overnight = d.overnight) else vol
     val div  = if w.divYield <= 0.0 then open.copy(divYield = d.divYield) else open
-    val bsk  =
-      if w.basket == 0 then
-        div.copy(basket = d.basket, basketBeta = d.basketBeta, basketSector = d.basketSector,
-                 basketIdio = d.basketIdio, basketGaps = d.basketGaps, basketDrift = d.basketDrift)
-      else div
     val sec =
       if w.sectors == 0 then
-        bsk.copy(sectors = d.sectors, sectorIdio = d.sectorIdio, sectorDriftSd = d.sectorDriftSd,
+        div.copy(sectors = d.sectors, sectorIdio = d.sectorIdio, sectorDriftSd = d.sectorDriftSd,
                  sectorDriftHalf = d.sectorDriftHalf)
-      else bsk
+      else div
     val mac  = if w.macroPanel == 0 then sec.copy(macroPanel = d.macroPanel) else sec
     mac.copy(macroNull = 0)
 
@@ -7164,7 +7709,6 @@ object MarketSim:
     ddRefs = DdRefsSp500,
     recordBands = RecordBandsSp500,
     divYield = 2.95, divYieldBand = (1.1, 5.8),
-    basketCorr = 0.773, basketBeta = 1.536, basketVolRatio = 1.986, basketNameVolBand = (1.9, 3.5),
     sectorMomentum = 0.003923, sectorMomentumBand = (0.002111, 0.005480),
     sectorTrend12 = 0.005545, sectorTrend12Band = (0.000214, 0.010578),
     sectorTrendSma = 0.003672, sectorTrendSmaBand = (-0.002442, 0.009168),
@@ -7262,7 +7806,6 @@ object MarketSim:
     ddRefs = DdRefsNasdaq,
     recordBands = RecordBandsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
-    basketCorr = 0.840, basketBeta = 1.345, basketVolRatio = 1.601, basketNameVolBand = (1.5, 2.8),
     sectorMomentum = 0.003923, sectorMomentumBand = (0.002111, 0.005480),
     sectorTrend12 = 0.005545, sectorTrend12Band = (0.000214, 0.010578),
     sectorTrendSma = 0.003672, sectorTrendSmaBand = (-0.002442, 0.009168),
@@ -11193,7 +11736,7 @@ object MarketSim:
       case Some((s, st, at)) if at == spec && vw == w => (s, st)
       case _ =>
         val s = simPaths(vw, paths, years, seed)
-        (s, measure(s, years))
+        (s, measureFor(a, s, years))
     Verdict(paths, years, vw, st, fidelityRows(a, st, Some(sims), years, paths, seed, w),
             reportedRecordRows(a, Some(sims), years, paths, seed, w), sims.head)
 
@@ -11220,7 +11763,7 @@ object MarketSim:
     // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
     // before calling; here it THROWS, because this is also API and a `System.exit` in a library
     // method takes a test harness down whole rather than failing one test.
-    val table = emitTable(p)
+    val table = ruledTable(a, p)
     require(tableIsFinite(table), s"path $k holds a non-finite value; refusing $file")
     val dates = sessionDates(p.price.length, spec.startYmd)
     writeEmitTsv(file, table, dates)
@@ -11287,6 +11830,13 @@ object MarketSim:
       ++ p.macroNullPanel.toVector.flatMap(m =>
            MacroK.NullColumns.indices.map(j => EmitColumn(MacroK.NullColumns(j), m.member(j))))
 
+  /** The table a TSV carries: `emitTable`'s, less `logBasket` when a ruler drives the basket.  Its
+    * rows read the names under the ruler's coverage, never the aggregate column, and nothing reads
+    * it; `-emitcols logBasket` names it back into a stream. */
+  def ruledTable(a: Anchors, p: Path): Vector[EmitColumn] =
+    val t = emitTable(p)
+    if a.basketRuler.isDefined then t.filterNot(_.name == "logBasket") else t
+
   def tableIsFinite(table: Vector[EmitColumn]): Boolean = table.forall(_.values.forall(_.isFinite))
 
   /** Whether `name` is a column some world emits -- the check `-emitcols` makes before anything is
@@ -11310,9 +11860,10 @@ object MarketSim:
   val F32Format = "f32le"
 
   /** The columns `want` names, in its order, as indices into a path's table, and the named columns
-    * the table does not carry because their channel did not run.  An empty `want` is every column. */
-  def selectColumns(table: Vector[EmitColumn], want: Vector[String]): (Vector[Int], Vector[String]) =
-    if want.isEmpty then (table.indices.toVector, Vector.empty)
+    * the table does not carry because their channel did not run.  An empty `want` is every column,
+    * less `logBasket` when a ruler drives the basket (`ruledTable`). */
+  def selectColumns(table: Vector[EmitColumn], want: Vector[String], ruled: Boolean): (Vector[Int], Vector[String]) =
+    if want.isEmpty then (table.indices.toVector.filterNot(c => ruled && table(c).name == "logBasket"), Vector.empty)
     else
       def at(c: String): Int = table.indexWhere(_.name == c)
       (want.map(at).filter(_ >= 0), want.filter(at(_) < 0))
@@ -11331,7 +11882,8 @@ object MarketSim:
 
   /** The stream's cells for paths `from until from + count`, simulated a batch at a time at a
     * channel level computed once, each batch dropped once written. */
-  def streamF32(file: String, spec: EmitSpec, range: (Int, Int), want: Vector[String]): Either[String, Streamed] =
+  def streamF32(file: String, spec: EmitSpec, range: (Int, Int), want: Vector[String],
+                ruled: Boolean): Either[String, Streamed] =
     val (from, count) = range
     val out =
       if count < 1 then Left(s"an -emitf32 chunk of no paths; nothing written to $file")
@@ -11344,7 +11896,7 @@ object MarketSim:
         val batch = math.max(1, 2 * Runtime.getRuntime.availableProcessors)
         val first = simRangeAt(spec.world, level, from, math.min(batch, count), spec.years, spec.seed)
         val table = emitTable(first.head)
-        val (picked, absent) = selectColumns(table, want)
+        val (picked, absent) = selectColumns(table, want, ruled)
         val episodes = Vector.newBuilder[String]
         var failed: Option[String] = None
         var start = from
@@ -11374,12 +11926,12 @@ object MarketSim:
   /** THE F32 STREAM (`-emitf32`): paths `from until from + count` as ONE chunk file of `F32Format`,
     * path-major -- each path's columns in the sidecar's order, each column's sessions in order --
     * beside one sidecar for the chunk.  A chunk of thousands of paths never sits in memory whole.
-    * `want` selects the columns, all of them when empty.  `Left` names the first path holding a
+    * `want` selects the columns, all of them when empty (`selectColumns`).  `Left` names the first path holding a
     * non-finite value: the partial file is removed and no sidecar written.  `Right` is the columns
     * written and the sessions a path. */
   def writeF32Chunk(a: Anchors, file: String, spec: EmitSpec, range: (Int, Int), want: Vector[String],
                     v: Verdict): Either[String, (Int, Int)] =
-    streamF32(file, spec, range, want) match
+    streamF32(file, spec, range, want, a.basketRuler.isDefined) match
       case Left(m) =>
         java.nio.file.Files.deleteIfExists(file.asPath)
         Left(m)
@@ -11566,10 +12118,10 @@ object MarketSim:
     * it.  Each object is present exactly when its channel ran (`satStats`/`barStats` return
     * Some); `{}` when none did, else led by the world level they were sampled at
     * (`worldLevel`).  NaN prints as null, the `fidelity` rows' rule. */
-  def channelReadingsBlock(st: WorldStats, p: Path): String =
+  def channelReadingsBlock(a: Anchors, st: WorldStats, gateW: World, p: Path): String =
     def num(x: Double): String = if x.isNaN then "null" else ef(x)
     val level =
-      if st.sat.isDefined || st.bars.isDefined || st.open.isDefined || st.basket.isDefined || st.divYieldMean.isFinite ||
+      if st.sat.isDefined || st.bars.isDefined || st.open.isDefined || gateW.basket > 0 || st.divYieldMean.isFinite ||
          st.macroPanel.isDefined then
         Vector(s"""    "level": { "k": ${num(p.chanK)}, "kSat": ${num(p.chanKSat)}, "kDiv": ${num(p.chanKDiv)}, "kVs": ${num(p.chanKVs)}, "kIv": ${num(p.chanKIv)}""" +
                (if p.chanKDr > 0.0 then s""", "kDr": ${num(p.chanKDr)}""" else "") + " }")
@@ -11593,13 +12145,15 @@ object MarketSim:
     val open = st.open.toVector.map { os =>
       s"""    "open": { "overnightShare": ${num(os.overnightShare)}, "worstGapShare": ${num(os.worstGapShare)}, "allGapShare": ${num(os.allGapShare)} }"""
     }
-    val bsk = st.basket.toVector.map { b =>
-      s"""    "basket": { "nameVolRatio": ${num(b.nameVolRatio)}, "nameGaps": ${num(b.nameGaps)}, """ +
-      s""""nameD20": ${num(b.nameD20)}, "aggCorr": ${num(b.aggCorr)}, "aggBeta": ${num(b.aggBeta)}, """ +
-      s""""aggVolRatio": ${num(b.aggVolRatio)}, "pairCorr": ${num(b.pairCorr)}, "idioShare": ${num(b.idioShare)}, """ +
-      s""""tailCoincidence": ${num(b.tailCoincidence)}, "pairCorrWorst": ${num(b.pairCorrWorst)}, "pairCorrMid": ${num(b.pairCorrMid)}, """ +
-      s""""nameD20Spread": ${num(b.nameD20Spread)} }"""
-    }
+    val bsk = (st.basket, a.basketRuler) match
+      case (Some(b), Some(r)) =>
+        Vector(s"""    "basket": { "nameVolRatio": ${num(b.nameVolRatio)}, "nameGaps": ${num(b.nameGaps)}, """ +
+          s""""nameD20": ${num(b.nameD20)}, "aggCorr": ${num(b.aggCorr)}, "aggBeta": ${num(b.aggBeta)}, """ +
+          s""""aggVolRatio": ${num(b.aggVolRatio)}, "pairCorr": ${num(b.pairCorr)}, "idioShare": ${num(b.idioShare)}, """ +
+          s""""tailCoincidence": ${num(b.tailCoincidence)}, "pairCorrWorst": ${num(b.pairCorrWorst)}, "pairCorrMid": ${num(b.pairCorrMid)}, """ +
+          s""""nameD20Spread": ${num(b.nameD20Spread)}, "graded": true,\n${rulerBlock(r)} }""")
+      case _ if gateW.basket > 0 => Vector("""    "basket": { "ruler": null, "graded": false }""")
+      case _ => Vector.empty
     val secB = st.sector.toVector.map { x =>
       s"""    "sector": { "momentum": ${num(x.momentum)}, "momentumT": ${num(x.momentumT)}, """ +
       s""""momentumShare": ${num(x.momentumShare)}, "trendSign12": ${num(x.trendSign12)}, "trendSma10": ${num(x.trendSma10)}, """ +
@@ -11642,10 +12196,45 @@ object MarketSim:
     * to a release checks `version`, and one that needs the exact parameters reads `world` below.
     * `schema` went 1 -> 2 when `version` was added, so its absence is detectable rather than
     * ambiguous. */
+  /** `channels.basket.ruler`: the ruler a run graded the basket against, whole enough that a bundle
+    * describes its basket without the file -- where its closes came from and when, each name's
+    * coverage, the rows with their records and bands, the dials with the solve's terms -- and that
+    * the rows were read under its coverage. */
+  def rulerBlock(r: BasketRuler): String =
+    def num(x: Double): String = ef(x)
+    val coverage = r.names.indices.map { k =>
+      val m = r.names(k)
+      s"""        { "name": ${jsonStr(m.name)}, "first": ${jsonStr(m.first)}, "last": ${jsonStr(m.last)}, "sessions": ${m.sessions}, "graded": ${r.graded(k)} }"""
+    }
+    val rows = r.bands.map(b =>
+      s"""        { "row": ${jsonStr(b.row)}, "record": ${num(b.record)}, "band": [${num(b.lo)}, ${num(b.hi)}] }""")
+    val dials = r.dials.fold("null") { d =>
+      s"""{ "basketBeta": ${num(d.basketBeta)}, "basketSector": ${num(d.basketSector)}, "basketIdio": ${num(d.basketIdio)}, "basketGaps": ${num(d.basketGaps)}, """ +
+      s""""version": ${jsonStr(d.version)}, "primary": ${jsonStr(d.primary)}, "paths": ${d.paths}, "years": ${d.years}, "seed": ${d.seed} }"""
+    }
+    Vector(
+      """      "ruler": {""",
+      s"""        "file": ${jsonStr(r.file)},""",
+      s"""        "digest": ${jsonStr(r.digest)},""",
+      s"""        "index": ${jsonStr(r.index)},""",
+      s"""        "basis": ${jsonStr(r.basis)},""",
+      s"""        "closesDate": ${jsonStr(r.closesDate)},""",
+      s"""        "from": ${jsonStr(r.from)},""",
+      s"""        "to": ${jsonStr(r.to)},""",
+      s"""        "sessions": ${r.sessions},""",
+      s"""        "names": ${r.names.length},""",
+      s"""        "minSessions": ${r.minSessions},""",
+      """        "readUnder": "coverage",""",
+      "        \"coverage\": [\n" + coverage.mkString(",\n") + "\n        ],",
+      "        \"rows\": [\n" + rows.mkString(",\n") + "\n        ],",
+      s"""        "mechanism": { "worstDecile": ${num(r.mechanism._1)}, "middle": ${num(r.mechanism._2)}, "bestDecile": ${num(r.mechanism._3)} },""",
+      s"""        "dials": $dials""",
+      "      }").mkString("\n")
+
   /** The sidecar's `verdictChannels` members: each channel's dials as the verdict ran it (`gateW`),
     * with `emitted` where the caller's world `w` carries that channel and `anchored` otherwise.
     * Byte for byte the Rust twin's. */
-  private def verdictChannelsJson(w: World, gateW: World): String =
+  private def verdictChannelsJson(w: World, gateW: World, basketGraded: Boolean): String =
     def source(emitted: Boolean): String = jsonStr(if emitted then "emitted" else "anchored")
     Vector(
       s""""satellite": { "satBeta": ${ef(gateW.satBeta)}, "satIdio": ${ef(gateW.satIdio)}, "satCycleSd": ${ef(gateW.satCycleSd)}, "satDriftHalf": ${ef(gateW.satDriftHalf)}, "satLevelHalf": ${ef(gateW.satLevelHalf)}, "source": ${source(w.satBeta > 0.0)} }""",
@@ -11654,7 +12243,8 @@ object MarketSim:
       s""""open": { "overnight": ${ef(gateW.overnight)}, "source": ${source(w.overnight > 0.0)} }""",
       s""""dividends": { "divYield": ${ef(gateW.divYield)}, "source": ${source(w.divYield > 0.0)} }""",
       s""""basket": { "basket": ${gateW.basket}, "basketBeta": ${ef(gateW.basketBeta)}, "basketSector": ${ef(gateW.basketSector)}, """ +
-        s""""basketIdio": ${ef(gateW.basketIdio)}, "basketGaps": ${ef(gateW.basketGaps)}, "basketDrift": ${ef(gateW.basketDrift)}, "source": ${source(w.basket > 0)} }""",
+        s""""basketIdio": ${ef(gateW.basketIdio)}, "basketGaps": ${ef(gateW.basketGaps)}, "basketDrift": ${ef(gateW.basketDrift)}, """ +
+        s""""source": ${jsonStr(if w.basket > 0 then "emitted" else "off")}, "graded": $basketGraded }""",
       s""""sector": { "sectors": ${gateW.sectors}, "sectorIdio": ${ef(gateW.sectorIdio)}, "sectorDriftSd": ${ef(gateW.sectorDriftSd)}, """ +
         s""""sectorDriftHalf": ${ef(gateW.sectorDriftHalf)}, "source": ${source(w.sectors > 0)} }""",
       s""""macro": { "macro": ${gateW.macroPanel}, "source": ${source(w.macroPanel > 0 && w.macroNull != 1)} }""",
@@ -11725,7 +12315,9 @@ object MarketSim:
         ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
         ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield"))
         ++ (if p.logOpen.isEmpty then Vector() else Vector("logOpen"))
-        ++ basketColumns(p) ++ sectorColumns(p)
+        // the names grade only against a ruler, and the aggregate column never: the rows read
+        // the names under the ruler's coverage
+        ++ (if gateSt.basket.isDefined then basketColumns(p).drop(1) else Vector()) ++ sectorColumns(p)
         ++ (if p.macroPanel.exists(!_.sibling) then MacroK.Columns else Vector())).filter(shape.columns.contains))},""",
       // The field that says a column reached the file UNGRADED: `logSat` is covered by the
       // `satellite *` rows and the bar columns by the `bar *` rows, and the one case today is a
@@ -11734,6 +12326,7 @@ object MarketSim:
       // beside the data.
       // an f32 chunk may carry a selection; both lists name only what is in the file
       s"""    "ungradedChannelSeries": ${strList(((if p.macroPanel.exists(_.sibling) then MacroK.Columns else Vector.empty)
+        ++ basketColumns(p).take(1) ++ (if gateSt.basket.isDefined then Vector.empty else basketColumns(p).drop(1))
         ++ (if p.macroNullPanel.isEmpty then Vector.empty else MacroK.NullColumns)).filter(shape.columns.contains))},""",
       // Since schema 19 the verdict grades every derived series and the macro panel on every
       // world (`verdictWorld`), so `verdictSeries` lists everything it graded -- read off the
@@ -11747,10 +12340,10 @@ object MarketSim:
              Vector("logHigh", "logLow") ++ (if b.volSd.isFinite then Vector("logVolume") else Vector()))
         ++ (if gateSt.divYieldMean.isFinite then Vector("logTraded", "divYield") else Vector())
         ++ (if gateSt.open.isDefined then Vector("logOpen") else Vector())
-        ++ (if gateSt.basket.isDefined then "logBasket" +: (1 to gateW.basket).map(q => s"logName$q").toVector else Vector())
+        ++ (if gateSt.basket.isDefined then (1 to gateW.basket).map(q => s"logName$q").toVector else Vector())
         ++ (if gateSt.sector.isDefined then (1 to gateW.sectors).map(q => s"logSector$q").toVector else Vector())
         ++ (if gateSt.macroPanel.exists(!_.sibling) then MacroK.Columns else Vector()))},""",
-      s"""    "verdictChannels": { ${verdictChannelsJson(w, gateW)} },""",
+      s"""    "verdictChannels": { ${verdictChannelsJson(w, gateW, gateSt.basket.isDefined)} },""",
       s"""    "realism": ${jsonStr(if realismBad.isEmpty then "PASS" else "FAIL")},""",
       s"""    "mechanism": ${jsonStr(if mechanismBad.isEmpty then "PASS" else "FAIL")},""",
       s"""    "fidelity": ${jsonStr(if fidelityBad.isEmpty then "PASS" else "FAIL")},""",
@@ -11769,7 +12362,7 @@ object MarketSim:
       "  },",
       // the verdict's readings, led by the level ITS channels were sampled at: the level is a
       // function of the primary alone, so it is this file's level wherever this file has one
-      channelReadingsBlock(gateSt, v.level),
+      channelReadingsBlock(a, gateSt, gateW, v.level),
       shape.episodes,
       """  "fidelity": [""",
       fidelity.mkString(",\n"),
@@ -11911,6 +12504,33 @@ $body
 
   /** The f32 stream's flags, refused before anything is simulated where they cannot mean what they
     * say. */
+  /** `-solvebasket`: fits the dials (`solveBasket`), confirms them on the run's own ensemble,
+    * prints both, and writes the ruler's `dials` group in place. */
+  def runBasketSolve(r: BasketRuler, path: String, w: World, spec: (Int, Int), seed: Long): Unit =
+    val (paths, years) = spec
+    val (sp, sy) = SolveBasketSpec
+    eprintln(s"solving the basket's dials to ${r.file} (${r.names.length} names on ${r.index}) at $sp x $sy")
+    val (d, loss) = solveBasket(r, w, seed)
+    val b = basketReading(r, simPaths(withBasketDials(w, r, d), paths, years, seed))
+      .getOrElse(usage("the confirming ensemble read no basket"))
+    def dialsLine(x: Vector[Double]) =
+      s"basketBeta ${ef(x(0))}  basketSector ${ef(x(1))}  basketIdio ${ef(x(2))}  basketGaps ${ef(x(3))}"
+    println(s"basket solve: ${r.file} -- ${r.names.length} names on ${r.index}, ${r.from}..${r.to}")
+    println(s"  from    ${dialsLine(Vector(w.basketBeta, w.basketSector, w.basketIdio, w.basketGaps))}")
+    println(f"  fitted  ${dialsLine(d)}   loss $loss%.3f at $sp x $sy")
+    println(s"  confirmed at $paths x $years:")
+    r.bands.zip(b.graded).foreach { (bd, got) =>
+      println(f"    ${bd.row}%-26s $got%7.3f   record ${bd.record}%7.3f   band ${bd.lo}%.2f-${bd.hi}%.2f   " +
+              (if got > bd.lo && got < bd.hi then "PASS" else "MISS"))
+    }
+    println(f"    ${"mechanism"}%-26s worst ${b.pairCorrWorst}%.3f   middle ${b.pairCorrMid}%.3f   " +
+            (if b.pairCorrWorst > b.pairCorrMid then "PASS" else "FAIL"))
+    val readings = BasketRows.zip(b.graded) ++
+      Vector(("pair corr worst decile", b.pairCorrWorst), ("pair corr middle", b.pairCorrMid))
+    val dials = RulerDials(d(0), d(1), d(2), d(3), Version, primaryDigest(w), paths, years, seed, readings)
+    path.asPath.write(rulerWithDials(path.asPath.contentAsString, dials))
+    eprintln(s"wrote the fitted dials to $path")
+
   def checkStreamFlags(emit: String, emitF32: String, cols: Vector[String], emitGate: Int, validate: Boolean): Unit =
     if emit.nonEmpty && emitF32.nonEmpty then usage("-emit and -emitf32 each name the output file; give one")
     if cols.nonEmpty && emitF32.isEmpty then
@@ -12135,6 +12755,8 @@ $body
     var basket = dw.basket; var basketBeta = dw.basketBeta; var basketSector = dw.basketSector
     var basketIdio = dw.basketIdio; var basketGaps = dw.basketGaps
     var basketDrift = dw.basketDrift; var macroPanel = dw.macroPanel; var macroNull = dw.macroNull
+    var basketGiven = false; var basketDialGiven = Vector.fill(4)(false)
+    var basketRulerFile = ""; var solveBasketFlag = false
     var sectors = dw.sectors; var sectorIdio = dw.sectorIdio; var sectorDriftSd = dw.sectorDriftSd
     var sectorDriftHalf = dw.sectorDriftHalf
     var levGain = dw.levGain; var stressScale = dw.stressScale
@@ -12283,11 +12905,17 @@ $body
       case "-volidio"    => volIdio = numOr("-volidio", consumeNext)
       case "-divyield"   => divYield = numOr("-divyield", consumeNext)
       case "-overnight"  => overnight = numOr("-overnight", consumeNext)
-      case "-basket"     => basket = intOr("-basket", consumeNext)
-      case "-basketbeta" => basketBeta = numOr("-basketbeta", consumeNext)
-      case "-basketsector" => basketSector = numOr("-basketsector", consumeNext)
-      case "-basketidio" => basketIdio = numOr("-basketidio", consumeNext)
-      case "-basketgaps" => basketGaps = numOr("-basketgaps", consumeNext)
+      case "-basket"     => basket = intOr("-basket", consumeNext); basketGiven = true
+      case "-basketbeta" =>
+        basketBeta = numOr("-basketbeta", consumeNext); basketDialGiven = basketDialGiven.updated(0, true)
+      case "-basketsector" =>
+        basketSector = numOr("-basketsector", consumeNext); basketDialGiven = basketDialGiven.updated(1, true)
+      case "-basketidio" =>
+        basketIdio = numOr("-basketidio", consumeNext); basketDialGiven = basketDialGiven.updated(2, true)
+      case "-basketgaps" =>
+        basketGaps = numOr("-basketgaps", consumeNext); basketDialGiven = basketDialGiven.updated(3, true)
+      case "-basketruler" => basketRulerFile = consumeNext
+      case "-solvebasket" => solveBasketFlag = true
       case "-basketdrift" => basketDrift = numOr("-basketdrift", consumeNext)
       case "-sectors"    => sectors = intOr("-sectors", consumeNext)
       case "-sectoridio" => sectorIdio = numOr("-sectoridio", consumeNext)
@@ -12348,6 +12976,21 @@ $body
     // different range is how a chunked batch ends up with every chunk holding path 0.
     if emitFrom > 0 && !emitAll then usage("-emitfrom applies to -emitall; use -emitpath for one path")
     checkStreamFlags(emit, emitF32, emitCols, emitGate, validate)
+    // THE BASKET RULER: the client's names set the basket's size and, where no dial flag gave its
+    // own, its four dials -- resolved into the world like any other dial, so the sidecar's `world`
+    // block and the world digest carry them
+    val basketRuler: Option[BasketRuler] =
+      if basketRulerFile.isEmpty then
+        if solveBasketFlag then usage("-solvebasket fits the basket's dials to a ruler; name it with -basketruler FILE")
+        None
+      else
+        val r = loadBasketRuler(basketRulerFile).fold(m => usage(s"-basketruler: $m"), identity)
+        val (n, d) = ruledBasket(r, Option.when(basketGiven)(basket),
+                                 Vector(basketBeta, basketSector, basketIdio, basketGaps), basketDialGiven,
+                                 solveBasketFlag).fold(usage(_), identity)
+        basket = n
+        basketBeta = d(0); basketSector = d(1); basketIdio = d(2); basketGaps = d(3)
+        Some(r)
     // A bad index here is the one place the rule list has to be discoverable: the report names
     // the rules but not their numbers, and the numbers are what the flag takes.
     if powerArms.exists(i => i < 1 || i > Rules.size) then
@@ -12527,7 +13170,7 @@ $body
         Crowd.Drawdown(t.drop(8).toIntOption.filter(d => d > 0 && d < 100).getOrElse(
           usage(s"unknown -crowd [$crowdName]; use momentum, trendNNN, volscaled, or drawdownNN")))
       case other => usage(s"unknown -crowd [$other]; use momentum, trendNNN, volscaled, or drawdownNN")
-    val anchors = anchorsNamed(anchorSpec)
+    val anchors = anchorsNamed(anchorSpec).copy(basketRuler = basketRuler)
     val w = World(trendShare, depth, stress, beta, drift = drift, fundVol = fundVol,
                   rateMean = rateMean,
                   volPersist = volPersist, volOfVol = volOfVol,
@@ -12584,6 +13227,16 @@ $body
     if digestOnly then
       println(worldDigest(w))
       return
+    if solveBasketFlag then
+      basketRuler.foreach(runBasketSolve(_, basketRulerFile, w, (paths, years), seed))
+      return
+    basketRuler.foreach { r =>
+      r.dials.foreach { d =>
+        val here = primaryDigest(w)
+        if d.primary != here then
+          eprintln(s"NOTE: ${r.file}'s dials were solved on primary ${d.primary}; this world's primary is $here, and its basket rows grade them here")
+      }
+    }
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
     // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side).  Deliberately
@@ -12679,7 +13332,7 @@ $body
 
     eprintln(s"simulating $paths paths x $years years")
     val sims = simPaths(w, paths, years, seed)
-    val st = measure(sims, years)
+    val st = measureFor(anchors, sims, years)
 
     // The verdict is a property of the WORLD, so it is measured on an ensemble large enough for
     // the conditional mechanism statistics to exist AND at the horizon the bands were calibrated
@@ -12731,7 +13384,7 @@ $body
           Vector(emit)
       val first = pathAt(if emitAll then emitFrom else emitPath)
       val sessions = first.price.length
-      eprintln(s"wrote ${written.size} path(s), ${1 + emitTable(first).size} columns x $sessions sessions, " +
+      eprintln(s"wrote ${written.size} path(s), ${1 + ruledTable(anchors, first).size} columns x $sessions sessions, " +
                s"to ${written.head}${if written.size > 1 then s" .. ${written.last}" else ""} " +
                s"(+ sidecar ${sidecarName(written.head)})")
 

@@ -25,6 +25,7 @@ object RecordBands {
     "(-yahoo FILE [-splice FILE -at YYYY-MM-DD] | -french FILE | -fred FILE) -from YYYY-MM-DD -to YYYY-MM-DD",
     "    -set NAME -series LABEL",
     "-rateafter -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]",
+    "-basket -closes WIDE.csv -closesdate YYYY-MM-DD [-from D] [-to D] [-minsessions N] [-out RULER.tsv]",
     "",
     "-yahoo FILE   a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo's chart API, one row",
     "              a session): the `dlog_adj_close` column; the first row is the anchor price, not a",
@@ -70,6 +71,13 @@ object RecordBands {
     "              block resamples (`volExitResamples`), their joint band. -closes FILE is a",
     "              `date,close,adj_close` CSV (Yahoo's printed and adjusted closes); -french FILE reads",
     "              CRSP's daily total return as both, having no printed close",
+    "-basket       THE BASKET RULER for `-basketruler` (`basketRulerTsv`): -closes WIDE.csv is one row a",
+    "              session, `date`, the index's column named by its ticker, then one column per name,",
+    "              a name's cell empty before its listing (adjusted closes, dividends reinvested);",
+    "              -closesdate is the day they were taken, since an adjusted series is recomputed on",
+    "              every later distribution. -from / -to bound the window (default the file's);",
+    "              -minsessions (default 252) is the sessions a name needs to enter the per-name and",
+    "              pair ranges. Writes -out, or prints",
     "-sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,",
     "              `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the",
     "              library publishes them (unzipped), the rows of `sectors-2026-09-30.tsv` with 5-95",
@@ -240,7 +248,29 @@ object RecordBands {
       println(f"$set%s\t${MarketSim.VolExitRows(k)}%s\t$series%s\t$window%s\t${days.length}%d\t$resamples%d\t${record(k)}%.6f\t" +
               qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
 
+  /** `-basket`: the ruler from a wide closes file, written to `-out` or printed. */
+  def basketMode(args: Array[String]): Unit =
+    def opt(flag: String): Option[String] =
+      val i = args.indexOf(flag)
+      if i < 0 then None else args.lift(i + 1)
+    val closes = opt("-closes").getOrElse(usage("-basket wants -closes WIDE.csv"))
+    val closesDate = opt("-closesdate").getOrElse(usage("-basket wants -closesdate YYYY-MM-DD"))
+    val minSessions = opt("-minsessions").fold(252)(v => v.toIntOption.getOrElse(usage("-minsessions wants a session count")))
+    val p = closes.asPath
+    if !p.isFile then usage(s"cannot read $closes")
+    val tsv = MarketSim.parseBasketCloses(p.contentAsString)
+      .flatMap(c => MarketSim.basketRulerTsv(c, opt("-from").getOrElse(""), opt("-to").getOrElse(""), closesDate, minSessions))
+      .fold(m => usage(s"-basket $closes: $m"), identity)
+    opt("-out") match
+      case Some(out) =>
+        out.asPath.write(tsv)
+        eprintln(s"wrote $out")
+      case None => print(tsv)
+
   def main(args: Array[String]): Unit = {
+    if args.contains("-basket") then
+      basketMode(args)
+      return
     if args.contains("-volexit") then
       volexitMode(args)
       return

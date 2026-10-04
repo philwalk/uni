@@ -83,7 +83,9 @@ the two differ where the target is a theory value or older than its record (see
 true when the model falls outside the record's own joint resampling band, and
 `recordPercentile` says where it falls; on every other row `miss` is true when the ratio falls
 outside 0.667-1.5. Either way a row that **cannot be computed** reads `miss: true` — a `null` model
-value is not a pass. A path holding a non-finite price is refused outright: `-emit` exits 2 and
+value is not a pass. A row's `miss` is that row's own disclosure, not the verdict: the fidelity
+class (`gate.fidelity`, `gate.fidelityFailed`) is decided by the gate rows, so a row can read
+`miss: true` beside a fidelity PASS, as the Nasdaq's `bubble coupling 3y` does on most seeds. A path holding a non-finite price is refused outright: `-emit` exits 2 and
 writes nothing, where every other gate verdict only warns.
 
 `reportedRows` holds rows read off records the set does not grade on, each shaped as a `fidelity`
@@ -128,8 +130,9 @@ the aggregate is BUY-AND-HOLD, equal weights held from the first EMITTED session
 reconstructs exactly as `ln(mean_j exp(logName_j - logName_j[0]))` — a daily-rebalanced mean of the
 same names is a different series (session returns correlate about 0.98 with it, and the levels
 diverge by the dispersion drag);
-`channels.basket` carries the three levels' readings plus `nameD20Spread`, the spread of time below
-peak across the names). `world.basketDrift` records the cross-sectional drift dispersion dial, and
+`channels.basket` carries, against a ruler, the three levels' readings plus `nameD20Spread`, the
+spread of time below peak across the names, `graded: true` and the ruler; without one,
+`{ "ruler": null, "graded": false }`; a run with a ruler omits `logBasket`). `world.basketDrift` records the cross-sectional drift dispersion dial, and
 when it is on `channels.level.kDr` carries the primary's realized annualized volatility the dial is
 a fraction of; a file with the dial off has neither `kDr` nor any other new key. Since schema 12,
 `macroSpread`, `macroSlope`, `macroCond` and `macroIvol`, since 13 `macroYield10` and
@@ -175,7 +178,8 @@ or like 2008, or none, a rule's reading needs no opinion about frequency.
 
 **Every verdict grades every channel and the macro panel, whatever the file carries** (schema 19).
 The verdict is a property of the world, and the derived series are functions of its state, so the
-verdict ensemble runs every channel the caller left off at the anchor set's dials — the S&P set's
+verdict ensemble runs every channel the caller left off at the anchor set's dials (the basket aside:
+it grades only against a client's ruler) — the S&P set's
 are `0.24.4-sp500-channels`', the Nasdaq set's `0.24.4-nasdaq-basket`'s — and grades their rows
 beside the primary's. A default's or a set member's PASS therefore implies the bundle's; before
 this a channel's rows graded only when its dial was on, and the S&P default's `macro cond build-up`
@@ -184,7 +188,8 @@ because that is what the file carries; a null panel (`-macronull`) is graded as 
 emitted columns stay declared ungraded. The emitted file is unchanged — a default still writes
 `price` and `bond` — and `gate.verdictSeries` lists everything the verdict graded while
 `gate.verdictChannels` carries each channel's dials as the verdict ran it, `emitted` or
-`anchored`. The `channels` block is present on every file, led by the level the verdict's channels
+`anchored` (the basket's `emitted` or `off`, with `graded` saying whether a ruler graded it). The
+`channels` block is present on every file, led by the level the verdict's channels
 were sampled at, which is a function of the primary alone and so the file's own level wherever the
 file has one. The search's feasibility and `-fitness`'s gate penalty read the same verdict world.
 The primary is bit-identical, so every row the caller's own ensemble reads is what it was.
@@ -388,8 +393,8 @@ sort numerically, or emit the batch in one invocation.
 
 ### Streaming thousands of paths
 
-`-emitf32 F` writes the paths `-emit` would write as ONE binary file plus one sidecar `F.json` for
-the chunk. Cells are little-endian IEEE-754 f32, path-major: path, then column, then session, so
+`-emitf32 F` writes the paths `-emit` would write as ONE binary file plus one sidecar for the chunk,
+named as a TSV's is: the file's extension replaced by `.json` (`chunk-0000.f32` → `chunk-0000.json`). Cells are little-endian IEEE-754 f32, path-major: path, then column, then session, so
 column c of the chunk's j-th path starts at byte `(j × columns + c) × sessions × 4`. `-emitall`,
 `-emitfrom` and `-paths` pick the paths as they do for `-emit`. Paths are simulated and written a
 batch at a time, so a chunk of thousands never sits in memory, and a path's bytes do not depend on
@@ -1219,8 +1224,10 @@ with it.
 | `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
 | `-divyield` | DIVIDENDS: the world's mean dividend yield, %/yr. The session yield is Y × fundamental/price over the world's mean of it (a world constant solved on the same fixed ensemble as the bar level — the ensemble's mean fundamental/price is 2.06 at the default and 2.30 on the Nasdaq recipe, and a per-path mean would leak the path's future), so a rich session yields less and the ensemble's pooled mean yield is the dial; the reported median path's mean reads about 0.9× of it (2.62 at 2.95, 0.69 at 0.78), valuation epochs skewing the path means; `-emit` gains `logTraded` (the total-return `price` deflated by the accrued yield — `price` itself is unchanged) and `divYield`. Anchored 2.95 on Shiller's S&P 1954–2023 and 0.78 on QQQ 2005–2026 (`dividend-2026-09-02.tsv`); the level is graded when on. An identity parameter, never searched | 0 (off) |
 | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
-| `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector, graded against the eight's basket on the set's own primary; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0; graded against SMH's eight largest holdings as of 2026-10-02, 2012–2026 (`basket-2026-10-03.tsv`); `-atrelease 0.24.0-basket` names the default with it on (`0.23.1-basket` the 0.23.1 world). The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.7 / 0.85 / 8.0 there, which `-atrelease 0.24.0-nasdaq-basket` names | 0 (off) |
+| `-basket` | THE BASKET, a null world of N exchangeable names: each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector; `-emit` gains `logBasket` and `logName1..N`. Graded only against a client's ruler (`-basketruler`); about 0.2 ms and 0.23 MB a name per 100-year path | 0 (off) |
 | `-basketdrift` | CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a fraction of the primary's realized volatility, drawn once per name per path and centred exactly so the sector's log drift is untouched. Moves the SPREAD of time below peak across names, not its median. **Anchored at 0** and off in every recipe: the record cannot supply a positive value (below) | 0 (off) |
+| `-basketruler` | THE CLIENT'S RULER: a file `record_bands -basket` measured from the client's closes. Grades the basket rows and the mechanism row, read under the ruler's coverage; sets N to its names and the four dials to its fitted ones (a `-basket*` flag overrides one); `-basket` other than its N, and a ruler without fitted dials, are refused; the sidecar carries the ruler (`channels.basket.ruler`) and `logBasket` leaves the file | none |
+| `-solvebasket` | With `-basketruler`: fits the four basket dials to the ruler by coordinate descent at 12 × 30 from the ruler's (or the world's) dials, confirms them at `-paths` × `-years`, prints both, and writes them into the ruler's `dials` group with the solve's version, seed and primary. The fit depends on `-seed`, and the same seed reproduces it | off |
 | `-sectors` | THE SECTOR CHANNEL: K sector legs as observational second-pass instances of the primary — each its beta on the primary's observed return (betas drawn once per path at the record's dispersion, centred), its own idio on the vol state (`-sectoridio`, a fraction of the primary's realized volatility) and a slow relative drift, an AR(1) state of sd `-sectordriftsd` (a fraction of the primary's annualized volatility) and half-life `-sectordrifthalf` years, centred across the legs. `-emit` gains `logSector1..K`. Graded on the ten-industry ruler as ratios that carry across primaries ([below](#the-sector-channel--sectors)). Anchored K 10, idio 0.7, drift 0.25, half-life 2 on both sets | 0 (off) |
 | `-macro` | THE MACRO PANEL: 1 emits seven observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R² — and five draw-free levels, `macroYield10` (DGS10: the 10-year the slope is a difference of), `macroPolicy` (DFF: the loop's own policy rate, re-set at a meeting to the nearest quarter point and held), and the credit system: `macroBankCredit` (TOTBKCR) and `macroOutput` (GDP) as indices with `macroCredit` (TOTBKCR/GDP, percent) the ratio they imply. No scale dials but the spread's drawdown term (`-spreaddd`, read off the record): a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
 | `-macronull` | THE NULL PANEL: 1 takes the four macro columns from a SIBLING path — the same world at another seed — so their marginals and persistence are this world's and their coupling to this path's price is nil: the no-edge comparison for a rule that reads them. The macro rows do not grade a null panel; the sidecar lists its columns as ungraded. 2 is THE PAIRED CONTROL (consumer request 5): the path's own panel as at 0, graded, and the sibling's beside it as nine `nullMacro*` columns, ungraded, so the no-edge comparison rides in the same file instead of a second emit of every world. Needs `-macro 1`; one extra price loop per path at 1 or 2 | 0 (the path's own panel) |
@@ -1684,7 +1691,7 @@ Nasdaq Composite's daily returns through 1985-10-01 and the Nasdaq-100's after, 
 read from Yahoo's public ^IXIC and ^NDX series
 (`record_bands -yahoo IXIC.csv -splice NDX.csv -at 1985-10-01`). The same rows read off the NDX
 from 1990, QQQ and CRSP's century are reported, not graded (`reportedRows`). The unconditional rows
-— volatility, tails, the up-day share, the basket — stay on QQQ 1999-2026: they set the world's
+— volatility, tails, the up-day share — stay on QQQ 1999-2026: they set the world's
 scale, and the traded fund has no longer record. The S&P set grades CRSP throughout.
 
 | row | splice 1971-2026 | NDX 1990-2026 | CRSP 1926-2026 |
@@ -1711,76 +1718,115 @@ share reads 39.6% and their coupling +0.14.
 
 ## A basket of names — `-basket`
 
-Forty-five of one consumer's sleeves rank a basket of single names, and a two-asset path cannot
-evaluate any of them: cross-sectional dispersion, rank stability, a per-name tail count and a
-"decoupling from the sector" gate all read across names. `-basket N` adds N names as observational
-second-pass instances of the primary — nothing here reaches a price, and 0 is bit-identical — each
-the shared **sector leg** (beta on the primary's observed return plus idio riding the vol state and
-the spiral, the satellite's construction) plus its **own idio**, riding the vol state alone, plus
-its **own gaps**, a Student-t jump stream of its own. The model has no sector index, so the
-basket's equal-weight aggregate *is* the sector, and it is graded against SMH's relation to SPY.
+**The basket is a null world.** `-basket N` adds N anonymous, exchangeable names: each is a shared
+leg on the primary plus its own idio and its own symmetric jumps, all at the same expected drift.
+No name persists ahead of another and no drift is dispersed, so a rule that ranks names has zero
+expected edge here. What the basket measures for such a rule is its false-positive rate, and, with
+`-basketdrift` swept upward, the dispersion it would need before it could see anything. A client's
+own closes decide only *whose* co-movement the names reproduce. A world carries one basket: a
+cross-asset cohort (bonds, gold, a volatility index) is not a basket of exchangeable equity names.
 
-The ruler is a population of real names, not an index (`basket-2026-10-03.tsv`: SMH's eight largest
-holdings as of 2026-10-02 — NVDA, TSM, AMD, AVGO, MU, INTC, AMAT, KLAC — held fixed so the bands
-compare across releases, 2012–2026, from Yahoo's public adjusted closes). Three levels, graded on
-every verdict — at the set's dials where the caller left the basket off:
+Nothing here reaches a price, and `-basket 0` is bit-identical. Each name is the shared **sector
+leg** plus its **own idio** plus its **own gaps**:
 
-The record column below is the eight read against **SPY**; the Nasdaq anchor set grades the same
-names against QQQ, at its own bands and its own dials (below).
+- **Sector leg** (shared by every name): beta on the primary's observed return plus idio riding the
+  vol state and the spiral, the satellite's construction.
+- **Own idio**: rides the vol state alone, so shared variance dominates in stress and pairwise
+  correlation rises.
+- **Own gaps**: a Student-t jump stream of the name's own.
 
-| level | rows | record | model at the anchored dials, 200 × 100 |
-|---|---|---|---|
-| per name | vol ratio to the primary; sessions past 10% per year | 1.9–3.4×; 0.4–5.1 | 2.49×; 2.13 |
-| the aggregate vs the primary | corr; beta; vol ratio | 0.77; 1.54; 1.99× | 0.793; 1.562; 1.97× |
-| the cross-section | pairwise corr; idio share; same-day tail coincidence | 0.55; 0.40; 0.46 | 0.575; 0.374; 0.547 |
+The model has no sector index, so the basket's equal-weight aggregate *is* the sector. The cost is
+about 0.2 ms and 0.23 MB a name per 100-year path: a 200 × 100 verdict reads in 1.2 s and 2.1 GB at
+8 names and in 2.4 s and 3.8 GB at 45, and a 200-path, 56-year f32 chunk with every column grows
+from 549 to 947 MB.
 
-The mechanism row is what a beta-plus-noise leg cannot pass: pairwise correlation on the primary's
-worst decile of days must exceed its central 45–55% (record 0.56 vs 0.22; model 0.682 vs 0.212),
-which the split between shared and idiosyncratic variance produces because only the shared part
-rides the spiral. The names' time more than 20% below their running peak is **reported, not
-graded**: the eight read 0.08–0.61 because they are names selected today as winners — the
-survivorship the fixture discloses — where a name at the sector's drift and 2.5× the index's
-volatility spends most of a century below that line (the model reads 0.94), as a real name of that
-drift would. Level 1 as a proper population needs point-in-time membership, which no cache here
-holds; until then the eight's ranges are the bands and the reading is disclosed.
+### The client's ruler
 
-`-atrelease 0.23.1-basket` names the 0.23.1 world with the basket on at the anchored dials and the
-dividend stream at its S&P anchor (`-divyield 2.95`), `0.24.0-basket` the current default with the
-same and the macro panel; `-atrelease 0.23.1-nasdaq-basket` and `0.24.0-nasdaq-basket` name the
-Nasdaq worlds of the section above with the basket on, graded against the same eight names read
-under QQQ instead of SPY. The basket's rows read the same on the 0.24.0 worlds as on their bases:
-the names are observational, and the leverage cycle reaches them only through the primary.
-`0.24.4-nasdaq-basket` names the 0.24.4 Nasdaq world with the basket on at the dials re-anchored
-on it (`basketSector` 0.8; the dial moves with the world because the shared leg carries whatever
-the primary's own slow moves are); see its recipe paragraph below.
+**No set grades a basket by default.** The basket rows grade only against a **ruler** the client
+measures from its own closes and names on the run:
 
-**The basket dials do not transport between anchor sets.** The eight correlate more with QQQ
-(0.840) than with SPY (0.773), so the shared leg has to carry more and the sector's own noise
-less: `-basketsector` falls 1.1 → 0.7 and `-basketbeta` follows its anchor, 1.56 → 1.37. The
-higher-volatility primary also wants a lower `-basketidio` (0.9 → 0.85) and more own gaps
-(6.0 → 8.0), because the cross-section rows need per-name tails the shared leg cannot supply. The
-Nasdaq recipe reads:
+1. **The closes.** One wide CSV per universe: `date`, then the index's column named by its ticker,
+   then one column per name. Use adjusted closes, dividends reinvested, one row a session. Leave a
+   name's cell empty where it has no close, before its listing or after a delisting.
+2. **The ruler.** `record_bands -basket -closes WIDE.csv -closesdate D [-from D -to D] -out
+   RULER.tsv` (`jsrc/recordBands.sc` is its Scala twin, byte-identical). `-closesdate` records
+   when the closes were taken, since an adjusted series is recomputed on every later distribution.
+3. **The dials.** `market_sim -basketruler RULER.tsv -solvebasket` fits the four dials (`-basketbeta`,
+   `-basketsector`, `-basketidio`, `-basketgaps`) by coordinate descent at 12 × 30, confirms them at
+   the run's `-paths` × `-years`, and writes them into the ruler's `dials` group. The group also
+   records the solve's version, seed and the primary it was solved on. The descent reads small,
+   noisy ensembles, so the fitted dials depend on the solve's `-seed`; the same seed reproduces
+   them exactly, and fits from different seeds can differ while each passes its rows. Solve on the world the basket
+   will run in; a run on another primary prints a note and grades the transport.
+4. **The runs.** `-basketruler RULER.tsv` grades the basket rows and the mechanism row. It sets N
+   to the ruler's names and the dials to the fitted ones. A `-basket*` flag overrides one dial;
+   `-basket` other than the ruler's N, 0 included, is refused, and so is a ruler without fitted
+   dials. The dials resolve into the sidecar's `world` block and the world digest like any other
+   dial.
 
-| level | statistic | the eight, under QQQ | model |
-|---|---|---|---|
-| a name | vol ratio to the primary; sessions past ±10%/yr | 2.1×; 2.0 | 2.04×; 3.78 |
-| the aggregate vs the primary | corr; beta; vol ratio | 0.84; 1.35; 1.60× | 0.853; 1.371; 1.61× |
-| the cross-section | pairwise corr; idio share; same-day tail coincidence | 0.55; 0.40; 0.46 | 0.567; 0.380; 0.537 |
+`channels.basket.ruler` makes a bundle self-describing without the file. It carries the file and
+its digest, the index, the basis, the closes' date, the window, each name's coverage, the rows with
+their records and bands, the mechanism, and the dials. Without a ruler, a basket is emitted
+ungraded (`"ruler": null, "graded": false`, the names in `ungradedChannelSeries`). With one,
+`logBasket` leaves the file: the rows read the names, never the aggregate column, and an `-emitf32`
+run's `-emitcols logBasket` brings it back. The `*-basket` recipes keep their dials and 8 names,
+ungraded without a ruler. Survivorship and point-in-time membership are the client's choice of
+names, and the sidecar records them.
 
-**The gap rate is high by construction, not by dial.** Level 1 grades a name's volatility as a
-*ratio* to the primary, and that ratio's anchor is the eight against QQQ over 2012–2026 (20.6%
-volatility) while the model's primary is anchored to QQQ over 1999–2026 (24.9% model against 26.9%
-real — the dot-com bust is in the second window and not the first). A name at the right ratio is
-therefore a fifth more volatile than the eight actually were, and clears 10% correspondingly more
-often, and the tail-coincidence row wants more own gaps still. The row passes on the eight's own
-range (0.4–5.1, AMD at the top); read the rate as a level, not as a match. The same effect makes
-`nameD20` read 0.710 here against 0.548 on the S&P side, and it is reported either way.
+**Every row is read the same way on the record and on the model** (`basket_read`). The record's
+aggregate holds the names listed at each point of its window, and the rows built on it move with how
+many it holds. Diversification goes as 1/N: at pair correlation 0.3, an aggregate of 10 names
+carries about 8% more volatility than one of 45. So the model reads its basket under the ruler's
+**coverage**:
+
+- Name k counts from its listing's share of the window onward on each path, and stops at its
+  delisting's, in the aggregate, the idio share, the tail coincidence and the pair correlations.
+- The emitted names keep every session: the coverage governs the reading, not the simulation.
+- With names listing over time, the aggregate's worst 1% of sessions fall mostly in the early,
+  thinner, higher-volatility years, so the tail-coincidence row reads mostly those years, on both
+  sides alike.
+- A name with fewer than 252 sessions (`minSessions`) stays in the aggregate and the tail
+  coincidence. It is left out of the per-name ranges and of every pair; a pair also needs its spans
+  to overlap that long.
+- The per-name and cross-section bands are the universe's own ranges, so a dispersed universe
+  grades loosely: a 45-name cyclical sleeve's gap rates span 0.5–30.4 a year. That is the honest
+  reading of such a universe, not a defect of the band.
+
+| level | rows | band from the ruler |
+|---|---|---|
+| per name | vol ratio to the index over the name's own span; sessions past 10% per year | the graded names' range, outward to 0.1 |
+| the aggregate vs the index | corr; beta; vol ratio | ±0.10 at 0.01; ±0.25 and ±0.30 outward to 0.1 |
+| the cross-section | pairwise corr; idio share (1 − R² on the aggregate); same-day tail coincidence | the pairs' and names' ranges, outward to 0.01; −0.13 / +0.12 |
+
+The mechanism row is what a beta-plus-noise leg cannot pass: pairwise correlation on the index's
+worst decile of days must exceed its central decile's. The split between shared and idiosyncratic
+variance produces it, because only the shared part rides the spiral. A ruler whose own record fails
+that premise is refused, since the row could not mean anything against it.
+
+### The example ruler
+
+`basket-ruler-smh8-qqq-2026-10-04.tsv` is an **example**, not a default: SMH's eight largest
+holdings as of 2026-10-02 (NVDA, TSM, AMD, AVGO, MU, INTC, AMAT, KLAC) against QQQ, 2012-01-04 to
+2026-08-31, from Yahoo's public adjusted closes. Its dials are `-solvebasket`'s on
+`0.24.6-nasdaq-basket`: beta 1.345, sector 0.8, idio 1.025, gaps 7.0. At 200 × 100:
+
+| level | rows | record | band | model |
+|---|---|---|---|---|
+| per name | vol ratio; gaps per year | 1.93; 2.03 | 1.5–2.8; 0.4–5.1 | 2.09; 4.03 |
+| the aggregate vs QQQ | corr; beta; vol ratio | 0.840; 1.345; 1.60 | 0.74–0.94; 1.0–1.6; 1.3–2.0 | 0.822; 1.346; 1.64 |
+| the cross-section | pair corr; idio share; tail coincidence | 0.554; 0.414; 0.446 | 0.39–0.85; 0.25–0.53; 0.32–0.57 | 0.562; 0.384; 0.482 |
+| mechanism | pair corr, worst decile vs middle | 0.511 vs 0.205 | worst above middle | 0.500 vs 0.184 |
+
+The gap rate reads high by construction. At a name's volatility, diffusive moves past 10% already
+supply about 2.3 a year with no own gaps at all. The own-gap dial trades the remainder against the
+pair correlation, the idio share and the tail coincidence, so the solve settles where every row is
+inside its band, not where the gap rate matches. The names' time more than 20% below their running
+peak (0.77 here, against the eight's 0.08–0.61) is **reported, not graded**, for the reason below.
 
 ### Why the names sit below their peaks, and what `-basketdrift` does about it
 
 The names spend more of their time than the record's do more than 20% below their running peak —
-0.548 on the S&P recipe and 0.710 on the Nasdaq, where the ruler's eight read 0.084–0.610 with a
-median of 0.331. That row is **reported, not graded**. What is in it is the **common drift**, and
+0.77 at the example ruler's fitted dials, where its eight read 0.084–0.610 with a median of 0.331. That row is **reported, not graded**. What is in it is the **common drift**, and
 that is survivorship.
 
 Measured over the eight's own window (`basket-drift-2026-10-03.tsv`, 2012–2026, T = 14.6 years):
@@ -1822,8 +1868,8 @@ slightly above 1.)
 ### The dial's real use: a null world for a rule that ranks names
 
 At `-basketdrift 0` every name has the same expected drift **by construction** — the sector leg is
-shared, and the idio and gap terms have the same mean for each name. So the basket at the shipped
-anchor is a **null world** for cross-sectional selection: no name is better than another in
+shared, and the idio and gap terms have the same mean for each name. So the basket at 0 is a
+**null world** for cross-sectional selection: no name is better than another in
 expectation, and any ranking edge a rule shows on it is noise. That is the property that makes it
 useful. Set the dial and there is a real edge of known size to find, so the pair answers a question
 no single world can:
