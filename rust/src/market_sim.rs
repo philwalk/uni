@@ -52,6 +52,7 @@
     reason = "a demo prints its report; here the report IS the parity check"
 )]
 
+use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
@@ -253,7 +254,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // 28 -> 29: THE REPORTED RECORDS. A top-level `reportedRows` after `fidelity`: rows the set reads
 // off records it does not grade on (`Anchors::reported`), each a fidelity row with its `window`
 // first. The Nasdaq's timing rows, bubble coupling and multi-year rows grade on the 1971-2026
-// splice of the Composite and the NDX; CRSP, the NDX from 1990 and QQQ are reported.
+// splice of the Composite and the NDX; CRSP, the NDX from 1990 and QQQ are reported. `fidelity`
+// gained `vol-exit timing pts/yr` and `vol-exit 3x interaction pts/yr`, record-band rows. An
+// `-emitf32` chunk's sidecar (`F32_SIDECAR_KEYS`) carries `format`, `layout`, `columnsAbsent` and
+// `paths` where a TSV's carries `header` and `path`, and its `episodes` lists each path's rows.
 const EMIT_SCHEMA: u32 = 29;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
@@ -298,6 +302,33 @@ const EMIT_SIDECAR_KEYS: [&str; 14] = [
     "columns",
     "header",
     "path",
+    "world",
+    "worldDigest",
+    "gate",
+    "channels",
+    "episodes",
+    "fidelity",
+    "reportedRows",
+];
+
+/// `EMIT_SIDECAR_KEYS` for an `-emitf32` chunk's sidecar.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the contract is read by the tests, never by the writer"
+    )
+)]
+const F32_SIDECAR_KEYS: [&str; 16] = [
+    "generator",
+    "version",
+    "schema",
+    "file",
+    "columns",
+    "format",
+    "layout",
+    "columnsAbsent",
+    "paths",
     "world",
     "worldDigest",
     "gate",
@@ -1175,8 +1206,7 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     open.range_down = 0.13;
     open.div_yield = 0.78;
     // The S&P default with THE BASKET on at its anchored dials and the dividend stream at its S&P
-    // anchor (`basket-2026-09-02.tsv`: the consumer's
-    // eight semis under SMH). Verified at 200x100: names vol 2.49x, gaps 2.13/yr; aggregate corr
+    // anchor (the basket ruler of the time: eight semis under SMH). Verified at 200x100: names vol 2.49x, gaps 2.13/yr; aggregate corr
     // 0.793, beta 1.562, vol 1.97x; pairwise 0.575, idio share 0.374, tail coincidence 0.547,
     // pairwise on the worst decile 0.682 vs 0.212 mid; the primary untouched. Time below peak
     // 0.548, a disclosed reading.
@@ -3129,10 +3159,10 @@ pub struct World {
     /// basket's equal-weight aggregate IS the sector, graded against SMH's own relation to SPY.
     /// A name's idio rides the VOL STATE only, not the spiral's amplification, so in stress the
     /// shared variance dominates and pairwise correlation rises — the mechanism the record shows
-    /// (0.60 on SPY's worst decile vs 0.28 mid). Own gaps: a per-name Student-t jump (JUMP_NU,
+    /// (0.56 on SPY's worst decile vs 0.22 mid). Own gaps: a per-name Student-t jump (JUMP_NU,
     /// the primary's skew) at `basket_gaps` per year past ~10%. Reaches no price; 0 = off, no
-    /// columns, bit-identical. Anchored on the consumer's eight semis under SMH
-    /// (`basket-2026-09-02.tsv`): N = 8.
+    /// columns, bit-identical. Graded against SMH's eight largest holdings as of 2026-10-02
+    /// (`basket-2026-10-03.tsv`): N = 8.
     pub basket: usize,
     /// sector leg: beta on the primary's observed return (anchored 1.56, the basket's beta on SPY)
     pub basket_beta: f64,
@@ -3144,8 +3174,8 @@ pub struct World {
     pub basket_idio: f64,
     /// per-name gap intensity, jumps per year; each a standardized t(JUMP_NU) x
     /// `BASKET_GAP_SIZE` (log), SYMMETRIC — the index's down-skew is the index's and reaches every
-    /// name through the shared leg, while the record's own name-level gaps past 10% run 41 up to
-    /// 32 down with mean +0.011 (`basket-drift-2026-09-03.tsv`). A shifted own-gap channel imposes
+    /// name through the shared leg, while the record's own name-level gaps past 10% run 43 up to
+    /// 37 down with mean +0.007 (`basket-drift-2026-10-03.tsv`). A shifted own-gap channel imposes
     /// drift nothing compensates — at these rates the primary's 0.7 skew is about -0.2/yr of log
     /// drift, more than the shared leg supplies, so every name's expected drift goes negative
     pub basket_gaps: f64,
@@ -3154,12 +3184,13 @@ pub struct World {
     /// Drawn once per name per path and centred EXACTLY, so the equal-weight sector's log drift is
     /// untouched and only the cross-section moves. 0 = off, bit-identical; needs N >= 2.
     ///
-    /// ANCHORED AT 0 by `basket-drift-2026-09-03.tsv`: among the consumer's eight the spread of realized
-    /// drift (0.068) is entirely accounted for by what a 14.6-year window generates from their own
-    /// idio vol (0.070), so no true dispersion is detectable, and selecting survivors truncates the
-    /// left tail — 0 is a FLOOR from biased data, not a measurement. The names' time below peak is
-    /// NOT what this dial fixes: that gap is the eight's COMMON drift (+0.304 against the shared leg's
-    /// +0.117 over the same horizon), which is the survivorship the basket fixture discloses.
+    /// SHIPS AT 0, ungraded (`basket-drift-2026-10-03.tsv`): among the ruler's eight the spread of
+    /// realized drift beyond what a 14.6-year window generates from their own idio vol is 0.062 a
+    /// year, all of it one name (INTC; without it the spread sits under its noise floor), and a list
+    /// selected today truncates the left tail. One name in a survivor sample does not calibrate a
+    /// dial. The names' time below peak is NOT what this dial fixes: that gap is the eight's COMMON
+    /// drift (+0.297 against the shared leg's +0.117 over the same horizon), which is the
+    /// survivorship the basket fixture discloses.
     ///
     /// WHAT IT IS FOR: at 0 every name has the same expected drift BY CONSTRUCTION (shared sector
     /// leg; idio and gaps share a mean), so the basket is a NULL WORLD for cross-sectional
@@ -7176,6 +7207,8 @@ pub struct WorldStats {
     pub up_share: f64,
     /// median per-path volatility-timing edge, points a year (`vol_timing_of`)
     pub vol_timing: f64,
+    /// median per-path volatility exit, timing then 3x interaction, points a year (`vol_exit_of`)
+    pub vol_exit: [f64; 2],
     /// median per-path bubble coupling in log (`bubble_coupling_of`), NaN-free: paths without a
     /// qualifying decline are left out of the median
     pub bubble_coupling: f64,
@@ -7638,6 +7671,162 @@ fn vol_timing_of(r: &[f64]) -> f64 {
         hold += r[t];
     }
     100.0 * DAYS_PER_YEAR as f64 * (rule - hold) / (n - w) as f64
+}
+
+/// THE SIMPLE VOLATILITY EXIT (the consumer's request 1, 2026-10-03): the rule written down
+/// completely, read on the record and on a path the same way. The estimator is the sample sd
+/// (n - 1) of the last `VOL_EXIT_WINDOW` simple returns of the PRINTED close, first read once a
+/// full window exists; below `VOL_EXIT_HOLD_BELOW` the rule holds the index, at or above
+/// `VOL_EXIT_CASH_AT` it holds cash, between it keeps its position, and it starts holding. A
+/// decision at the close of session t is filled at the close of t + 1 and earns from t + 1 to
+/// t + 2. Cash earns the short rate over 252; the leveraged leg is reset daily: `VOL_EXIT_LEVER`
+/// times the index's simple TOTAL return, less (lever - 1) x (the rate + `VOL_EXIT_SPREAD`) x the
+/// calendar days the session spans over 360, less `VOL_EXIT_EXPENSE` over 252. The two rows, in
+/// points a year of log growth over the sessions from the first one a decision earns:
+/// `vol-exit timing pts/yr`, the rule at 1x less buy-and-hold, and `vol-exit 3x interaction
+/// pts/yr`, the rule on the leveraged leg less the leg held, less the timing row. The existing
+/// `vol-timing edge pts/yr` reads thresholds at the series' own volatility percentiles; this one
+/// reads the absolute thresholds the consumer trades.
+pub const VOL_EXIT_ROWS: [&str; 2] = ["vol-exit timing pts/yr", "vol-exit 3x interaction pts/yr"];
+const VOL_EXIT_WINDOW: usize = 24;
+const VOL_EXIT_HOLD_BELOW: f64 = 0.015;
+const VOL_EXIT_CASH_AT: f64 = 0.020;
+const VOL_EXIT_LEVER: f64 = 3.0;
+const VOL_EXIT_SPREAD: f64 = 0.006;
+const VOL_EXIT_EXPENSE: f64 = 0.0086;
+
+/// One session of the volatility exit's inputs (`vol_exit_of`): the printed close's simple return
+/// the rule reads, the index's simple total return it earns, the short rate (annual, decimal) over
+/// the session, and the calendar days the session spans.
+#[derive(Clone, Copy, Debug)]
+pub struct VolExitDay {
+    pub close_ret: f64,
+    pub total_ret: f64,
+    pub rate: f64,
+    pub days: f64,
+}
+
+/// The sum of ln(1 + x) over `xs`, as the log of each 252-session product: the products cannot
+/// leave the double range, and one deterministic log a year keeps the twins equal to the bit.
+fn log_growth(xs: impl Iterator<Item = f64>) -> f64 {
+    let mut total = 0.0f64;
+    let mut prod = 1.0f64;
+    let mut k = 0usize;
+    for x in xs {
+        prod *= 1.0 + x;
+        k += 1;
+        if k == DAYS_PER_YEAR {
+            total += ln_det(prod);
+            prod = 1.0;
+            k = 0;
+        }
+    }
+    if k > 0 {
+        total += ln_det(prod);
+    }
+    total
+}
+
+/// The volatility exit's two rows on one record or path (see `VOL_EXIT_ROWS`). NaN without a
+/// year after the first window, or where the leveraged leg loses everything in a session.
+#[must_use]
+pub fn vol_exit_of(d: &[VolExitDay]) -> [f64; 2] {
+    let w = VOL_EXIT_WINDOW;
+    let n = d.len();
+    // the first session a decision earns: decided at close w - 1, filled at close w
+    let start = w + 1;
+    if n < start + DAYS_PER_YEAR {
+        return [f64::NAN; 2];
+    }
+    let mut held = true;
+    let mut pos = vec![false; n];
+    for t in (w - 1)..n.saturating_sub(2) {
+        let x = &d[t + 1 - w..=t];
+        let mean = scala_sum(x.iter().map(|v| v.close_ret)) / w as f64;
+        let sd = (scala_sum(
+            x.iter()
+                .map(|v| (v.close_ret - mean) * (v.close_ret - mean)),
+        ) / (w - 1) as f64)
+            .sqrt();
+        if sd < VOL_EXIT_HOLD_BELOW {
+            held = true;
+        } else if sd >= VOL_EXIT_CASH_AT {
+            held = false;
+        }
+        pos[t + 2] = held;
+    }
+    let dpy = DAYS_PER_YEAR as f64;
+    let cash = |v: &VolExitDay| v.rate / dpy;
+    let lever = |v: &VolExitDay| {
+        VOL_EXIT_LEVER * v.total_ret
+            - (VOL_EXIT_LEVER - 1.0) * (v.rate + VOL_EXIT_SPREAD) * v.days / 360.0
+            - VOL_EXIT_EXPENSE / dpy
+    };
+    let span = &d[start..];
+    let on = &pos[start..];
+    let pick = |f: &dyn Fn(&VolExitDay) -> f64, i: usize| -> f64 {
+        if on[i] { f(&span[i]) } else { cash(&span[i]) }
+    };
+    let rule1 = log_growth((0..span.len()).map(|i| pick(&|v| v.total_ret, i)));
+    let hold1 = log_growth(span.iter().map(|v| v.total_ret));
+    let rule3 = log_growth((0..span.len()).map(|i| pick(&lever, i)));
+    let hold3 = log_growth(span.iter().map(lever));
+    let per = 100.0 * dpy / span.len() as f64;
+    let timing = per * (rule1 - hold1);
+    [timing, per * (rule3 - hold3) - timing]
+}
+
+/// A path's volatility-exit inputs: the printed close (`traded`, the price where a world pays no
+/// dividend) for the rule's signal, the total-return price for what it earns, the path's own
+/// short rate over each session, and the synthetic calendar's days between sessions.
+#[must_use]
+pub fn vol_exit_days_of_path(p: &Path) -> Vec<VolExitDay> {
+    let close = if p.traded.is_empty() {
+        &p.price
+    } else {
+        &p.traded
+    };
+    let day = |i: usize| (i as i64 * 365) / DAYS_PER_YEAR as i64;
+    (1..p.price.len())
+        .map(|i| VolExitDay {
+            close_ret: close[i] / close[i - 1] - 1.0,
+            total_ret: p.price[i] / p.price[i - 1] - 1.0,
+            rate: p.rate[i - 1],
+            days: (day(i) - day(i - 1)) as f64,
+        })
+        .collect()
+}
+
+/// The volatility exit's rows on one-year-block resamples of a record's sessions, each session's
+/// inputs kept together, as `rate_after_resamples` keeps a return with its rate.
+pub fn vol_exit_resamples(d: &[VolExitDay], resamples: usize, seed: u64) -> Vec<[f64; 2]> {
+    let n = d.len();
+    let l = DAYS_PER_YEAR;
+    assert!(
+        n > l && u32::try_from(n).is_ok(),
+        "a record must be longer than one block, and shorter than 2^32 sessions"
+    );
+    let blocks = n.div_ceil(l);
+    let bound = (n - l + 1) as u32;
+    let mut rng = NumPyRng::new(seed);
+    let starts: Vec<Vec<usize>> = (0..resamples)
+        .map(|_| {
+            (0..blocks)
+                .map(|_| rng.next_bounded_u32(bound) as usize)
+                .collect()
+        })
+        .collect();
+    starts
+        .par_iter()
+        .map(|st| {
+            let mut x = Vec::with_capacity(blocks * l);
+            for &s in st {
+                x.extend_from_slice(&d[s..s + l]);
+            }
+            x.truncate(n);
+            vol_exit_of(&x)
+        })
+        .collect()
 }
 
 /// THE BUBBLE COUPLING (item 32): the mean 3-year log run-up into the peaks of the series' 40%+
@@ -9033,6 +9222,23 @@ fn rel_trend_of(rp: &[f64], rs: &[f64]) -> [f64; 3] {
 /// Every ratio is a MEDIAN over paths of that path's own ratio, not a ratio of pooled medians:
 /// the two differ when the legs' dispersions differ, and the per-path form is the one the
 /// record's single history is a draw from.
+/// THE SATELLITE DEPTH ROWS' REFERENCE DRIFT: SPY's and QQQ's realized log drift a year over their
+/// shared 1999-2026 window (`joint-coupling-2026-10-03.tsv`). The depth rows read both legs at these
+/// drifts, so a world's own long-run drift, which would otherwise move the d5 ratio 0.035 per 0.01,
+/// does not decide them; the relative drift between the legs is the rel-trend rows'.
+pub const SAT_REF_DRIFT: (f64, f64) = (0.082386, 0.102569);
+
+/// A leg with its own realized log drift replaced by `annual` a year (`SAT_REF_DRIFT`).
+fn redrifted(px: &[f64], annual: f64) -> Vec<f64> {
+    let n = px.len();
+    let own = (ln_det(px[n - 1]) - ln_det(px[0])) / (n - 1) as f64;
+    let d = annual / DAYS_PER_YEAR as f64 - own;
+    px.iter()
+        .enumerate()
+        .map(|(t, &p)| p * exp_det(d * t as f64))
+        .collect()
+}
+
 fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
     if sims.is_empty() || sims[0].sat.is_empty() {
         return None;
@@ -9065,10 +9271,12 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
             let cov: f64 = rp.iter().zip(&rs).map(|(x, y)| (x - mp) * (y - ms)).sum();
             let var_p: f64 = rp.iter().map(|x| (x - mp) * (x - mp)).sum();
             let var_s: f64 = rs.iter().map(|x| (x - ms) * (x - ms)).sum();
-            let (p5, p10, _) = depth_shares(&s.price);
-            let (s5, s10, _) = depth_shares(&s.sat);
-            let ep = episodes(&s.price, 15.0).len() as f64;
-            let es = episodes(&s.sat, 15.0).len() as f64;
+            let pr = redrifted(&s.price, SAT_REF_DRIFT.0);
+            let sr = redrifted(&s.sat, SAT_REF_DRIFT.1);
+            let (p5, p10, _) = depth_shares(&pr);
+            let (s5, s10, _) = depth_shares(&sr);
+            let ep = episodes(&pr, 15.0).len() as f64;
+            let es = episodes(&sr, 15.0).len() as f64;
             SatPath {
                 rel_trend: rel_trend_of(&rp, &rs),
                 corr: pearson(&rp, &rs),
@@ -9103,7 +9311,7 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
 }
 
 /// The bar channels' statistics — `None` when no range channel ran.
-/// THE BASKET's readings, medians across paths, at the three levels of `basket-2026-09-02.tsv`.
+/// THE BASKET's readings, medians across paths, at the three levels of `basket-2026-10-03.tsv`.
 /// Level 1 per name, pooled over names and paths: vol as a ratio to the primary's, sessions past
 /// 10% per year, the share of sessions >20% below the running peak. Level 2 the equal-weight
 /// aggregate against the primary: correlation and beta, and vol ratio. Level 3: mean pairwise
@@ -10135,6 +10343,7 @@ struct PathRead {
     up_share: f64,
     lev_corr: f64,
     vol_timing: f64,
+    vol_exit: [f64; 2],
     bubble_coupling: f64,
     run_up_3y: f64,
     calm_stretch: f64,
@@ -10259,6 +10468,7 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         up_share: up_share_of(&r),
         lev_corr: lev_corr_of(&r),
         vol_timing: vol_timing_of(&r),
+        vol_exit: vol_exit_of(&vol_exit_days_of_path(s)),
         bubble_coupling: bubble_coupling_of(&r),
         run_up_3y: run_up_3y_of(&r),
         calm_stretch: calm_stretch_of(&r),
@@ -10434,6 +10644,7 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         semi_excess: med_by(|p| p.semi_excess),
         up_share: med_by(|p| p.up_share),
         vol_timing: med_by(|p| p.vol_timing),
+        vol_exit: [med_by(|p| p.vol_exit[0]), med_by(|p| p.vol_exit[1])],
         bubble_coupling: med_by(|p| p.bubble_coupling),
         run_up_3y: med_by(|p| p.run_up_3y),
         calm_stretch: med_by(|p| p.calm_stretch),
@@ -10959,12 +11170,12 @@ fn gate_checks_with(
             0,
             "%",
         ),
-        // 0.50 clears the 1926-2026 reading (0.55) downward; 0.85 sits above the 1954-2026 anchor
-        // (0.69) and below the most favourable non-overlapping 20-year block the record produced
-        // (0.93). A world may be as favourable as a long-horizon market, not as favourable as its
-        // luckiest two decades. The 20-year block SPREAD (0.47-0.93) is deliberately NOT the band:
-        // that is sampling variation in a 20-year window, and this statistic is a population value
-        // over 20,000 path-years — a band drawn from it would readmit worlds at 0.91.
+        // THE RECORD'S OWN JOINT BAND, rounded outward (recordbands-2026-09-26.tsv: CRSP 1954-2026
+        // 0.312-1.081, QQQ 1999-2026 -0.176-0.964). A calibration set samples the drift's
+        // uncertainty given the record, so a world's population return per vol may sit anywhere
+        // the record cannot rule out. The hand bands this replaces (S&P 0.50-0.85, Nasdaq
+        // 0.27-0.47) held every member within about 0.1 of the anchor, a precision one history
+        // does not have: a member median's posterior sd is 0.12 (S&P) and 0.20 (Nasdaq).
         band_check(
             "return per vol",
             lv("return per vol", st.ret_vol()),
@@ -11074,7 +11285,7 @@ fn gate_checks_with(
     // world's own scale and is not claimed to be any index, so what can be graded is the RELATION
     // a higher-beta second leg holds to its primary — the same doctrine the depth rungs use when
     // they grade each world at its own volatility. Anchors are QQQ against SPY over their shared
-    // 1999-2026 window (`joint-coupling-2026-08-31.tsv`), and every band is that record reading
+    // 1999-2026 window (`joint-coupling-2026-10-03.tsv`), and every band is that record reading
     // widened to the spread its own 5-year blocks show, because one history pins a ratio far more
     // loosely than it pins a level.
     if let Some(sd) = st.sat {
@@ -11101,8 +11312,11 @@ fn gate_checks_with(
                 1.40,
                 2,
             ),
+            // THE DEPTH ROWS read both legs at the record window's drift (`SAT_REF_DRIFT`), the
+            // window and its 5-year blocks rounded outward; they set aside the legs' relative
+            // drift, which the rel-trend rows grade
             ("satellite d5 ratio", sd.d5_ratio, 1.00, 1.70, 2),
-            ("satellite d10 ratio", sd.d10_ratio, 0.70, 2.20, 2),
+            ("satellite d10 ratio", sd.d10_ratio, 1.10, 2.20, 2),
             // DISCLOSED TENSION, not a pass by construction: the model's leg opens ~1.6 crash
             // episodes per primary episode against the record's 1.17. One history cannot resolve
             // this ratio at all — SPY and QQQ show ~6 and ~7 episodes in 27 years, and the 5-year
@@ -11171,14 +11385,13 @@ fn gate_checks_with(
             Mechanism,
         ));
     }
-    // THE BASKET, graded when it ran — `basket-2026-09-02.tsv`, the eight semis under SMH: level 1
-    // as a POPULATION (the names' vol 1.9-3.5x SPY's or 1.5-2.8x QQQ's, gaps 0.4-5.1/yr — the
-    // eight's ranges rounded outward, graded on the pooled median), level 2 the aggregate against
-    // the set's primary (the eight's basket on SPY: corr 0.77, beta 1.56, vol 2.0x; on QQQ: 0.84,
-    // 1.37, 1.63x; +-0.10 / +-0.25 / +-0.3), level 3 the structure a
-    // basket rule reads (pairwise 0.59, idio share 0.37, tail coincidence 0.48), and the
-    // mechanism: pairwise correlation on the primary's worst decile above its middle decile (0.60
-    // vs 0.28). The names' d20 is REPORTED, not graded: the eight's 0.08-0.61 is the time below
+    // THE BASKET, graded when it ran — `basket-2026-10-03.tsv`, SMH's eight largest holdings as of
+    // 2026-10-02: level 1 as a POPULATION (the names' vol 1.9-3.5x SPY's or 1.5-2.8x QQQ's, gaps
+    // 0.4-5.1/yr — the eight's ranges rounded outward, graded on the pooled median), level 2 the
+    // aggregate against the set's primary (the eight's basket on SPY: corr 0.77, beta 1.54, vol
+    // 1.99x; on QQQ: 0.84, 1.35, 1.60x; +-0.10 / +-0.25 / +-0.3), level 3 the structure a basket
+    // rule reads (pairwise 0.55, idio share 0.40, tail coincidence 0.46), and the mechanism:
+    // pairwise correlation on the primary's worst decile above its central 45-55% (0.56 vs 0.22). The names' d20 is REPORTED, not graded: the eight's 0.08-0.61 is the time below
     // peak of names selected today as winners (the survivorship the fixture discloses), and a
     // name at the sector's drift and 2.6x the index's volatility spends most of a century more
     // than 20% below its peak, as a real name of that drift would.
@@ -11206,9 +11419,9 @@ fn gate_checks_with(
             ),
             ("basket beta", b.agg_beta, beta_lo, beta_hi),
             ("basket vol ratio", b.agg_vol_ratio, vol_lo, vol_hi),
-            ("basket pair corr", b.pair_corr, 0.42, 0.86),
+            ("basket pair corr", b.pair_corr, 0.39, 0.85),
             ("basket idio share", b.idio_share, 0.26, 0.60),
-            ("basket tail coincidence", b.tail_coincidence, 0.35, 0.60),
+            ("basket tail coincidence", b.tail_coincidence, 0.33, 0.58),
         ] {
             v.push(band_check(name, got, lo, hi, GateClass::Fidelity, 2, ""));
         }
@@ -11806,7 +12019,7 @@ pub struct Anchors {
     /// `div_yield` dial is on — `dividend-2026-09-02.tsv`: the window's annual means rounded out.
     pub div_yield: f64,
     pub div_yield_band: (f64, f64),
-    /// THE BASKET's relation to this set's primary — `basket-2026-09-02.tsv`: the equal-weight
+    /// THE BASKET's relation to this set's primary — `basket-2026-10-03.tsv`: the equal-weight
     /// eight on SPY / on QQQ (corr, beta, vol ratio), and the eight's vol as a ratio to the
     /// primary's, rounded outward. Level 3 of that fixture is a property of the names among
     /// themselves and stays shared.
@@ -12160,7 +12373,7 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
 
 /// The S&P set's `RecordBand`s: `recordbands-2026-09-26.tsv`, CRSP total return 1954-2026 and, for
 /// the two clustering rows, the century -- each row on the window the set reads it over.
-const RECORD_BANDS_SP500: [RecordBand; 20] = [
+const RECORD_BANDS_SP500: [RecordBand; 22] = [
     RecordBand {
         name: "equity vol %",
         record: 15.676352,
@@ -12382,10 +12595,32 @@ const RECORD_BANDS_SP500: [RecordBand; 20] = [
         joint_c: 0.496975,
         joint: (0.523877, 38.611714),
     },
+    RecordBand {
+        name: "vol-exit timing pts/yr",
+        record: -0.462773,
+        q: [
+            -2.541567, -1.772355, -1.413095, -1.208946, -1.070846, -0.959592, -0.862272, -0.772733,
+            -0.688812, -0.609558, -0.529435, -0.450245, -0.376382, -0.297067, -0.21175, -0.111926,
+            -0.007542, 0.113128, 0.256304, 0.443994, 0.738115, 1.345651, 2.910325,
+        ],
+        joint_c: 0.482175,
+        joint: (-1.654394, 1.136365),
+    },
+    RecordBand {
+        name: "vol-exit 3x interaction pts/yr",
+        record: 1.07269,
+        q: [
+            -3.623782, -1.999153, -1.387685, -0.99856, -0.706664, -0.456976, -0.227406, -0.007667,
+            0.207447, 0.434413, 0.666121, 0.889054, 1.120667, 1.352742, 1.59056, 1.859131, 2.1666,
+            2.528453, 2.971026, 3.523125, 4.424531, 6.282058, 11.043108,
+        ],
+        joint_c: 0.482175,
+        joint: (-1.817868, 5.673636),
+    },
 ];
 
 /// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ 1999-03-11..2026-08-20.
-const RECORD_BANDS_NASDAQ: [RecordBand; 20] = [
+const RECORD_BANDS_NASDAQ: [RecordBand; 22] = [
     RecordBand {
         name: "equity vol %",
         record: 26.901577,
@@ -12607,6 +12842,28 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 20] = [
         joint_c: 0.496525,
         joint: (0.0, 90.873016),
     },
+    RecordBand {
+        name: "vol-exit timing pts/yr",
+        record: 4.109022,
+        q: [
+            -7.349529, -3.360482, -1.387668, -0.389702, 0.376041, 0.983964, 1.539477, 2.031011,
+            2.519756, 2.972813, 3.448429, 3.924559, 4.405638, 4.908706, 5.463765, 6.02856,
+            6.659221, 7.362936, 8.190867, 9.319981, 10.94903, 14.344316, 23.57867,
+        ],
+        joint_c: 0.481025,
+        joint: (-2.680914, 13.010553),
+    },
+    RecordBand {
+        name: "vol-exit 3x interaction pts/yr",
+        record: 23.198533,
+        q: [
+            -8.567701, 0.482693, 5.56122, 8.647324, 10.843394, 12.664551, 14.385647, 15.919216,
+            17.409942, 18.857511, 20.242008, 21.775378, 23.300004, 24.840551, 26.482143, 28.367765,
+            30.404303, 32.693019, 35.271047, 38.660798, 43.819114, 54.492427, 82.660437,
+        ],
+        joint_c: 0.481025,
+        joint: (2.17624, 50.404711),
+    },
 ];
 
 /// The S&P/CRSP set. The LEVELS are the ones every release before 0.21.0 hard-coded, moved rather
@@ -12693,7 +12950,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     vol_band: (14.0, 18.0),
     // the old band's relative width, -12.4% / +12.4%, around the phase-averaged anchor
     year_vol_band: (10.9, 14.1),
-    ret_vol_band: (0.50, 0.85),
+    ret_vol_band: (0.31, 1.09),
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT. A single 72-year
     // history barely pins the semivariance excess (one crash day swings it), and the record reads
     // as a TYPICAL history of this model on all three rows — the 51st percentile (semivariance),
@@ -12727,9 +12984,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     record_bands: &RECORD_BANDS_SP500,
     div_yield: 2.95,
     div_yield_band: (1.1, 5.8),
-    basket_corr: 0.770,
-    basket_beta: 1.557,
-    basket_vol_ratio: 2.023,
+    basket_corr: 0.773,
+    basket_beta: 1.536,
+    basket_vol_ratio: 1.986,
     basket_name_vol_band: (1.9, 3.5),
     sector_momentum: 0.003923,
     sector_momentum_band: (0.002111, 0.005480),
@@ -12843,7 +13100,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     vol_band: (22.2, 31.5),
     // one sd of the row's own 27-year spread, +-18%, around the phase-averaged anchor
     year_vol_band: (16.4, 23.6),
-    ret_vol_band: (0.27, 0.47),
+    ret_vol_band: (-0.18, 0.97),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
     semi_excess_sd: 3.28,
@@ -12877,9 +13134,9 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     record_bands: &RECORD_BANDS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),
-    basket_corr: 0.837,
-    basket_beta: 1.365,
-    basket_vol_ratio: 1.630,
+    basket_corr: 0.840,
+    basket_beta: 1.345,
+    basket_vol_ratio: 1.601,
     basket_name_vol_band: (1.5, 2.8),
     sector_momentum: 0.003923,
     sector_momentum_band: (0.002111, 0.005480),
@@ -12906,6 +13163,14 @@ pub fn anchors_named(spec: &str) -> Anchors {
 
 fn wgt(judgment: f64, sd_rel: f64) -> f64 {
     judgment * (SD_REL_REF / sd_rel)
+}
+
+/// A banded row's record, from the set's `RecordBand` of that name; NaN where it carries none.
+fn band_record(a: Anchors, name: &str) -> f64 {
+    a.record_bands
+        .iter()
+        .find(|b| b.name == name)
+        .map_or(f64::NAN, |b| b.record)
 }
 
 #[expect(
@@ -13068,6 +13333,21 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             (|st: &WorldStats| st.vol_timing) as StatFn,
             a.vol_timing,
             wgt(a.vol_timing_judgment, a.vol_timing_sd),
+        ),
+        // THE VOLATILITY EXIT (a consumer's request, 2026-10-03): the simple exit at the absolute
+        // thresholds it trades, at 1x and on the 3x leg; the verdict judges each against the
+        // record's band, and the loss weighs them 0.
+        (
+            VOL_EXIT_ROWS[0],
+            (|st: &WorldStats| st.vol_exit[0]) as StatFn,
+            band_record(a, VOL_EXIT_ROWS[0]),
+            0.0,
+        ),
+        (
+            VOL_EXIT_ROWS[1],
+            (|st: &WorldStats| st.vol_exit[1]) as StatFn,
+            band_record(a, VOL_EXIT_ROWS[1]),
+            0.0,
         ),
         // The leverage effect, graded by the one statistic that survives close-only data:
         // corr(r_t, r^2_{t+1}) reads -0.09 on every CRSP era and negative on all 18 funds. The
@@ -14270,8 +14550,10 @@ fn scala_sign(x: f64) -> f64 {
 /// of sessions): the loss prices them as the linear |model - target| over |target|, the log
 /// ratio's small-deviation limit, since a log ratio has no meaning across zero and grows without
 /// bound as a reading nears it.
-pub const ADDITIVE_TARGETS: [&str; 3] = [
+pub const ADDITIVE_TARGETS: [&str; 5] = [
     "vol-timing edge pts/yr",
+    "vol-exit timing pts/yr",
+    "vol-exit 3x interaction pts/yr",
     "rate floor share %",
     "post-trough floor share %",
 ];
@@ -14321,7 +14603,19 @@ pub fn sim_paths(w: &World, paths: usize, years: usize, seed: u64) -> Vec<Path> 
 /// taken from the middle is byte-identical to the same indices of a run that started at zero —
 /// which is what lets `-emitfrom` split one batch across invocations.
 pub fn sim_path_range(w: &World, from: usize, count: usize, years: usize, seed: u64) -> Vec<Path> {
-    let level = world_level(w);
+    sim_range_at(w, world_level(w), from, count, years, seed)
+}
+
+/// `sim_path_range` at a channel level already computed: a stream simulates its chunk a batch at a
+/// time, and the level is a simulation of its own.
+fn sim_range_at(
+    w: &World,
+    level: ChannelLevel,
+    from: usize,
+    count: usize,
+    years: usize,
+    seed: u64,
+) -> Vec<Path> {
     (from..from + count)
         .into_par_iter()
         .map(|k| simulate_at(w, years, seed.wrapping_add(k as u64 * 7919), level))
@@ -16845,7 +17139,7 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 42] = [
+const EQUITY_TARGETS: [&str; 44] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -16858,6 +17152,8 @@ const EQUITY_TARGETS: [&str; 42] = [
     "downside vol excess %",
     "up-day share %",
     "vol-timing edge pts/yr",
+    "vol-exit timing pts/yr",
+    "vol-exit 3x interaction pts/yr",
     "leverage corr",
     "valuation dispersion",
     "upper wing months %",
@@ -17300,6 +17596,8 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
                 "up-day share %",
                 "leverage corr",
                 "vol-timing edge pts/yr",
+                "vol-exit timing pts/yr",
+                "vol-exit 3x interaction pts/yr",
                 "annual autocorr",
                 "variance ratio 3y",
                 "variance ratio 5y",
@@ -18337,6 +18635,47 @@ fn cli_die(msg: &str) -> ! {
     std::process::exit(2);
 }
 
+/// The f32 stream's flags, refused before anything is simulated where they cannot mean what
+/// they say.
+fn check_stream_flags(
+    emit: &str,
+    emit_f32: &str,
+    cols: &[String],
+    emit_gate: usize,
+    validate: bool,
+) {
+    if !emit.is_empty() && !emit_f32.is_empty() {
+        cli_die("-emit and -emitf32 each name the output file; give one");
+    }
+    if !cols.is_empty() && emit_f32.is_empty() {
+        cli_die("-emitcols selects the -emitf32 stream's columns; the TSV carries every column");
+    }
+    if emit_f32.is_empty() {
+        return;
+    }
+    // the verdict of an -emitf32 run is the world's, the same whatever the chunk
+    if emit_gate == 0 {
+        cli_die(
+            "-emitgate 0 grades the emitted paths themselves, and an -emitf32 chunk is never held whole; give the gate ensemble a size",
+        );
+    }
+    if validate {
+        cli_die(
+            "-validate grades the report, which an -emitf32 run does not print; the chunk's sidecar carries the verdict",
+        );
+    }
+    for (i, c) in cols.iter().enumerate() {
+        if !emit_column_known(c) {
+            cli_die(&format!(
+                "-emitcols: no world emits a column [{c}]; the columns are the TSV's, less `date`"
+            ));
+        }
+        if cols[..i].contains(c) {
+            cli_die(&format!("-emitcols names [{c}] twice"));
+        }
+    }
+}
+
 fn req_arg<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> &'a String {
     it.next()
         .unwrap_or_else(|| cli_die(&format!("{flag} wants a value")))
@@ -18622,71 +18961,140 @@ fn write_or_die(file: &str, body: &str) {
     });
 }
 
-/// The TSV and its sidecar. `gate_st` is measured on the gate ensemble — a different, usually
-/// much larger and (per `GATE_YEARS`) usually longer sample than the one path being written —
-/// and `gate_rows` are built from it once per batch, because building them simulates the
-/// extreme rows' own-horizon ensemble.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
-)]
-pub fn write_emitted(
+/// The terms every file of one emitting run shares: the world its paths are drawn from, their
+/// horizon, the base seed path k offsets from (`seed + k * 7919`), and the calendar's first date
+/// (empty for the synthetic calendar).
+#[derive(Clone, Copy, Debug)]
+pub struct EmitSpec<'a> {
+    pub world: &'a World,
+    pub years: usize,
+    pub seed: u64,
+    pub start_ymd: &'a str,
+}
+
+/// The verdict every sidecar of an invocation carries and its report prints, measured ONCE on
+/// its own ensemble (`verdict_spec`) of the verdict world (`verdict_world`): building the rows
+/// simulates the extreme rows' own-horizon ensemble, the expensive part.
+#[derive(Clone, Debug)]
+pub struct Verdict {
+    pub paths: usize,
+    pub years: usize,
+    pub world: World,
+    pub st: WorldStats,
+    pub rows: Vec<FidelityRow>,
+    pub reported: Vec<ReportedRow>,
+    /// the verdict ensemble's first path, the level its channels were sampled at
+    pub level: Path,
+}
+
+/// The verdict of world `w` on `(paths, years)`. `report` is the caller's own ensemble with its
+/// statistics and its (paths, years), taken as the verdict's sample when it is the same one --
+/// same size and horizon, and `w` already its own verdict world -- rather than simulated twice.
+pub fn verdict_of(
     a: Anchors,
-    file: &str,
-    p: &Path,
-    k: usize,
     w: &World,
-    years: usize,
+    (paths, years): (usize, usize),
     seed: u64,
-    start_ymd: &str,
-    gate_st: &WorldStats,
-    gate_paths: usize,
-    gate_years: usize,
-    gate_rows: &[FidelityRow],
-    gate_reported: &[ReportedRow],
-    gate_w: &World,
-    gate_level: &Path,
-) {
+    report: Option<(&[Path], WorldStats, (usize, usize))>,
+) -> Verdict {
+    let vw = verdict_world(a, w);
+    let (own, st): (Cow<'_, [Path]>, WorldStats) = match report {
+        Some((sims, st, at)) if at == (paths, years) && vw == *w => (Cow::Borrowed(sims), st),
+        _ => {
+            let sims = sim_paths(&vw, paths, years, seed);
+            let st = measure(&sims, years);
+            (Cow::Owned(sims), st)
+        }
+    };
+    let sims: &[Path] = &own;
+    Verdict {
+        paths,
+        years,
+        world: vw,
+        st,
+        rows: fidelity_rows(a, &st, Some(sims), years, paths, seed, w),
+        reported: reported_record_rows(a, Some(sims), years, paths, seed, w),
+        level: sims[0].clone(),
+    }
+}
+
+/// The verdict's warnings at export time: what the emitted paths cannot support.
+fn warn_verdict(a: Anchors, v: &Verdict) {
+    let banded = banded_of(&v.rows);
+    let bad = |c: GateClass| failed_in_at(a, &v.st, &banded, c);
+    let realism_bad = bad(GateClass::Realism);
+    let mechanism_bad = bad(GateClass::Mechanism);
+    let fidelity_bad = bad(GateClass::Fidelity);
+    if !realism_bad.is_empty() {
+        eprintln!(
+            "WARNING: this world FAILS the realism bands [{}] — the emitted path is not market-like",
+            realism_bad.join(", ")
+        );
+    }
+    if !mechanism_bad.is_empty() {
+        eprintln!(
+            "NOTE: mechanisms inert in this world [{}] — conclusions that lean on them are not supported here",
+            mechanism_bad.join(", ")
+        );
+    }
+    if !fidelity_bad.is_empty() {
+        eprintln!(
+            "NOTE: levels not readable in this world [{}] — rank comparisons survive, anything reading a level off these does not",
+            fidelity_bad.join(", ")
+        );
+    }
+}
+
+/// The TSV and its sidecar for path `k`.
+pub fn write_emitted(a: Anchors, file: &str, p: &Path, k: usize, spec: EmitSpec<'_>, v: &Verdict) {
     // A non-finite path is refused, not written -- a file whose every row reads NaN is not data.
     // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
     // before calling; here it PANICS, because this is also API and a `process::exit` in a library
     // function takes a test harness down whole rather than failing one test.
+    let table = emit_table(p);
     assert!(
-        p.price.iter().all(|x| x.is_finite())
-            && p.sat.iter().all(|x| x.is_finite())
-            && p.log_hi.iter().all(|x| x.is_finite())
-            && p.log_lo.iter().all(|x| x.is_finite())
-            && p.log_volume.iter().all(|x| x.is_finite())
-            && p.div_yield.iter().all(|x| x.is_finite())
-            && p.traded.iter().all(|x| x.is_finite())
-            && p.log_open.iter().all(|x| x.is_finite())
-            && p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite()))
-            && [&p.macro_panel, &p.macro_null_panel]
-                .into_iter()
-                .flatten()
-                .all(|m| (0..9).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
+        table_is_finite(&table),
         "path {k} holds a non-finite value; refusing {file}"
     );
-    let dates = session_dates(p.price.len(), start_ymd);
-    write_emit_tsv(file, p, &dates);
-    write_emit_sidecar(
-        a,
-        file,
+    let dates = session_dates(p.price.len(), spec.start_ymd);
+    write_emit_tsv(file, &table, &dates);
+    let mut columns = vec!["date".to_string()];
+    columns.extend(table.iter().map(|c| c.name.clone()));
+    let shape = SidecarShape {
+        head: vec![
+            "  \"header\": true,".to_string(),
+            "  \"path\": {".to_string(),
+            format!("    \"index\": {k},"),
+            format!("    \"baseSeed\": {},", spec.seed),
+            "    \"seedStride\": 7919,".to_string(),
+            format!("    \"pathSeed\": {},", spec.seed + k as u64 * 7919),
+            calendar_lines(spec, &dates),
+            "  },".to_string(),
+        ],
+        columns,
         p,
-        k,
-        w,
-        years,
-        seed,
-        start_ymd,
-        &dates,
-        gate_st,
-        gate_paths,
-        gate_years,
-        gate_rows,
-        gate_reported,
-        gate_w,
-        gate_level,
-    );
+        episodes: episodes_block(p),
+    };
+    write_emit_sidecar(a, file, &shape, spec.world, v);
+}
+
+/// The path or chunk block's horizon and calendar lines, shared by both formats.
+fn calendar_lines(spec: EmitSpec<'_>, dates: &[String]) -> String {
+    let calendar = if spec.start_ymd.is_empty() {
+        "synthetic-365-252"
+    } else {
+        "weekday"
+    };
+    [
+        format!("    \"years\": {},", spec.years),
+        format!("    \"sessions\": {},", dates.len()),
+        format!("    \"burnIn\": {BURN_IN},"),
+        format!("    \"sessionsPerYear\": {DAYS_PER_YEAR},"),
+        format!("    \"calendar\": {},", json_str(calendar)),
+        format!("    \"startDate\": {},", json_str(&dates[0])),
+        format!("    \"endDate\": {}", json_str(&dates[dates.len() - 1])),
+    ]
+    .join("\n")
 }
 
 /// The optional TSV columns, in header order, each present exactly when its channel ran — the
@@ -18759,105 +19167,274 @@ fn basket_aggregate(names: &[Vec<f64>]) -> Vec<f64> {
         .collect()
 }
 
-/// One session's optional cells, in header order, each present exactly when its channel ran.
-fn push_channel_cells(tsv: &mut String, p: &Path, i: usize, basket_agg: &[f64]) {
-    let mut cell = |v: f64| {
-        tsv.push('\t');
-        tsv.push_str(&ef(v));
-    };
-    if !p.sat.is_empty() {
-        cell(p.sat[i].ln());
-    }
-    if !p.log_hi.is_empty() {
-        cell(p.log_hi[i]);
-        cell(p.log_lo[i]);
-    }
-    if !p.log_volume.is_empty() {
-        cell(p.log_volume[i]);
-    }
-    if !p.traded.is_empty() {
-        cell(p.traded[i].ln());
-        cell(p.div_yield[i]);
-    }
-    if !p.log_open.is_empty() {
-        cell(p.log_open[i]);
-    }
-    if !p.names.is_empty() {
-        cell(basket_agg[i]);
-        for lp in &p.names {
-            cell(lp[i]);
-        }
-    }
-    for lp in &p.sectors {
-        cell(lp[i]);
-    }
-    for m in [&p.macro_panel, &p.macro_null_panel].into_iter().flatten() {
-        cell(m.spread[i]);
-        cell(m.slope[i]);
-        cell(m.cond[i]);
-        cell(m.ivol[i]);
-        cell(m.yield10[i]);
-        cell(m.credit[i]);
-        cell(m.policy[i]);
-        cell(m.bank[i]);
-        cell(m.output[i]);
-    }
+/// One emitted column: its name and its sessions, borrowed where the path holds the series as
+/// emitted, computed where the column is the log of a level the path holds.
+#[derive(Clone, Debug)]
+pub struct EmitColumn<'a> {
+    pub name: String,
+    pub values: Cow<'a, [f64]>,
 }
 
-pub fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
-    let mut tsv = String::new();
-    tsv.push_str(&EMIT_COLUMNS.join("\t"));
-    // The optional columns, present only when their channel ran — a channels-off file is
-    // byte-identical to its predecessor schema's. LOG columns throughout: see the 7 -> 8 and
-    // 8 -> 9 notes at `EMIT_SCHEMA`.
+/// Every numeric column a path emits, in the TSV's order after `date`. The optional columns are
+/// present only when their channel ran — a channels-off file is byte-identical to its
+/// predecessor schema's — and they are LOG columns throughout (the 7 -> 8 and 8 -> 9 notes at
+/// `EMIT_SCHEMA`). The one table the TSV, the f32 stream and the sidecar's `columns` read, so no
+/// two of them can disagree.
+#[must_use]
+pub fn emit_table(p: &Path) -> Vec<EmitColumn<'_>> {
+    fn held<'a>(name: &str, v: &'a [f64]) -> EmitColumn<'a> {
+        EmitColumn {
+            name: name.to_string(),
+            values: Cow::Borrowed(v),
+        }
+    }
+    fn logged<'a>(name: &str, v: &[f64]) -> EmitColumn<'a> {
+        EmitColumn {
+            name: name.to_string(),
+            values: Cow::Owned(v.iter().map(|x| x.ln()).collect()),
+        }
+    }
+    let base: [&[f64]; 8] = [
+        &p.price,
+        &p.bond,
+        &p.rate,
+        &p.cpi,
+        &p.liq,
+        &p.bliq,
+        &p.fundamental,
+        &p.infl_press,
+    ];
+    let mut t: Vec<EmitColumn<'_>> = EMIT_COLUMNS[1..]
+        .iter()
+        .zip(base)
+        .map(|(n, v)| held(n, v))
+        .collect();
     if !p.sat.is_empty() {
-        tsv.push_str("\tlogSat");
+        t.push(logged("logSat", &p.sat));
     }
     if !p.log_hi.is_empty() {
-        tsv.push_str("\tlogHigh\tlogLow");
+        t.push(held("logHigh", &p.log_hi));
+        t.push(held("logLow", &p.log_lo));
     }
     if !p.log_volume.is_empty() {
-        tsv.push_str("\tlogVolume");
+        t.push(held("logVolume", &p.log_volume));
     }
     if !p.traded.is_empty() {
-        tsv.push_str("\tlogTraded\tdivYield");
+        t.push(logged("logTraded", &p.traded));
+        t.push(held("divYield", &p.div_yield));
     }
     if !p.log_open.is_empty() {
-        tsv.push_str("\tlogOpen");
+        t.push(held("logOpen", &p.log_open));
     }
-    for c in basket_columns(p).into_iter().chain(sector_columns(p)) {
-        tsv.push('\t');
-        tsv.push_str(&c);
+    if !p.names.is_empty() {
+        t.push(EmitColumn {
+            name: "logBasket".to_string(),
+            values: Cow::Owned(basket_aggregate(&p.names)),
+        });
+        for (q, lp) in p.names.iter().enumerate() {
+            t.push(held(&format!("logName{}", q + 1), lp));
+        }
     }
-    for c in macro_columns(p).iter().chain(null_macro_columns(p)) {
-        tsv.push('\t');
-        tsv.push_str(c);
+    for (q, lp) in p.sectors.iter().enumerate() {
+        t.push(held(&format!("logSector{}", q + 1), lp));
     }
-    let basket_agg = if p.names.is_empty() {
-        Vec::new()
-    } else {
-        basket_aggregate(&p.names)
+    let panels = [
+        (&p.macro_panel, &macro_k::COLUMNS),
+        (&p.macro_null_panel, &macro_k::NULL_COLUMNS),
+    ];
+    for (m, names) in panels {
+        if let Some(m) = m {
+            t.extend((0..9).map(|j| held(names[j], m.member(j))));
+        }
+    }
+    t
+}
+
+fn table_is_finite(table: &[EmitColumn<'_>]) -> bool {
+    table.iter().all(|c| c.values.iter().all(|x| x.is_finite()))
+}
+
+/// Whether `name` is a column some world emits — the check `-emitcols` makes before anything is
+/// simulated, so a misspelt column is refused rather than read as a channel that did not run.
+#[must_use]
+pub fn emit_column_known(name: &str) -> bool {
+    const OPTIONAL: [&str; 8] = [
+        "logSat",
+        "logHigh",
+        "logLow",
+        "logVolume",
+        "logTraded",
+        "divYield",
+        "logOpen",
+        "logBasket",
+    ];
+    let indexed = |prefix: &str| {
+        name.strip_prefix(prefix).is_some_and(|q| {
+            !q.is_empty() && !q.starts_with('0') && q.bytes().all(|b| b.is_ascii_digit())
+        })
     };
+    EMIT_COLUMNS[1..].contains(&name)
+        || OPTIONAL.contains(&name)
+        || macro_k::COLUMNS.contains(&name)
+        || macro_k::NULL_COLUMNS.contains(&name)
+        || indexed("logName")
+        || indexed("logSector")
+}
+
+pub fn write_emit_tsv(file: &str, table: &[EmitColumn<'_>], dates: &[String]) {
+    let mut tsv = String::new();
+    tsv.push_str("date");
+    for c in table {
+        tsv.push('\t');
+        tsv.push_str(&c.name);
+    }
     tsv.push('\n');
     for (i, d) in dates.iter().enumerate() {
         tsv.push_str(d);
-        for v in [
-            p.price[i],
-            p.bond[i],
-            p.rate[i],
-            p.cpi[i],
-            p.liq[i],
-            p.bliq[i],
-            p.fundamental[i],
-            p.infl_press[i],
-        ] {
+        for c in table {
             tsv.push('\t');
-            tsv.push_str(&ef(v));
+            tsv.push_str(&ef(c.values[i]));
         }
-        push_channel_cells(&mut tsv, p, i, &basket_agg);
         tsv.push('\n');
     }
     write_or_die(file, &tsv);
+}
+
+/// The stream's format, little-endian IEEE-754 single precision: the TSV's six decimals are
+/// about a single's precision, so the stream loses nothing the TSV carried.
+const F32_FORMAT: &str = "f32le";
+
+/// One stream cell: the value at single precision, negative zero folded to positive as `ef`
+/// folds it in the TSV.
+fn f32_cell(x: f64) -> [u8; 4] {
+    (if x == 0.0 { 0.0f32 } else { x as f32 }).to_le_bytes()
+}
+
+/// The columns `want` names, in its order, as indices into a path's table, and the named columns
+/// the table does not carry because their channel did not run. An empty `want` is every column.
+fn select_columns(table: &[EmitColumn<'_>], want: &[String]) -> (Vec<usize>, Vec<String>) {
+    if want.is_empty() {
+        return ((0..table.len()).collect(), Vec::new());
+    }
+    let at = |w: &String| table.iter().position(|c| c.name == *w);
+    let picked = want.iter().filter_map(at).collect();
+    let absent = want.iter().filter(|w| at(w).is_none()).cloned().collect();
+    (picked, absent)
+}
+
+/// One path's cells in the stream: each picked column's sessions in order.
+fn f32_path_bytes(table: &[EmitColumn<'_>], picked: &[usize]) -> Vec<u8> {
+    let n = table.first().map_or(0, |c| c.values.len());
+    let mut out = Vec::with_capacity(picked.len() * n * 4);
+    for &c in picked {
+        for &x in table[c].values.iter() {
+            out.extend_from_slice(&f32_cell(x));
+        }
+    }
+    out
+}
+
+/// What streaming a chunk leaves for its sidecar: a path of the chunk, the columns written, the
+/// named columns its world does not carry, and each path's episodes entry.
+struct Streamed {
+    p: Path,
+    names: Vec<String>,
+    absent: Vec<String>,
+    episodes: Vec<String>,
+}
+
+/// The stream's cells for paths `from..from + count`, simulated a batch at a time at a channel
+/// level computed once, each batch dropped once written.
+fn stream_f32(
+    file: &str,
+    spec: EmitSpec<'_>,
+    (from, count): (usize, usize),
+    want: &[String],
+) -> Result<Streamed, String> {
+    use std::io::Write as _;
+    let cannot = |e: std::io::Error| format!("cannot write {file}: {e}");
+    let mut out = std::io::BufWriter::new(std::fs::File::create(file).map_err(cannot)?);
+    let level = world_level(spec.world);
+    let batch = (2 * rayon::current_num_threads()).max(1);
+    let mut head: Option<(Streamed, Vec<usize>)> = None;
+    let mut start = from;
+    while start < from + count {
+        let n = batch.min(from + count - start);
+        let paths = sim_range_at(spec.world, level, start, n, spec.years, spec.seed);
+        let (streamed, picked) = head.get_or_insert_with(|| {
+            let table = emit_table(&paths[0]);
+            let (picked, absent) = select_columns(&table, want);
+            let streamed = Streamed {
+                p: paths[0].clone(),
+                names: picked.iter().map(|&c| table[c].name.clone()).collect(),
+                absent,
+                episodes: Vec::with_capacity(count),
+            };
+            (streamed, picked)
+        });
+        let picked: &[usize] = picked;
+        let cells: Vec<Option<(Vec<u8>, String)>> = paths
+            .par_iter()
+            .map(|p| {
+                let table = emit_table(p);
+                table_is_finite(&table)
+                    .then(|| (f32_path_bytes(&table, picked), episode_rows_json(p)))
+            })
+            .collect();
+        for (j, c) in cells.into_iter().enumerate() {
+            let k = start + j;
+            let (bytes, ep) = c.ok_or_else(|| {
+                format!("path {k} holds a non-finite value; nothing written to {file}")
+            })?;
+            out.write_all(&bytes).map_err(cannot)?;
+            streamed.episodes.push(format!(
+                "      {{ \"index\": {k}, \"rows\": [\n{ep}\n      ] }}"
+            ));
+        }
+        start += n;
+    }
+    out.flush().map_err(cannot)?;
+    head.map(|(streamed, _)| streamed)
+        .ok_or_else(|| format!("an -emitf32 chunk of no paths; nothing written to {file}"))
+}
+
+/// THE F32 STREAM (`-emitf32`): paths `from..from + count` as ONE chunk file of `F32_FORMAT`,
+/// path-major -- each path's columns in the sidecar's order, each column's sessions in order --
+/// beside one sidecar for the chunk. A chunk of thousands of paths never sits in memory whole.
+/// `want` selects the columns, all of them when empty. `Err` names the first path holding a
+/// non-finite value: the partial file is removed and no sidecar written. `Ok` is the columns
+/// written and the sessions a path.
+pub fn write_f32_chunk(
+    a: Anchors,
+    file: &str,
+    spec: EmitSpec<'_>,
+    range: (usize, usize),
+    want: &[String],
+    v: &Verdict,
+) -> Result<(usize, usize), String> {
+    let s = stream_f32(file, spec, range, want).inspect_err(|_| {
+        std::fs::remove_file(file).ok();
+    })?;
+    let dates = session_dates(s.p.price.len(), spec.start_ymd);
+    let shape = SidecarShape {
+        head: vec![
+            format!("  \"format\": {},", json_str(F32_FORMAT)),
+            "  \"layout\": [\"path\", \"column\", \"session\"],".to_string(),
+            format!("  \"columnsAbsent\": {},", str_list(&s.absent)),
+            "  \"paths\": {".to_string(),
+            format!("    \"first\": {},", range.0),
+            format!("    \"count\": {},", range.1),
+            format!("    \"baseSeed\": {},", spec.seed),
+            "    \"seedStride\": 7919,".to_string(),
+            calendar_lines(spec, &dates),
+            "  },".to_string(),
+        ],
+        columns: s.names.clone(),
+        p: &s.p,
+        episodes: episodes_block_of(&s.p, "paths", &s.episodes.join(",\n")),
+    };
+    write_emit_sidecar(a, file, &shape, spec.world, v);
+    Ok((s.names.len(), dates.len()))
 }
 
 /// Every `World` field, in declaration order, as the indented body of a JSON object. A world
@@ -19336,11 +19913,12 @@ fn verdict_series_of(gate_st: &WorldStats, gate_w: &World) -> Vec<String> {
 /// meaning: the columns in THIS file the verdict graded.
 fn gate_scope_lines(
     a: Anchors,
-    p: &Path,
+    shape: &SidecarShape<'_>,
     w: &World,
     gate_w: &World,
     gate_st: &WorldStats,
 ) -> String {
+    let p = shape.p;
     // The presence conditions are `sat_stats`'/`bar_stats`' own — they return `Some` exactly
     // when these columns are non-empty — so a column is listed the session its rows exist.
     let basket_cols = [basket_columns(p), sector_columns(p)].concat();
@@ -19414,6 +19992,10 @@ fn gate_scope_lines(
     if !null_panel {
         graded.extend(macro_columns(p));
     }
+    // an f32 chunk may carry a selection; the lists name only what is in the file
+    let in_file = |c: &&str| shape.columns.iter().any(|x| x == c);
+    graded.retain(in_file);
+    ungraded.retain(in_file);
     format!(
         "    \"anchors\": {},\n    \"gradedSeries\": {},\n    \"ungradedChannelSeries\": {},\n    \
          \"verdictSeries\": {},\n    \"verdictChannels\": {{ {} }},",
@@ -19693,11 +20275,21 @@ fn episode_at(
 /// less at the peak, decimal; `spreadRise` the macro spread's high by the trough plus a quarter
 /// less at the peak, pp (null without the panel).
 fn episodes_block(p: &Path) -> String {
-    let (series, lp): (&str, Vec<f64>) = if p.traded.is_empty() {
+    episodes_block_of(p, "rows", &episode_rows_json(p))
+}
+
+/// The series a path's episodes are read on: the traded close where the world pays dividends.
+fn episode_series(p: &Path) -> (&'static str, Vec<f64>) {
+    if p.traded.is_empty() {
         ("price", p.price.iter().map(|&x| ln_det(x)).collect())
     } else {
         ("logTraded", p.traded.iter().map(|&x| ln_det(x)).collect())
-    };
+    }
+}
+
+/// One path's episode rows, one JSON object a line.
+fn episode_rows_json(p: &Path) -> String {
+    let (_, lp) = episode_series(p);
     let spread = p
         .macro_panel
         .as_ref()
@@ -19731,11 +20323,27 @@ fn episodes_block(p: &Path) -> String {
             )
         })
         .collect();
+    rows.join(",\n")
+}
+
+/// The sidecar's episodes block: `body` under `key`, one path's rows (`rows`) or a chunk's
+/// paths, each with its index and rows (`paths`).
+fn episodes_block_of(p: &Path, key: &str, body: &str) -> String {
     format!(
-        "  \"episodes\": {{\n    \"series\": {},\n    \"rule\": \"declines of 20%+ from the trailing-252-session high, each to the first regain of its peak; the next may start at the next such high after the trough\",\n    \"rows\": [\n{}\n    ]\n  }},",
-        json_str(series),
-        rows.join(",\n")
+        "  \"episodes\": {{\n    \"series\": {},\n    \"rule\": \"declines of 20%+ from the trailing-252-session high, each to the first regain of its peak; the next may start at the next such high after the trough\",\n    {}: [\n{body}\n    ]\n  }},",
+        json_str(episode_series(p).0),
+        json_str(key)
     )
+}
+
+/// What one sidecar describes besides the run and its verdict: the file's columns, the lines
+/// naming its format and its path or chunk of paths, a path of the file -- whose channels decide
+/// what the gate scope lists -- and the file's episodes block.
+struct SidecarShape<'a> {
+    columns: Vec<String>,
+    head: Vec<String>,
+    p: &'a Path,
+    episodes: String,
 }
 
 /// Everything that licenses the TSV: which (world, seed, path) produced it, on what calendar,
@@ -19749,29 +20357,9 @@ fn episodes_block(p: &Path) -> String {
 /// to a release checks `version`, and one that needs the exact parameters reads `world` below.
 /// `schema` went 1 -> 2 when `version` was added, so its absence is detectable rather than
 /// ambiguous.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
-)]
-fn write_emit_sidecar(
-    a: Anchors,
-    file: &str,
-    p: &Path,
-    k: usize,
-    w: &World,
-    years: usize,
-    seed: u64,
-    start_ymd: &str,
-    dates: &[String],
-    gate_st: &WorldStats,
-    gate_paths: usize,
-    gate_years: usize,
-    gate_rows: &[FidelityRow],
-    gate_reported: &[ReportedRow],
-    gate_w: &World,
-    gate_level: &Path,
-) {
-    let n = p.price.len();
+fn write_emit_sidecar(a: Anchors, file: &str, shape: &SidecarShape<'_>, w: &World, v: &Verdict) {
+    let (gate_st, gate_w) = (&v.st, &v.world);
+    let gate_rows: &[FidelityRow] = &v.rows;
     let gate_banded = banded_of(gate_rows);
     let realism_bad = failed_in_at(a, gate_st, &gate_banded, GateClass::Realism);
     let mechanism_bad = failed_in_at(a, gate_st, &gate_banded, GateClass::Mechanism);
@@ -19784,52 +20372,27 @@ fn write_emit_sidecar(
         }
     };
     let fidelity: Vec<String> = gate_rows.iter().map(fidelity_row_json).collect();
-    let reported_block = reported_rows_json(gate_reported);
+    let reported_block = reported_rows_json(&v.reported);
     let world_body = world_json_body(w);
     let verdict = |bad: &[String]| if bad.is_empty() { "PASS" } else { "FAIL" };
-    let calendar = if start_ymd.is_empty() {
-        "synthetic-365-252"
-    } else {
-        "weekday"
-    };
-    let json = [
+    let mut json = vec![
         "{".to_string(),
         "  \"generator\": \"market_sim\",".to_string(),
         format!("  \"version\": {},", json_str(VERSION)),
         format!("  \"schema\": {EMIT_SCHEMA},"),
         format!("  \"file\": {},", json_str(file)),
-        format!("  \"columns\": {},", {
-            let mut cols: Vec<String> = EMIT_COLUMNS.iter().map(|c| c.to_string()).collect();
-            cols.extend(channel_columns(p).into_iter().map(str::to_string));
-            cols.extend(basket_columns(p));
-            cols.extend(sector_columns(p));
-            cols.extend(macro_columns(p).iter().map(|c| c.to_string()));
-            cols.extend(null_macro_columns(p).iter().map(|c| c.to_string()));
-            let refs: Vec<&str> = cols.iter().map(String::as_str).collect();
-            str_list(&refs)
-        }),
-        "  \"header\": true,".to_string(),
-        "  \"path\": {".to_string(),
-        format!("    \"index\": {k},"),
-        format!("    \"baseSeed\": {seed},"),
-        "    \"seedStride\": 7919,".to_string(),
-        format!("    \"pathSeed\": {},", seed + k as u64 * 7919),
-        format!("    \"years\": {years},"),
-        format!("    \"sessions\": {n},"),
-        format!("    \"burnIn\": {BURN_IN},"),
-        format!("    \"sessionsPerYear\": {DAYS_PER_YEAR},"),
-        format!("    \"calendar\": {},", json_str(calendar)),
-        format!("    \"startDate\": {},", json_str(&dates[0])),
-        format!("    \"endDate\": {}", json_str(&dates[n - 1])),
-        "  },".to_string(),
+        format!("  \"columns\": {},", str_list(&shape.columns)),
+    ];
+    json.extend(shape.head.iter().cloned());
+    json.extend([
         "  \"world\": {".to_string(),
         world_body.join(",\n"),
         "  },".to_string(),
         format!("  \"worldDigest\": {},", json_str(&world_digest(w))),
         "  \"gate\": {".to_string(),
-        format!("    \"ensemblePaths\": {gate_paths},"),
-        format!("    \"ensembleYears\": {gate_years},"),
-        gate_scope_lines(a, p, w, gate_w, gate_st),
+        format!("    \"ensemblePaths\": {},", v.paths),
+        format!("    \"ensembleYears\": {},", v.years),
+        gate_scope_lines(a, shape, w, gate_w, gate_st),
         format!("    \"realism\": {},", json_str(verdict(&realism_bad))),
         format!("    \"mechanism\": {},", json_str(verdict(&mechanism_bad))),
         format!("    \"fidelity\": {},", json_str(verdict(&fidelity_bad))),
@@ -19870,14 +20433,14 @@ fn write_emit_sidecar(
         "  },".to_string(),
         // the verdict's readings, led by the level ITS channels were sampled at: the level is a
         // function of the primary alone, so it is this file's level wherever this file has one
-        channel_readings_block(gate_st, gate_level),
-        episodes_block(p),
+        channel_readings_block(gate_st, &v.level),
+        shape.episodes.clone(),
         "  \"fidelity\": [".to_string(),
         fidelity.join(",\n"),
         "  ],".to_string(),
         reported_block,
         "}".to_string(),
-    ];
+    ]);
     write_or_die(&sidecar_name(file), &format!("{}\n", json.join("\n")));
 }
 
@@ -20057,6 +20620,8 @@ pub fn main() {
     let mut emit_from = 0usize;
     let mut emit_start = String::new();
     let mut emit_gate = 200usize;
+    let mut emit_f32 = String::new();
+    let mut emit_cols: Vec<String> = Vec::new();
     let mut gate_req = gate_default();
     let mut validate = false;
     let mut digest_only = false;
@@ -20367,6 +20932,13 @@ pub fn main() {
             "-emitfrom" => emit_from = req_usize(&mut it, "-emitfrom"),
             "-emitstart" => emit_start = req_arg(&mut it, "-emitstart").clone(),
             "-emitgate" => emit_gate = req_usize(&mut it, "-emitgate"),
+            "-emitf32" => emit_f32 = req_arg(&mut it, "-emitf32").clone(),
+            "-emitcols" => {
+                emit_cols = req_arg(&mut it, "-emitcols")
+                    .split(',')
+                    .map(|c| c.trim().to_string())
+                    .collect();
+            }
             "-gate" => gate_req = parse_gate(req_arg(&mut it, "-gate")),
             "-validate" => validate = true,
             "-buffer" => buffer_report = true,
@@ -20556,6 +21128,7 @@ pub fn main() {
     if emit_from > 0 && !emit_all {
         cli_die("-emitfrom applies to -emitall; use -emitpath for one path");
     }
+    check_stream_flags(&emit, &emit_f32, &emit_cols, emit_gate, validate);
     // A bad index here is the one place the rule list has to be discoverable: the report names
     // the rules but not their numbers, and the numbers are what the flag takes. Without this,
     // `-powerarms 99` panicked on an out-of-bounds index and `-powerarms 0` underflowed usize.
@@ -21205,6 +21778,36 @@ pub fn main() {
         return;
     }
 
+    if !emit_f32.is_empty() {
+        // The world's verdict at the calibration horizon, whatever the chunk: a chunk never
+        // enlarges or replaces the gate ensemble, so every chunk of a bundle carries the same one.
+        let verdict = verdict_of(anchors, &w, (emit_gate, GATE_YEARS), seed, None);
+        warn_verdict(anchors, &verdict);
+        let range = if emit_all {
+            (emit_from, paths)
+        } else {
+            (emit_path, 1)
+        };
+        let spec = EmitSpec {
+            world: &w,
+            years,
+            seed,
+            start_ymd: &emit_start,
+        };
+        match write_f32_chunk(anchors, &emit_f32, spec, range, &emit_cols, &verdict) {
+            Ok((cols, sessions)) => eprintln!(
+                "wrote {} path(s), {cols} columns x {sessions} sessions as {F32_FORMAT}, to {emit_f32} (+ sidecar {})",
+                range.1,
+                sidecar_name(&emit_f32)
+            ),
+            Err(m) => {
+                eprintln!("REFUSED: {m}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
     eprintln!("simulating {paths} paths x {years} years");
     let sims = sim_paths(&w, paths, years, seed);
     let st = measure(&sims, years);
@@ -21220,58 +21823,24 @@ pub fn main() {
     // THE VERDICT WORLD: every derived series and the macro panel graded, at the anchor set's
     // dials where the caller left them off (`verdict_world`); its own ensemble whenever it is not
     // the report's world, since the report and the emitted paths stay the caller's
-    let vw = verdict_world(anchors, &w);
-    let verdict_sims = ((verdict_paths, verdict_years) != (paths, years) || vw != w)
-        .then(|| sim_paths(&vw, verdict_paths, verdict_years, seed));
-    // the verdict's own ensemble, which its shorter record horizons are cut from
-    let verdict_main: &[Path] = verdict_sims.as_deref().unwrap_or(&sims);
-    let verdict_st = if verdict_sims.is_none() {
-        st
-    } else {
-        measure(verdict_main, verdict_years)
-    };
-    let verdict_rows = fidelity_rows(
+    let verdict = verdict_of(
         anchors,
-        &verdict_st,
-        Some(verdict_main),
-        verdict_years,
-        verdict_paths,
-        seed,
         &w,
-    );
-    let verdict_banded = banded_of(&verdict_rows);
-    let verdict_reported = reported_record_rows(
-        anchors,
-        Some(verdict_main),
-        verdict_years,
-        verdict_paths,
+        (verdict_paths, verdict_years),
         seed,
-        &w,
+        Some((&sims, st, (paths, years))),
     );
+    let verdict_st = verdict.st;
+    let verdict_banded = banded_of(&verdict.rows);
 
     if !emit.is_empty() {
-        let realism_bad = failed_in_at(anchors, &verdict_st, &verdict_banded, GateClass::Realism);
-        let mechanism_bad =
-            failed_in_at(anchors, &verdict_st, &verdict_banded, GateClass::Mechanism);
-        if !realism_bad.is_empty() {
-            eprintln!(
-                "WARNING: this world FAILS the realism bands [{}] — the emitted path is not market-like",
-                realism_bad.join(", ")
-            );
-        }
-        if !mechanism_bad.is_empty() {
-            eprintln!(
-                "NOTE: mechanisms inert in this world [{}] — conclusions that lean on them are not supported here",
-                mechanism_bad.join(", ")
-            );
-        }
-        let fidelity_bad = failed_in_at(anchors, &verdict_st, &verdict_banded, GateClass::Fidelity);
-        if !fidelity_bad.is_empty() {
-            eprintln!(
-                "NOTE: levels not readable in this world [{}] — rank comparisons survive, anything reading a level off these does not",
-                fidelity_bad.join(", ")
-            );
-        }
+        warn_verdict(anchors, &verdict);
+        let spec = EmitSpec {
+            world: &w,
+            years,
+            seed,
+            start_ymd: &emit_start,
+        };
         // path k is a function of (world, years, seed, k) alone, so an index past the report
         // ensemble is simulated directly rather than forcing a larger run
         let path_at = |k: usize| -> Path {
@@ -21313,51 +21882,18 @@ pub fn main() {
                 .map(|k| {
                     let f = indexed_name(&emit, k, width);
                     refuse_non_finite(&batch[k - emit_from], k, &f);
-                    write_emitted(
-                        anchors,
-                        &f,
-                        &batch[k - emit_from],
-                        k,
-                        &w,
-                        years,
-                        seed,
-                        &emit_start,
-                        &verdict_st,
-                        verdict_paths,
-                        verdict_years,
-                        &verdict_rows,
-                        &verdict_reported,
-                        &vw,
-                        &verdict_main[0],
-                    );
+                    write_emitted(anchors, &f, &batch[k - emit_from], k, spec, &verdict);
                     f
                 })
                 .collect()
         } else {
             let p = path_at(emit_path);
             refuse_non_finite(&p, emit_path, &emit);
-            write_emitted(
-                anchors,
-                &emit,
-                &p,
-                emit_path,
-                &w,
-                years,
-                seed,
-                &emit_start,
-                &verdict_st,
-                verdict_paths,
-                verdict_years,
-                &verdict_rows,
-                &verdict_reported,
-                &vw,
-                &verdict_main[0],
-            );
+            write_emitted(anchors, &emit, &p, emit_path, spec, &verdict);
             vec![emit.clone()]
         };
-        let sessions = path_at(if emit_all { emit_from } else { emit_path })
-            .price
-            .len();
+        let first = path_at(if emit_all { emit_from } else { emit_path });
+        let sessions = first.price.len();
         let span = if written.len() > 1 {
             format!(" .. {}", written[written.len() - 1])
         } else {
@@ -21366,13 +21902,7 @@ pub fn main() {
         eprintln!(
             "wrote {} path(s), {} columns x {sessions} sessions, to {}{span} (+ sidecar {})",
             written.len(),
-            EMIT_COLUMNS.len()
-                + usize::from(w.sat_beta > 0.0)
-                + 2 * usize::from(w.range_scale > 0.0)
-                + usize::from(w.vol_idio > 0.0)
-                + 2 * usize::from(w.div_yield > 0.0)
-                + usize::from(w.overnight > 0.0)
-                + if w.basket > 0 { w.basket + 1 } else { 0 },
+            1 + emit_table(&first).len(),
             written[0],
             sidecar_name(&written[0])
         );
@@ -21828,7 +22358,7 @@ pub fn main() {
     println!(
         "      (`within`), which a record-like world clears on every such row 90% of the time."
     );
-    for r in &verdict_rows {
+    for r in &verdict.rows {
         let flag = if r.miss() { "  <-- MISS" } else { "" };
         println!(
             "     {:<22} model {}   real {}   {}{}",
@@ -21847,11 +22377,11 @@ pub fn main() {
             jf(record, 8, 2)
         );
     }
-    if !verdict_reported.is_empty() {
+    if !verdict.reported.is_empty() {
         println!(
             "    REPORTED RECORDS, never graded: the same rows read off windows the set does not grade on"
         );
-        for r in &verdict_reported {
+        for r in &verdict.reported {
             let flag = if r.row.miss() { "  outside" } else { "" };
             println!(
                 "     {:<22} model {}   real {}   {}{}   {}",
@@ -22019,6 +22549,137 @@ mod emit_sidecar_tests {
         assert!(episode_rows(&dip, &vec![0.0; dip.len()], None).is_empty());
     }
 
+    /// The verdict measured on the one path written (the `-emitgate 0` reading).
+    fn one_path_verdict(w: &World, p: &Path, st: &WorldStats, rows: Vec<FidelityRow>) -> Verdict {
+        Verdict {
+            paths: 1,
+            years: 2,
+            world: *w,
+            st: *st,
+            rows,
+            reported: Vec::new(),
+            level: p.clone(),
+        }
+    }
+
+    /// The stream is the TSV's table at single precision, path-major, and its sidecar names the
+    /// columns written, the named columns the world does not carry, and the chunk.
+    #[test]
+    fn an_f32_chunk_holds_the_tables_cells_path_major() {
+        let (years, seed) = (2usize, 20260825u64);
+        let mut w = default_world();
+        w.range_scale = 0.63;
+        let p = simulate(&w, years, seed);
+        let st = measure(std::slice::from_ref(&p), years);
+        let rows = fidelity_rows(SP500_ANCHORS, &st, None, years, 1, seed, &w);
+        let v = one_path_verdict(&w, &p, &st, rows);
+        let dir = std::env::temp_dir().join(format!("emit_f32_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("chunk.f32").to_string_lossy().into_owned();
+        let spec = EmitSpec {
+            world: &w,
+            years,
+            seed,
+            start_ymd: "",
+        };
+        let want: Vec<String> = ["logLow", "price", "logSat"]
+            .iter()
+            .map(|c| (*c).to_string())
+            .collect();
+        let written = write_f32_chunk(SP500_ANCHORS, &file, spec, (3, 2), &want, &v);
+        let bytes = std::fs::read(&file).expect("chunk");
+        let side = std::fs::read_to_string(sidecar_name(&file)).expect("sidecar");
+        std::fs::remove_file(&file).ok();
+        std::fs::remove_file(sidecar_name(&file)).ok();
+        std::fs::remove_dir(&dir).ok();
+        let (cols, n) = written.expect("written");
+        assert_eq!((cols, bytes.len()), (2, 2 * 2 * n * 4));
+        for (j, k) in [3u64, 4].into_iter().enumerate() {
+            let q = simulate(&w, years, seed + k * 7919);
+            let table = emit_table(&q);
+            for (c, name) in ["logLow", "price"].into_iter().enumerate() {
+                let col = table.iter().find(|t| t.name == name).expect("a column");
+                for i in 0..n {
+                    let at = ((j * 2 + c) * n + i) * 4;
+                    let cell = f32::from_le_bytes(bytes[at..at + 4].try_into().expect("4 bytes"));
+                    assert!(cell == col.values[i] as f32, "path {k} {name} session {i}");
+                }
+            }
+        }
+        for line in [
+            "  \"columns\": [\"logLow\", \"price\"],",
+            "  \"format\": \"f32le\",",
+            "  \"columnsAbsent\": [\"logSat\"],",
+            "    \"first\": 3,",
+            "    \"count\": 2,",
+            "    \"gradedSeries\": [\"price\", \"logLow\"],",
+        ] {
+            assert!(side.lines().any(|l| l == line), "sidecar lacks [{line}]");
+        }
+        assert!(
+            side.contains("\"index\": 4, \"rows\": ["),
+            "each path's episodes"
+        );
+        let keys: Vec<&str> = side
+            .lines()
+            .filter_map(|l| l.strip_prefix("  \"")?.split_once("\":").map(|(k, _)| k))
+            .collect();
+        assert_eq!(keys, F32_SIDECAR_KEYS, "the chunk sidecar's top-level keys");
+    }
+
+    /// The table carries every column the header lists, in its order: the base columns, then
+    /// each channel's, the basket's, the sectors', and both macro panels'.
+    #[test]
+    fn the_emit_table_follows_the_column_lists() {
+        let (mut w, _) = named_world("0.24.6-nasdaq-basket").expect("a recipe");
+        w.macro_null = 2;
+        w.sectors = 3;
+        let p = simulate(&w, 2, 20260825);
+        let mut expect: Vec<String> = EMIT_COLUMNS[1..].iter().map(|c| (*c).to_string()).collect();
+        expect.extend(channel_columns(&p).iter().map(|c| (*c).to_string()));
+        expect.extend(basket_columns(&p));
+        expect.extend(sector_columns(&p));
+        expect.extend(macro_columns(&p).iter().map(|c| (*c).to_string()));
+        expect.extend(null_macro_columns(&p).iter().map(|c| (*c).to_string()));
+        let table = emit_table(&p);
+        let names: Vec<String> = table.iter().map(|c| c.name.clone()).collect();
+        assert_eq!(names, expect);
+        assert!(
+            names.contains(&"nullMacroOutput".to_string())
+                && names.contains(&"logSector3".to_string())
+        );
+        assert!(table.iter().all(|c| c.values.len() == p.price.len()));
+        assert!(names.iter().all(|c| emit_column_known(c)));
+    }
+
+    #[test]
+    fn emit_column_known_takes_the_tsv_columns_and_no_other() {
+        for c in [
+            "price",
+            "inflPress",
+            "logSat",
+            "divYield",
+            "logBasket",
+            "logName12",
+            "logSector10",
+            "macroOutput",
+            "nullMacroSpread",
+        ] {
+            assert!(emit_column_known(c), "{c}");
+        }
+        for c in [
+            "date",
+            "logName",
+            "logName0",
+            "logName01",
+            "logNamex",
+            "Price",
+            "macroSpreadNull",
+        ] {
+            assert!(!emit_column_known(c), "{c}");
+        }
+    }
+
     /// `tag` keeps concurrent callers apart: the harness runs tests in parallel, and a shared
     /// directory name lets one test delete the sidecar another is writing — `write_or_die` then
     /// `process::exit`s and takes the whole harness down, not just the raced test. Each test
@@ -22035,22 +22696,19 @@ mod emit_sidecar_tests {
         // Native separators are fine: sidecar_name splits on both / and backslash.
         let tsv = tsv.to_string_lossy().into_owned();
         let rows = fidelity_rows(SP500_ANCHORS, &st, None, years, 1, seed, &w);
+        let spec = EmitSpec {
+            world: &w,
+            years,
+            seed,
+            start_ymd: "",
+        };
         write_emitted(
             SP500_ANCHORS,
             &tsv,
             &p,
             0,
-            &w,
-            years,
-            seed,
-            "",
-            &st,
-            1,
-            years,
-            &rows,
-            &[],
-            &w,
-            &p,
+            spec,
+            &one_path_verdict(&w, &p, &st, rows),
         );
         let json = sidecar_name(&tsv);
         let text = std::fs::read_to_string(&json).expect("sidecar written");
@@ -22079,22 +22737,19 @@ mod emit_sidecar_tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let tsv = dir.join("scope.tsv").to_string_lossy().into_owned();
         let rows = fidelity_rows(SP500_ANCHORS, &st, None, years, 1, seed, &w);
+        let spec = EmitSpec {
+            world: &w,
+            years,
+            seed,
+            start_ymd: "",
+        };
         write_emitted(
             SP500_ANCHORS,
             &tsv,
             &p,
             0,
-            &w,
-            years,
-            seed,
-            "",
-            &st,
-            1,
-            years,
-            &rows,
-            &[],
-            &w,
-            &p,
+            spec,
+            &one_path_verdict(&w, &p, &st, rows),
         );
         let header = std::fs::read_to_string(&tsv)
             .expect("tsv")
@@ -22826,7 +23481,7 @@ mod contract_tests {
         assert_eq!(a.med_depth, -21.4); // re-measured in 0.22.0; see episode_anchor_tests
         assert_eq!(a.worst_depth, -84.1); // re-anchored in 0.22.1; see episode_anchor_tests
         assert_eq!(a.vol_band, (14.0, 18.0));
-        assert_eq!(a.ret_vol_band, (0.50, 0.85));
+        assert_eq!(a.ret_vol_band, (0.31, 1.09));
     }
 
     #[test]
@@ -25116,7 +25771,7 @@ mod bond_crash_tests {
 mod joint_coupling_tests {
     use super::*;
 
-    const COUPLING: &str = "../test-data/equity-anchors/joint-coupling-2026-08-31.tsv";
+    const COUPLING: &str = "../test-data/equity-anchors/joint-coupling-2026-10-03.tsv";
 
     /// `None` where the fixture is absent — the crate ships without `test-data/`, so a
     /// source-tarball build must not fail here.
@@ -25185,6 +25840,75 @@ mod joint_coupling_tests {
     fn med4(mut x: Vec<f64>) -> f64 {
         x.sort_by(f64::total_cmp);
         (x[1] + x[2]) / 2.0
+    }
+
+    /// The depth rows' bands are the record window and its 5-year blocks, read at the record's
+    /// drift and rounded outward to 0.1, and the code's reference drifts are the fixture's.
+    #[test]
+    fn the_satellite_depth_bands_are_the_windows_and_blocks_at_the_records_drift() {
+        let Some(a) = rows(COUPLING) else { return };
+        let num = |r: &Vec<String>| -> f64 { r[2].parse().expect("numeric fixture value") };
+        let at = |stat: &str| -> f64 {
+            num(a
+                .iter()
+                .find(|r| r[0] == "w1999" && r[1] == stat)
+                .unwrap_or_else(|| panic!("fixture row [w1999 {stat}] missing")))
+        };
+        assert_eq!((at("refDriftPrimary"), at("refDriftSat")), SAT_REF_DRIFT);
+        let mut w = default_world();
+        w.sat_beta = 1.2;
+        w.sat_idio = 0.77;
+        let st = measure(&sim_paths(&w, 2, 10, DEFAULT_SEED), 10);
+        let names: Vec<String> = gate_checks(SP500_ANCHORS, &st)
+            .into_iter()
+            .map(|r| r.0)
+            .collect();
+        for (stat, row) in [
+            ("d5Ratio", "satellite d5 ratio"),
+            ("d10Ratio", "satellite d10 ratio"),
+        ] {
+            let xs: Vec<f64> = a
+                .iter()
+                .filter(|r| r[1] == stat && (r[0] == "w1999" || r[0].starts_with('b')))
+                .map(num)
+                .collect();
+            assert_eq!(xs.len(), 6, "the window and its five blocks");
+            let lo = (xs.iter().copied().fold(f64::INFINITY, f64::min) * 10.0).floor() / 10.0;
+            let hi = (xs.iter().copied().fold(f64::NEG_INFINITY, f64::max) * 10.0).ceil() / 10.0;
+            let want = format!("{row} {}-{}", jf(lo, 0, 2), jf(hi, 0, 2));
+            assert!(names.contains(&want), "no gate row [{want}]");
+        }
+    }
+
+    /// A re-drifted leg carries the reference drift exactly, and the depth rows barely move
+    /// with the world's own drift where the raw shares would.
+    #[test]
+    fn redrifting_carries_the_reference_drift_and_takes_the_worlds_out() {
+        let p = simulate(&default_world(), 20, DEFAULT_SEED);
+        let r = redrifted(&p.price, SAT_REF_DRIFT.0);
+        let got = (r[r.len() - 1].ln() - r[0].ln()) / (r.len() - 1) as f64 * DAYS_PER_YEAR as f64;
+        assert!((got - SAT_REF_DRIFT.0).abs() < 1e-9, "{got}");
+        let at = |drift: f64| -> (f64, f64) {
+            let mut w = default_world();
+            w.sat_beta = 1.2;
+            w.sat_idio = 0.77;
+            w.drift = drift;
+            let sims = sim_paths(&w, 8, 100, DEFAULT_SEED);
+            let raw = med(&sims
+                .iter()
+                .map(|s| depth_shares(&s.sat).0 / depth_shares(&s.price).0)
+                .collect::<Vec<f64>>());
+            (sat_stats(&sims, 100).expect("a satellite").d5_ratio, raw)
+        };
+        let (lo, hi) = (at(0.11), at(0.165));
+        assert!(
+            (hi.1 - lo.1).abs() > 2.0 * (hi.0 - lo.0).abs(),
+            "the raw d5 ratio moves with drift ({:.3} -> {:.3}) far more than the re-drifted one ({:.3} -> {:.3})",
+            lo.1,
+            hi.1,
+            lo.0,
+            hi.0
+        );
     }
 
     #[test]
@@ -25616,6 +26340,7 @@ mod record_band_tests {
         };
         let mut out = read("recordbands-2026-09-26.tsv");
         out.extend(read("rateafter-2026-09-30.tsv").into_iter().skip(1));
+        out.extend(read("volexit-2026-10-03.tsv").into_iter().skip(1));
         out
     }
 
@@ -25701,11 +26426,12 @@ mod record_band_tests {
                 .chain(RATE_BAND_ROWS.iter())
                 .chain(BOND_BAND_ROWS.iter())
                 .chain(RATE_AFTER_ROWS.iter())
+                .chain(VOL_EXIT_ROWS.iter())
                 .copied()
                 .collect();
             assert_eq!(
                 names, expect,
-                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS"
+                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS, VOL_EXIT_ROWS"
             );
             for b in a.record_bands {
                 let r = row(set, b.name);
@@ -28114,7 +28840,7 @@ mod open_tests {
 mod basket_anchor_tests {
     use super::*;
 
-    const FIXTURE: &str = "../test-data/equity-anchors/basket-2026-09-02.tsv";
+    const FIXTURE: &str = "../test-data/equity-anchors/basket-2026-10-03.tsv";
 
     fn rows() -> Option<Vec<Vec<String>>> {
         let text = std::fs::read_to_string(FIXTURE).ok()?;
@@ -28335,10 +29061,10 @@ mod basket_anchor_tests {
             b.pair_corr_worst,
             b.pair_corr_mid
         );
-        // A DISCLOSED reading, not a gate. Since the own-gap channel became symmetric the model
-        // lands inside the eight's 0.08-0.61 but above their median (0.236): what is left of the
-        // gap is their COMMON drift, +0.304/yr against the shared leg's, which is the
-        // survivorship the fixture discloses — see `basket-drift-2026-09-03.tsv`.
+        // A DISCLOSED reading, not a gate. The model lands inside the eight's 0.08-0.61 but above
+        // their median (0.331): what is left of the gap is their COMMON drift, +0.297/yr against
+        // the shared leg's, which is the survivorship the fixture discloses — see
+        // `basket-drift-2026-10-03.tsv`.
         let mut eight_d20 = eight(&rs, "d20");
         eight_d20.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
         assert!(
@@ -28486,6 +29212,34 @@ mod timing_tests {
             pearson(&near, &near).to_bits(),
             pearson_matd(&near, &near).to_bits()
         );
+    }
+
+    /// THE VOLATILITY EXIT reads hand series as stated: a calm index is held throughout, so both
+    /// rows read zero; an index always past 2% volatility is in cash from the first session a
+    /// decision earns, so the timing row is buy-and-hold's growth with its sign turned; and the
+    /// rows are read from that session on, decided two sessions before.
+    #[test]
+    fn the_volatility_exit_reads_hand_series_as_stated() {
+        let day = |r: f64| VolExitDay {
+            close_ret: r,
+            total_ret: r,
+            rate: 0.0,
+            days: 1.0,
+        };
+        let calm: Vec<VolExitDay> = (0..600)
+            .map(|i| day(if i % 2 == 0 { 0.002 } else { -0.001 }))
+            .collect();
+        assert_eq!(vol_exit_of(&calm), [0.0, 0.0]);
+        let wild: Vec<VolExitDay> = (0..600)
+            .map(|i| day(if i % 2 == 0 { 0.03 } else { -0.031 }))
+            .collect();
+        let [timing, _] = vol_exit_of(&wild);
+        let start = VOL_EXIT_WINDOW + 1;
+        let hold = log_growth(wild[start..].iter().map(|v| v.total_ret));
+        let want = -100.0 * DAYS_PER_YEAR as f64 * hold / (wild.len() - start) as f64;
+        assert!((timing - want).abs() < 1e-12, "{timing} against {want}");
+        assert!(timing > 0.0, "cash beats an index that loses in its swings");
+        assert!(vol_exit_of(&wild[..start + DAYS_PER_YEAR - 1])[0].is_nan());
     }
 
     /// `month_ends` reads the synthetic calendar's month ends in integer arithmetic; they are the
@@ -28778,7 +29532,7 @@ mod sector_channel_tests {
 mod basket_drift_tests {
     use super::*;
 
-    const FIXTURE: &str = "../test-data/equity-anchors/basket-drift-2026-09-03.tsv";
+    const FIXTURE: &str = "../test-data/equity-anchors/basket-drift-2026-10-03.tsv";
 
     fn rows() -> Option<Vec<Vec<String>>> {
         let text = std::fs::read_to_string(FIXTURE).ok()?;
@@ -28810,28 +29564,21 @@ mod basket_drift_tests {
         w
     }
 
+    /// The fixture's `trueSpread` is the decomposition of its own rows, and the dial ships at 0
+    /// whatever it reads: the ruler's eight are survivors, and the spread they show beyond the
+    /// window's noise is one name's (the fixture's header).
     #[test]
-    fn the_fixture_anchors_the_dial_at_zero_the_spread_is_under_the_windows_noise_floor() {
+    fn the_fixture_decomposes_its_spread_and_the_dial_ships_at_zero() {
         let Some(rs) = rows() else {
             return;
         };
-        for g in ["eight", "pop26"] {
-            let spread = value(&rs, g, "driftSpread");
-            let floor = value(&rs, g, "noiseFloor");
-            let truth = value(&rs, g, "trueSpread");
-            assert!(
-                spread <= floor,
-                "[{g}] the fixture claims no detectable dispersion, but {spread} exceeds {floor}"
-            );
-            let decomposed = (spread * spread - floor * floor).max(0.0).sqrt();
-            assert!((truth - decomposed).abs() < 1e-9, "[{g}] trueSpread");
-            assert!(truth.abs() < 1e-9, "[{g}] the shipped anchor is 0");
-            // the same answer on the residual after the group index, so beta spread is not the cause
-            assert!(
-                value(&rs, g, "alphaSpread") <= value(&rs, g, "alphaNoiseFloor"),
-                "[{g}] alpha"
-            );
-        }
+        let spread = value(&rs, "eight", "driftSpread");
+        let floor = value(&rs, "eight", "noiseFloor");
+        let decomposed = (spread * spread - floor * floor).max(0.0).sqrt();
+        assert!(
+            (value(&rs, "eight", "trueSpread") - decomposed).abs() < 5e-4,
+            "trueSpread is the decomposition of the rows beside it, to the printed digit"
+        );
         for (v, w) in releases() {
             assert!(w.basket_drift == 0.0, "release {v}");
         }

@@ -2,7 +2,7 @@
 package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.24.5
+//> using dep org.vastblue:uni_3:0.24.6
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -282,11 +282,20 @@ object MarketSim:
   // reads off records it does not grade on (`Anchors.reported`), each a fidelity row with its
   // `window` first.  The Nasdaq's timing rows, bubble coupling and multi-year rows grade on the
   // 1971-2026 splice of the Composite and the NDX; CRSP, the NDX from 1990 and QQQ are reported.
+  // `fidelity` gained `vol-exit timing pts/yr` and `vol-exit 3x interaction pts/yr`, record-band
+  // rows.  An `-emitf32` chunk's sidecar (`F32SidecarKeys`) carries `format`, `layout`,
+  // `columnsAbsent` and `paths` where a TSV's carries `header` and `path`, and its `episodes` lists
+  // each path's rows.
   val EmitSchema: Int = 29
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
            "worldDigest", "gate", "channels", "episodes", "fidelity", "reportedRows")
+
+  /** `EmitSidecarKeys` for an `-emitf32` chunk's sidecar. */
+  val F32SidecarKeys: Vector[String] =
+    Vector("generator", "version", "schema", "file", "columns", "format", "layout", "columnsAbsent",
+           "paths", "world", "worldDigest", "gate", "channels", "episodes", "fidelity", "reportedRows")
 
   // Numeric arguments fail LOUDLY.  `toInt` alone dies with a raw NumberFormatException, and the
   // Rust twin's old parse-or-default silently substituted the default — `-emitpath -1` emitted
@@ -320,6 +329,13 @@ object MarketSim:
     "              ;   file joins a real dated series (default: 1900-01-02 by 365/252 days)",
     "-emitgate P   ; paths in the ensemble that decides the emitted path's gate verdict",
     s"              ;   (default ${DefaultEmitGate}; 0 = judge the world by the emitted sample itself)",
+    "-emitf32 F    ; the paths -emit would write, as ONE file of little-endian f32 cells, path-major",
+    "              ;   (each path's columns in order, each column's sessions in order), plus one",
+    "              ;   sidecar F.json for the chunk; -emitall/-emitfrom/-paths pick the paths as for",
+    "              ;   -emit.  Paths are written a batch at a time, so a chunk of thousands never sits",
+    "              ;   in memory; the verdict is the -emitgate ensemble's, whatever the chunk",
+    "-emitcols C,..; the -emitf32 columns, in this order (default: every column the TSV carries,",
+    "              ;   less date); one whose channel did not run is listed as columnsAbsent",
     "-gate C,...   ; which gate classes a world must pass to be admissible: realism (is this a",
     "              ;   market), mechanism (is this mechanism engaged), fidelity (can this",
     "              ;   quantity's LEVEL be read), or all.  Default realism,mechanism; realism is",
@@ -432,7 +448,7 @@ object MarketSim:
     "-satidio X    ; the leg's idiosyncratic vol as a FRACTION of the primary's realized vol",
     "              ;   (anchored 0.77 = corr 0.853 on SPY-QQQ; holds at any world's volatility)",
     "-jointemit P  ; dev tap: per-path logPrice/logSat TSVs (no sidecar) for grading the leg",
-    "              ;   against test-data/equity-anchors/joint-coupling-2026-08-31.tsv",
+    "              ;   against test-data/equity-anchors/joint-coupling-2026-10-03.tsv",
     "-rangescale X ; INTRA-BAR RANGE: high/low sampled per session from the exact Brownian-",
     "              ;   bridge extremes at the session's own vol state re-levelled onto the",
     "              ;   world's realized volatility, times X — the one disclosed identification",
@@ -458,14 +474,14 @@ object MarketSim:
     "              ;   primary's observed return + -basketsector idio riding state x spiral) plus",
     "              ;   its own idio (-basketidio, on the vol state alone -- so correlation rises",
     "              ;   in stress) and its own gaps (-basketgaps per year, t-jumps).  The aggregate",
-    "              ;   is the sector.  Anchored N 8 on the consumer's semis under SMH.  Default 0 = off",
+    "              ;   is the sector.  Graded N 8 on SMH's top holdings.  Default 0 = off",
     "-basketdrift X; cross-sectional DRIFT DISPERSION: sd of the names' own annual log-drift",
     "              ;   offsets as a fraction of the primary's vol, centred so the sector is",
-    "              ;   untouched.  ANCHORED AT 0: among the eight the spread of realized drift",
-    "              ;   (0.068) is what a 14.6-year window alone generates (0.070), and survivors",
-    "              ;   truncate the left tail, so 0 is a floor from biased data.  Their time",
-    "              ;   below peak is the COMMON drift (+0.304 vs the shared leg's +0.117), not",
-    "              ;   this.  At 0 every name has the SAME expected drift, so the basket is a null",
+    "              ;   untouched.  SHIPS AT 0, ungraded: the ruler's eight show 0.062 beyond a",
+    "              ;   14.6-year window's noise, all of it one name, and survivors truncate the",
+    "              ;   left tail.  Their time below peak is the COMMON drift (+0.297 vs the",
+    "              ;   shared leg's +0.117), not this.  At 0 every name has the SAME expected",
+    "              ;   drift, so the basket is a null",
     "              ;   world for a rule that ranks names: sweep the dial for its detection floor",
     "-sectors K    ; THE SECTOR CHANNEL: K sector legs, each beta_k x the primary's observed return",
     "              ;   (betas drawn once per path around 1 at the record's dispersion 0.216) plus its",
@@ -1276,11 +1292,11 @@ object MarketSim:
                            // SMH's own relation to SPY.  A name's idio rides the VOL STATE only,
                            // not the spiral's amplification, so in stress the shared variance
                            // dominates and pairwise correlation rises -- the mechanism the record
-                           // shows (0.60 on SPY's worst decile vs 0.28 mid).  Own gaps: a
+                           // shows (0.56 on SPY's worst decile vs 0.22 mid).  Own gaps: a
                            // per-name Student-t jump (JumpNu, the primary's skew) at `basketGaps`
                            // per year past ~10%.  Reaches no price; 0 = off, no columns,
-                           // bit-identical.  Anchored on the consumer's eight semis under SMH
-                           // (`basket-2026-09-02.tsv`): N = 8.
+                           // bit-identical.  Graded against SMH's eight largest holdings as of
+                           // 2026-10-02 (`basket-2026-10-03.tsv`): N = 8.
     basketBeta: Double = 0.0,   // sector leg: beta on the primary's observed return (anchored
                                 // 1.56, the basket's beta on SPY)
     basketSector: Double = 0.0, // sector leg: idio sd as a FRACTION of the primary's realized
@@ -1292,8 +1308,8 @@ object MarketSim:
                                 // t(JumpNu) x `BasketGapSize` (log), SYMMETRIC -- the index's
                                 // down-skew is the index's and reaches every name through the
                                 // shared leg, while the record's own name-level gaps past 10%
-                                // run 41 up to 32 down with mean +0.011
-                                // (`basket-drift-2026-09-03.tsv`).  A shifted own-gap channel
+                                // run 43 up to 37 down with mean +0.007
+                                // (`basket-drift-2026-10-03.tsv`).  A shifted own-gap channel
                                 // imposes drift nothing compensates -- at these rates the
                                 // primary's 0.7 skew is about -0.2/yr of log drift, more than the
                                 // shared leg supplies, so every name's expected drift goes
@@ -1449,16 +1465,16 @@ object MarketSim:
                                 // Drawn once per name per path and centred EXACTLY, so the
                                 // equal-weight sector's log drift is untouched and only the
                                 // cross-section moves.  0 = off, bit-identical; needs N >= 2.
-                                // ANCHORED AT 0 by `basket-drift-2026-09-03.tsv`: among the consumer's
-                                // eight the spread of realized drift (0.068) is entirely
-                                // accounted for by what a 14.6-year window generates from their
-                                // own idio vol (0.070), so no true dispersion is detectable, and
-                                // selecting survivors truncates the left tail -- 0 is a FLOOR
-                                // from biased data, not a measurement.  The names' time below
-                                // peak is NOT what this dial fixes: that gap is the eight's
-                                // COMMON drift (+0.304 against the shared leg's +0.117 over the
-                                // same horizon), which is the
-                                // survivorship the basket fixture discloses.
+                                // SHIPS AT 0, ungraded (`basket-drift-2026-10-03.tsv`): among
+                                // the ruler's eight the spread of realized drift beyond what a
+                                // 14.6-year window generates from their own idio vol is 0.062 a
+                                // year, all of it one name (INTC; without it the spread sits
+                                // under its noise floor), and a list selected today truncates
+                                // the left tail.  One name in a survivor sample does not
+                                // calibrate a dial.  The names' time below peak is NOT what this
+                                // dial fixes: that gap is the eight's COMMON drift (+0.297
+                                // against the shared leg's +0.117 over the same horizon), which
+                                // is the survivorship the basket fixture discloses.
                                 //
                                 // WHAT IT IS FOR: at 0 every name has the same expected drift BY
                                 // CONSTRUCTION (shared sector leg; idio and gaps share a mean), so
@@ -1886,7 +1902,7 @@ object MarketSim:
                   volIdio = 0.34, overnight = 0.22, divYield = 0.78),
      "nasdaq"),
     // The S&P default with THE BASKET on at its anchored dials and the dividend stream at its
-    // S&P anchor (`basket-2026-09-02.tsv`: the consumer's eight semis under SMH).  Verified at 200x100:
+    // S&P anchor (the basket ruler of the time: eight semis under SMH).  Verified at 200x100:
     // names vol 2.49x, gaps 2.13/yr; aggregate corr 0.793, beta 1.562, vol 1.97x; pairwise 0.575,
     // idio share 0.374, tail coincidence 0.547, pairwise on the worst decile 0.682 vs 0.212 mid;
     // the primary untouched.  Time below peak 0.548, a disclosed reading.
@@ -5033,7 +5049,7 @@ object MarketSim:
   final case class BarStats(rangeOverCcvol: Double, rangeAcf1: Double, rangeDownup: Double,
                             volSd: Double, volCorrRange: Double)
 
-  /** THE BASKET's readings, medians across paths, at the three levels of `basket-2026-09-02.tsv`.
+  /** THE BASKET's readings, medians across paths, at the three levels of `basket-2026-10-03.tsv`.
     * Level 1 per name, pooled over names and paths: vol as a ratio to the primary's, sessions
     * past 10% per year, the share of sessions >20% below the running peak.  Level 2 the
     * equal-weight aggregate against the primary: correlation and beta, and vol ratio.  Level 3:
@@ -5586,6 +5602,9 @@ object MarketSim:
                                                   // of the asymmetry, which `semiExcess` cancels
                               volTiming: Double,  // median per-path volatility-timing edge, points
                                                   // a year (`volTimingOf`)
+                              // median per-path volatility exit, timing then 3x interaction,
+                              // points a year (`volExitOf`)
+                              volExit: Vector[Double] = Vector(Double.NaN, Double.NaN),
                               bubbleCoupling: Double, // median per-path bubble coupling in log
                                                   // (`bubbleCouplingOf`); paths without a
                                                   // qualifying decline are left out of the median
@@ -5676,6 +5695,19 @@ object MarketSim:
     * Every ratio is a MEDIAN over paths of that path's own ratio, not a ratio of pooled medians:
     * the two differ when the legs' dispersions differ, and the per-path form is the one the
     * record's single history is a draw from. */
+  /** THE SATELLITE DEPTH ROWS' REFERENCE DRIFT: SPY's and QQQ's realized log drift a year over
+    * their shared 1999-2026 window (`joint-coupling-2026-10-03.tsv`).  The depth rows read both legs
+    * at these drifts, so a world's own long-run drift, which would otherwise move the d5 ratio 0.035
+    * per 0.01, does not decide them; the relative drift between the legs is the rel-trend rows'. */
+  val SatRefDrift: (Double, Double) = (0.082386, 0.102569)
+
+  /** A leg with its own realized log drift replaced by `annual` a year (`SatRefDrift`). */
+  def redrifted(px: Array[Double], annual: Double): Array[Double] =
+    val n = px.length
+    val own = (lnDet(px(n - 1)) - lnDet(px(0))) / (n - 1).toDouble
+    val d = annual / DaysPerYear.toDouble - own
+    Array.tabulate(n)(t => px(t) * expDet(d * t.toDouble))
+
   def satStats(sims: Vector[Path]): Option[SatStats] =
     if sims.isEmpty || sims.head.sat.isEmpty then None
     else
@@ -5689,10 +5721,12 @@ object MarketSim:
           varP += (rp(i) - mp) * (rp(i) - mp)
           varS += (rs(i) - ms) * (rs(i) - ms)
           i += 1
-        val (p5, p10, _) = depthShares(s.price)
-        val (s5, s10, _) = depthShares(s.sat)
-        val ep = episodes(s.price, 15.0).size.toDouble
-        val es = episodes(s.sat, 15.0).size.toDouble
+        val pr = redrifted(s.price, SatRefDrift._1)
+        val sr = redrifted(s.sat, SatRefDrift._2)
+        val (p5, p10, _) = depthShares(pr)
+        val (s5, s10, _) = depthShares(sr)
+        val ep = episodes(pr, 15.0).size.toDouble
+        val es = episodes(sr, 15.0).size.toDouble
         (pearson(rp, rs), pearson(rp.map(math.abs), rs.map(math.abs)), cov / varP,
          math.sqrt(varS / varP), kurtosis(rs) / kurtosis(rp),
          autocorrAbs(rs, 1) / autocorrAbs(rp, 1), autocorrAbs(rs, 20) / autocorrAbs(rp, 20),
@@ -5750,7 +5784,8 @@ object MarketSim:
     bondGrowth: Vector[Double], bondInfl: Vector[Double],   // the bond over each episode, by regime
     corrCalm: Double, corrInfl: Double,
     valDisp: Double, maxOver: Double, semiExcess: Double, upShare: Double, levCorr: Double,
-    volTiming: Double, bubbleCoupling: Double, runUp3y: Double, calmStretch: Double,
+    volTiming: Double, volExit: Vector[Double], bubbleCoupling: Double, runUp3y: Double,
+    calmStretch: Double,
     multiYear: Vector[Double],
     timing: Vector[Double],
     shortRate: Double, rateFloor: Double,   // `rateReadings` of the path's rate
@@ -5890,7 +5925,8 @@ object MarketSim:
       corrCalm = corrIn(false), corrInfl = corrIn(true),
       // the path's own returns, through the same functions a record is read with
       valDisp = valDisp, maxOver = maxOver, semiExcess = semiExcessOf(r), upShare = upShareOf(r),
-      levCorr = levCorrOf(r), volTiming = volTimingOf(r), bubbleCoupling = bubbleCouplingOf(r),
+      levCorr = levCorrOf(r), volTiming = volTimingOf(r), volExit = volExitOf(volExitDaysOfPath(sp)),
+      bubbleCoupling = bubbleCouplingOf(r),
       runUp3y = runUp3yOf(r), calmStretch = calmStretchOf(r),
       multiYear = multiYearOf(r, sp.price),
       timing = timingOfPath(sp.price),
@@ -5976,6 +6012,7 @@ object MarketSim:
       semiExcess = med(per.map(_.semiExcess)),
       upShare = med(per.map(_.upShare)),
       volTiming = med(per.map(_.volTiming)),
+      volExit = Vector(med(per.map(_.volExit(0))), med(per.map(_.volExit(1)))),
       bubbleCoupling = med(per.map(_.bubbleCoupling)),
       runUp3y = med(per.map(_.runUp3y)),
       calmStretch = med(per.map(_.calmStretch)),
@@ -6201,12 +6238,12 @@ object MarketSim:
       bandCheck("equity vol", vol, a.volBand._1, a.volBand._2, Fidelity, dp = 0, unit = "%"),
       bandCheck("typical-year vol", lv("typical-year vol %", st.yearVol * 100.0), a.yearVolBand._1,
                 a.yearVolBand._2, Fidelity, dp = 0, unit = "%"),
-      // 0.50 clears the 1926-2026 reading (0.55) downward; 0.85 sits above the 1954-2026 anchor
-      // (0.69) and below the most favourable non-overlapping 20-year block the record produced
-      // (0.93).  A world may be as favourable as a long-horizon market, not as favourable as its
-      // luckiest two decades.  The 20-year block SPREAD (0.47-0.93) is deliberately NOT the band:
-      // that is sampling variation in a 20-year window, and this statistic is a population value
-      // over 20,000 path-years -- a band drawn from it would readmit worlds at 0.91.
+      // THE RECORD'S OWN JOINT BAND, rounded outward (recordbands-2026-09-26.tsv: CRSP 1954-2026
+      // 0.312-1.081, QQQ 1999-2026 -0.176-0.964). A calibration set samples the drift's
+      // uncertainty given the record, so a world's population return per vol may sit anywhere
+      // the record cannot rule out. The hand bands this replaces (S&P 0.50-0.85, Nasdaq
+      // 0.27-0.47) held every member within about 0.1 of the anchor, a precision one history
+      // does not have: a member median's posterior sd is 0.12 (S&P) and 0.20 (Nasdaq).
       bandCheck("return per vol",   lv("return per vol", st.retVol), a.retVolBand._1, a.retVolBand._2, Fidelity),
       // SIGNED persistence at three months.  FIDELITY and not realism, for the reason stated
       // above: `-crowdimpact 0.12` is one of the sweep's own OFF-worlds — pressing the reflexive
@@ -6288,8 +6325,11 @@ object MarketSim:
         bandCheck("satellite kurtosis ratio", sd.kurtRatio, 0.45, 1.20, Fidelity),
         bandCheck("satellite clustering-1 ratio", sd.ac1Ratio, 0.85, 1.20, Fidelity),
         bandCheck("satellite clustering-20 ratio", sd.ac20Ratio, 0.85, 1.40, Fidelity),
+        // THE DEPTH ROWS read both legs at the record window's drift (`SatRefDrift`), the window and
+        // its 5-year blocks rounded outward; they set aside the legs' relative drift, which the
+        // rel-trend rows grade
         bandCheck("satellite d5 ratio", sd.d5Ratio, 1.00, 1.70, Fidelity),
-        bandCheck("satellite d10 ratio", sd.d10Ratio, 0.70, 2.20, Fidelity),
+        bandCheck("satellite d10 ratio", sd.d10Ratio, 1.10, 2.20, Fidelity),
         // DISCLOSED TENSION, not a pass by construction: the model's leg opens ~1.6 crash
         // episodes per primary episode against the record's 1.17.  One history cannot resolve
         // this ratio at all -- SPY and QQQ show ~6 and ~7 episodes in 27 years, and the 5-year
@@ -6328,14 +6368,14 @@ object MarketSim:
         Vector(bandCheck("bar overnight share", os.overnightShare, 0.23, 0.43, Fidelity),
                ("overnight gap share rises on the worst sessions",
                 os.worstGapShare > os.allGapShare, Mechanism))
-    // THE BASKET, graded when it ran -- `basket-2026-09-02.tsv`, the eight semis under SMH:
-    // level 1 as a POPULATION (the names' vol 1.9-3.5x SPY's or 1.5-2.8x QQQ's, gaps 0.4-5.1/yr
-    // -- the eight's ranges rounded outward, graded on the pooled median), level 2 the aggregate
-    // against the set's primary (the eight's basket on SPY: corr 0.77, beta 1.56, vol 2.0x; on
-    // QQQ: 0.84, 1.37, 1.63x; +-0.10 / +-0.25 / +-0.3), level 3 the
-    // structure a basket rule reads (pairwise 0.59, idio share 0.37, tail coincidence 0.48), and
-    // the mechanism: pairwise correlation on the primary's worst decile above its middle decile
-    // (0.60 vs 0.28).  The names' d20 is REPORTED, not graded: the eight's 0.08-0.61 is the time
+    // THE BASKET, graded when it ran -- `basket-2026-10-03.tsv`, SMH's eight largest holdings as
+    // of 2026-10-02: level 1 as a POPULATION (the names' vol 1.9-3.5x SPY's or 1.5-2.8x QQQ's,
+    // gaps 0.4-5.1/yr -- the eight's ranges rounded outward, graded on the pooled median), level 2
+    // the aggregate against the set's primary (the eight's basket on SPY: corr 0.77, beta 1.54,
+    // vol 1.99x; on QQQ: 0.84, 1.35, 1.60x; +-0.10 / +-0.25 / +-0.3), level 3 the structure a
+    // basket rule reads (pairwise 0.55, idio share 0.40, tail coincidence 0.46), and the
+    // mechanism: pairwise correlation on the primary's worst decile above its central 45-55%
+    // (0.56 vs 0.22).  The names' d20 is REPORTED, not graded: the eight's 0.08-0.61 is the time
     // below peak of names selected today as winners (the survivorship the fixture discloses), and
     // a name at the sector's drift and 2.6x the index's volatility spends most of a century more
     // than 20% below its peak, as a real name of that drift would.
@@ -6354,9 +6394,9 @@ object MarketSim:
                bandCheck("basket corr", b.aggCorr, at2(a.basketCorr - 0.10), at2(a.basketCorr + 0.10), Fidelity),
                bandCheck("basket beta", b.aggBeta, betaLo, betaHi, Fidelity),
                bandCheck("basket vol ratio", b.aggVolRatio, volLo, volHi, Fidelity),
-               bandCheck("basket pair corr", b.pairCorr, 0.42, 0.86, Fidelity),
+               bandCheck("basket pair corr", b.pairCorr, 0.39, 0.85, Fidelity),
                bandCheck("basket idio share", b.idioShare, 0.26, 0.60, Fidelity),
-               bandCheck("basket tail coincidence", b.tailCoincidence, 0.35, 0.60, Fidelity),
+               bandCheck("basket tail coincidence", b.tailCoincidence, 0.33, 0.58, Fidelity),
                ("basket pair corr rises on the worst decile", b.pairCorrWorst > b.pairCorrMid, Mechanism))
     // THE SECTOR CHANNEL, graded when it ran -- `sectors-2026-09-30.tsv`, the ten industries, in
     // the forms that carry across primaries of different volatility: the 12-1 momentum spread and
@@ -6758,7 +6798,7 @@ object MarketSim:
     // The dividend yield at fair value (%/yr) and the band its level is graded against when the
     // `divYield` dial is on -- `dividend-2026-09-02.tsv`: the window's annual means rounded out.
     divYield: Double, divYieldBand: (Double, Double),
-    // THE BASKET's relation to this set's primary -- `basket-2026-09-02.tsv`: the equal-weight
+    // THE BASKET's relation to this set's primary -- `basket-2026-10-03.tsv`: the equal-weight
     // eight on SPY / on QQQ (corr, beta, vol ratio), and the eight's vol as a ratio to the
     // primary's, rounded outward.  Level 3 of that fixture is a property of the names among
     // themselves and stays shared.
@@ -6975,7 +7015,13 @@ object MarketSim:
       0.496975, (2.702012, 6.481711)),
     RecordBand("post-trough floor share %", 15.195221,
       Vector(0.0, 2.17713, 5.782857, 7.936754, 9.379509, 10.649059, 11.656172, 12.642465, 13.650794, 14.493445, 15.397185, 16.269841, 17.123016, 18.009986, 18.964523, 20.0, 21.144818, 22.442681, 23.955279, 25.840807, 28.80307, 34.916157, 49.139502),
-      0.496975, (0.523877, 38.611714)))
+      0.496975, (0.523877, 38.611714)),
+    RecordBand("vol-exit timing pts/yr", -0.462773,
+      Vector(-2.541567, -1.772355, -1.413095, -1.208946, -1.070846, -0.959592, -0.862272, -0.772733, -0.688812, -0.609558, -0.529435, -0.450245, -0.376382, -0.297067, -0.21175, -0.111926, -0.007542, 0.113128, 0.256304, 0.443994, 0.738115, 1.345651, 2.910325),
+      0.482175, (-1.654394, 1.136365)),
+    RecordBand("vol-exit 3x interaction pts/yr", 1.07269,
+      Vector(-3.623782, -1.999153, -1.387685, -0.99856, -0.706664, -0.456976, -0.227406, -0.007667, 0.207447, 0.434413, 0.666121, 0.889054, 1.120667, 1.352742, 1.59056, 1.859131, 2.1666, 2.528453, 2.971026, 3.523125, 4.424531, 6.282058, 11.043108),
+      0.482175, (-1.817868, 5.673636)))
 
   /** The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ
     * 1999-03-11..2026-08-20. */
@@ -7039,7 +7085,13 @@ object MarketSim:
       0.496525, (0.312149, 3.971964)),
     RecordBand("post-trough floor share %", 23.358002,
       Vector(0.0, 3.448276, 16.666667, 22.096774, 25.536062, 28.477218, 30.798703, 32.918592, 34.753788, 36.720796, 38.540841, 40.394684, 42.302158, 44.206296, 46.285942, 48.216645, 50.0, 52.599263, 55.790646, 59.573333, 66.141332, 79.89418, 100.0),
-      0.496525, (0.0, 90.873016)))
+      0.496525, (0.0, 90.873016)),
+    RecordBand("vol-exit timing pts/yr", 4.109022,
+      Vector(-7.349529, -3.360482, -1.387668, -0.389702, 0.376041, 0.983964, 1.539477, 2.031011, 2.519756, 2.972813, 3.448429, 3.924559, 4.405638, 4.908706, 5.463765, 6.02856, 6.659221, 7.362936, 8.190867, 9.319981, 10.94903, 14.344316, 23.57867),
+      0.481025, (-2.680914, 13.010553)),
+    RecordBand("vol-exit 3x interaction pts/yr", 23.198533,
+      Vector(-8.567701, 0.482693, 5.56122, 8.647324, 10.843394, 12.664551, 14.385647, 15.919216, 17.409942, 18.857511, 20.242008, 21.775378, 23.300004, 24.840551, 26.482143, 28.367765, 30.404303, 32.693019, 35.271047, 38.660798, 43.819114, 54.492427, 82.660437),
+      0.481025, (2.17624, 50.404711)))
 
   /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
     * rather than re-measured (except the two the 0.22 releases re-anchored -- `medDepth` and
@@ -7095,7 +7147,7 @@ object MarketSim:
     volBand = (14.0, 18.0),
     // the old band's relative width, -12.4% / +12.4%, around the phase-averaged anchor
     yearVolBand = (10.9, 14.1),
-    retVolBand = (0.50, 0.85),
+    retVolBand = (0.31, 1.09),
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT.  A single 72-year
     // history barely pins the semivariance excess (one crash day swings it), and the record reads
     // as a TYPICAL history of this model on all three rows -- the 51st percentile (semivariance),
@@ -7112,7 +7164,7 @@ object MarketSim:
     ddRefs = DdRefsSp500,
     recordBands = RecordBandsSp500,
     divYield = 2.95, divYieldBand = (1.1, 5.8),
-    basketCorr = 0.770, basketBeta = 1.557, basketVolRatio = 2.023, basketNameVolBand = (1.9, 3.5),
+    basketCorr = 0.773, basketBeta = 1.536, basketVolRatio = 1.986, basketNameVolBand = (1.9, 3.5),
     sectorMomentum = 0.003923, sectorMomentumBand = (0.002111, 0.005480),
     sectorTrend12 = 0.005545, sectorTrend12Band = (0.000214, 0.010578),
     sectorTrendSma = 0.003672, sectorTrendSmaBand = (-0.002442, 0.009168),
@@ -7193,7 +7245,7 @@ object MarketSim:
     volBand = (22.2, 31.5),
     // one sd of the row's own 27-year spread, +-18%, around the phase-averaged anchor
     yearVolBand = (16.4, 23.6),
-    retVolBand = (0.27, 0.47),
+    retVolBand = (-0.18, 0.97),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semiExcess = 1.13, semiExcessSd = 3.28,
     // QQQ 1999-2026: 54.78% of moving sessions rise
@@ -7210,7 +7262,7 @@ object MarketSim:
     ddRefs = DdRefsNasdaq,
     recordBands = RecordBandsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
-    basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8),
+    basketCorr = 0.840, basketBeta = 1.345, basketVolRatio = 1.601, basketNameVolBand = (1.5, 2.8),
     sectorMomentum = 0.003923, sectorMomentumBand = (0.002111, 0.005480),
     sectorTrend12 = 0.005545, sectorTrend12Band = (0.000214, 0.010578),
     sectorTrendSma = 0.003672, sectorTrendSmaBand = (-0.002442, 0.009168),
@@ -7412,6 +7464,11 @@ object MarketSim:
     // against the record's band, and a weight would have the search chase QQQ's 1999-2002 reward
     // (+1.4 points a year from 1999, -2.1 on NDX from 1990).
     ("vol-timing edge pts/yr", st => st.volTiming,                          a.volTiming, wgt(a.volTimingJudgment, a.volTimingSd)),
+    // THE VOLATILITY EXIT (a consumer's request, 2026-10-03): the simple exit at the absolute
+    // thresholds it trades, at 1x and on the 3x leg; the verdict judges each against the record's
+    // band, and the loss weighs them 0.
+    (VolExitRows(0), st => st.volExit(0), bandRecord(a, VolExitRows(0)), 0.0),
+    (VolExitRows(1), st => st.volExit(1), bandRecord(a, VolExitRows(1)), 0.0),
     // The leverage effect, graded by the one statistic that survives close-only data:
     // corr(r_t, r^2_{t+1}) reads -0.09 on every CRSP era and negative on all 18 funds.  The
     // sharper Patton-Sheppard signed-half regression was measured and CANNOT anchor here --
@@ -7575,7 +7632,8 @@ object MarketSim:
     * them as the linear |model - target| over |target|, the log ratio's small-deviation limit, since
     * a log ratio has no meaning across zero and its wrong-sign penalty grows as the reading nears it. */
   val AdditiveTargets: Set[String] =
-    Set("vol-timing edge pts/yr", "rate floor share %", "post-trough floor share %")
+    Set("vol-timing edge pts/yr", "vol-exit timing pts/yr", "vol-exit 3x interaction pts/yr",
+        "rate floor share %", "post-trough floor share %")
 
   /** The admissible interval for a per-path fidelity ratio on a row WITHOUT a `RecordBand`, and the
     * admissible percentile band for an `ExtremeTargets` row.  Stated ONCE: the report, the sidecar
@@ -8260,6 +8318,106 @@ object MarketSim:
     * below two windows.  Sums run in session order in both twins. */
   val VolTimingWindow: Int = 24
   val VolTimingPcts: (Double, Double) = (0.60, 0.80)
+
+  /** THE SIMPLE VOLATILITY EXIT (the consumer's request 1, 2026-10-03): the rule written down
+    * completely, read on the record and on a path the same way.  The estimator is the sample sd
+    * (n - 1) of the last `VolExitWindow` simple returns of the PRINTED close, first read once a full
+    * window exists; below `VolExitHoldBelow` the rule holds the index, at or above `VolExitCashAt` it
+    * holds cash, between it keeps its position, and it starts holding.  A decision at the close of
+    * session t is filled at the close of t + 1 and earns from t + 1 to t + 2.  Cash earns the short
+    * rate over 252; the leveraged leg is reset daily: `VolExitLever` times the index's simple TOTAL
+    * return, less (lever - 1) x (the rate + `VolExitSpread`) x the calendar days the session spans
+    * over 360, less `VolExitExpense` over 252.  The two rows, in points a year of log growth over the
+    * sessions from the first one a decision earns: the rule at 1x less buy-and-hold, and the rule on
+    * the leveraged leg less the leg held, less the timing row. */
+  val VolExitRows: Vector[String] = Vector("vol-exit timing pts/yr", "vol-exit 3x interaction pts/yr")
+  val VolExitWindow: Int       = 24
+  val VolExitHoldBelow: Double = 0.015
+  val VolExitCashAt: Double    = 0.020
+  val VolExitLever: Double     = 3.0
+  val VolExitSpread: Double    = 0.006
+  val VolExitExpense: Double   = 0.0086
+
+  /** One session of the volatility exit's inputs (`volExitOf`): the printed close's simple return
+    * the rule reads, the index's simple total return it earns, the short rate (annual, decimal)
+    * over the session, and the calendar days the session spans. */
+  final case class VolExitDay(closeRet: Double, totalRet: Double, rate: Double, days: Double)
+
+  /** The sum of ln(1 + x) over `xs`, as the log of each 252-session product: the products cannot
+    * leave the double range, and one deterministic log a year keeps the twins equal to the bit. */
+  private def logGrowth(xs: Iterator[Double]): Double =
+    var total = 0.0
+    var prod  = 1.0
+    var k     = 0
+    for x <- xs do
+      prod *= 1.0 + x
+      k += 1
+      if k == DaysPerYear then
+        total += lnDet(prod)
+        prod = 1.0
+        k = 0
+    if k > 0 then total += lnDet(prod)
+    total
+
+  /** The volatility exit's two rows on one record or path (see `VolExitRows`).  NaN without a year
+    * after the first window, or where the leveraged leg loses everything in a session. */
+  def volExitOf(d: IndexedSeq[VolExitDay]): Vector[Double] =
+    val w = VolExitWindow
+    val n = d.length
+    // the first session a decision earns: decided at close w - 1, filled at close w
+    val start = w + 1
+    if n < start + DaysPerYear then Vector(Double.NaN, Double.NaN)
+    else
+      var held = true
+      val pos = new Array[Boolean](n)
+      for t <- (w - 1) until n - 2 do
+        val x = d.slice(t + 1 - w, t + 1)
+        val mean = x.map(_.closeRet).sum / w
+        val sd = math.sqrt(x.map(v => (v.closeRet - mean) * (v.closeRet - mean)).sum / (w - 1))
+        if sd < VolExitHoldBelow then held = true
+        else if sd >= VolExitCashAt then held = false
+        pos(t + 2) = held
+      val dpy = DaysPerYear.toDouble
+      def cash(v: VolExitDay): Double = v.rate / dpy
+      def lever(v: VolExitDay): Double =
+        VolExitLever * v.totalRet - (VolExitLever - 1.0) * (v.rate + VolExitSpread) * v.days / 360.0 -
+          VolExitExpense / dpy
+      val idx = start until n
+      def pick(f: VolExitDay => Double)(i: Int): Double = if pos(i) then f(d(i)) else cash(d(i))
+      val rule1 = logGrowth(idx.iterator.map(pick(_.totalRet)))
+      val hold1 = logGrowth(idx.iterator.map(i => d(i).totalRet))
+      val rule3 = logGrowth(idx.iterator.map(pick(lever)))
+      val hold3 = logGrowth(idx.iterator.map(i => lever(d(i))))
+      val per = 100.0 * dpy / idx.length
+      val timing = per * (rule1 - hold1)
+      Vector(timing, per * (rule3 - hold3) - timing)
+
+  /** A path's volatility-exit inputs: the printed close (`traded`, the price where a world pays no
+    * dividend) for the rule's signal, the total-return price for what it earns, the path's own short
+    * rate over each session, and the synthetic calendar's days between sessions. */
+  def volExitDaysOfPath(p: Path): Vector[VolExitDay] =
+    val close = if p.traded.isEmpty then p.price else p.traded
+    def day(i: Int): Long = (i * 365L) / DaysPerYear
+    Vector.tabulate(p.price.length - 1) { k =>
+      val i = k + 1
+      VolExitDay(close(i) / close(i - 1) - 1.0, p.price(i) / p.price(i - 1) - 1.0, p.rate(i - 1),
+                 (day(i) - day(i - 1)).toDouble)
+    }
+
+  /** The volatility exit's rows on one-year-block resamples of a record's sessions, each session's
+    * inputs kept together, as `rateAfterResamples` keeps a return with its rate. */
+  def volExitResamples(d: Vector[VolExitDay], resamples: Int, seed: Long): Vector[Vector[Double]] =
+    val n = d.length
+    val l = DaysPerYear
+    require(n > l, "a record shorter than one block cannot be resampled in blocks")
+    val blocks = (n + l - 1) / l
+    val rng = new NumPyRNG(seed)
+    val starts = Vector.fill(resamples)(Array.fill(blocks)(rng.nextBoundedInt(n - l + 1)))
+    parMap(starts)(st => volExitOf(st.toVector.flatMap(s => d.slice(s, s + l)).take(n)))
+
+  /** A banded row's record, from the set's `RecordBand` of that name; NaN where it carries none. */
+  def bandRecord(a: Anchors, name: String): Double =
+    a.recordBands.find(_.name == name).fold(Double.NaN)(_.record)
   private[apps] def volTimingOf(r: Array[Double]): Double =
     val w = VolTimingWindow
     val n = r.length
@@ -9187,7 +9345,11 @@ object MarketSim:
     * range taken from the middle is byte-identical to the same indices of a run that started at
     * zero -- which is what lets `-emitfrom` split one batch across invocations. */
   def simPathRange(w: World, from: Int, count: Int, years: Int, seed: Long): Vector[Path] =
-    val level = worldLevel(w)
+    simRangeAt(w, worldLevel(w), from, count, years, seed)
+
+  /** `simPathRange` at a channel level already computed: a stream simulates its chunk a batch at
+    * a time, and the level is a simulation of its own. */
+  def simRangeAt(w: World, level: ChannelLevel, from: Int, count: Int, years: Int, seed: Long): Vector[Path] =
     java.util.stream.IntStream.range(from, from + count).parallel()
       .mapToObj(k => simulateAt(w, years, seed + k.toLong * 7919L, level)).toArray()
       .toVector.map(_.asInstanceOf[Path])
@@ -9876,7 +10038,7 @@ object MarketSim:
   val EquityTargets = Vector(
     "equity vol %", "typical-year vol %", "return per vol", "kurtosis", "clustering lag 1", "clustering lag 20",
     "variance ratio 60d", "variance ratio 120d", "variance ratio 250d", "downside vol excess %",
-    "up-day share %", "vol-timing edge pts/yr",
+    "up-day share %", "vol-timing edge pts/yr", "vol-exit timing pts/yr", "vol-exit 3x interaction pts/yr",
     "leverage corr", "valuation dispersion", "upper wing months %", "lower wing months %",
     "crashes/century", "median depth %",
     "worst crash %", "bubble coupling 3y") ++ MultiYearRows ++ MultiYearLongRows ++ TimingRows ++ Vector(
@@ -10093,7 +10255,8 @@ object MarketSim:
     (a.equityWindow, a.equityYears,
      Vector("equity vol %", "typical-year vol %", "return per vol", "kurtosis", "crashes/century",
             "median depth %", "downside vol excess %", "up-day share %", "leverage corr",
-            "vol-timing edge pts/yr") ++ MultiYearRows),
+            "vol-timing edge pts/yr", "vol-exit timing pts/yr", "vol-exit 3x interaction pts/yr") ++
+       MultiYearRows),
     (a.clusterWindow, a.clusterYears,
      Vector("clustering lag 1", "clustering lag 20")),
     // Its own group because its own window -- see `Anchors.tailWindow`.  For both shipped sets this
@@ -10988,10 +11151,6 @@ object MarketSim:
     val tag = s"-${k.toString.reverse.padTo(width, '0').reverse}"
     if cut > sep then file.substring(0, cut) + tag + file.substring(cut) else file + tag
 
-  /** The TSV and its sidecar.  `gateSt` is measured on the gate ensemble -- a different, usually
-    * much larger and (per `GateYears`) usually longer sample than the one path being written --
-    * and `gateRows` are built from it once per batch, because building them simulates the extreme
-    * rows' own-horizon ensemble. */
   /** How the report judges one fidelity row: its ratio and record band, or where the record falls
     * among the world's single histories, or why it cannot be placed. */
   def fidelityJudgement(r: FidelityRow): String = (r.ratio, r.pctile) match
@@ -11011,26 +11170,82 @@ object MarketSim:
       f"record@ $p%3d%% of ${r.horizonYears}%dy histories (n=${r.nHistories}%d)$band%s"
     case (None, None)    => f"record@  n/a — ${r.nHistories}%d histories, needs $ExtremeMinHistories%d"
 
-  def writeEmitted(a: Anchors, file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
-                   startYmd: String, gateSt: WorldStats, gatePaths: Int, gateYears: Int,
-                   gateRows: Vector[FidelityRow], gateReported: Vector[ReportedRow], gateW: World,
-                   gateLevel: Path): Unit =
+  /** The terms every file of one emitting run shares: the world its paths are drawn from, their
+    * horizon, the base seed path k offsets from (`seed + k * 7919`), and the calendar's first date
+    * (empty for the synthetic calendar). */
+  final case class EmitSpec(world: World, years: Int, seed: Long, startYmd: String)
+
+  /** The verdict every sidecar of an invocation carries and its report prints, measured ONCE on
+    * its own ensemble (`verdictSpec`) of the verdict world (`verdictWorld`): building the rows
+    * simulates the extreme rows' own-horizon ensemble, the expensive part.  `level` is the verdict
+    * ensemble's first path, the level its channels were sampled at. */
+  final case class Verdict(paths: Int, years: Int, world: World, st: WorldStats,
+                           rows: Vector[FidelityRow], reported: Vector[ReportedRow], level: Path)
+
+  /** The verdict of world `w` on `(paths, years)`.  `report` is the caller's own ensemble with its
+    * statistics and its (paths, years), taken as the verdict's sample when it is the same one --
+    * same size and horizon, and `w` already its own verdict world -- rather than simulated twice. */
+  def verdictOf(a: Anchors, w: World, spec: (Int, Int), seed: Long,
+                report: Option[(Vector[Path], WorldStats, (Int, Int))]): Verdict =
+    val (paths, years) = spec
+    val vw = verdictWorld(a, w)
+    val (sims, st) = report match
+      case Some((s, st, at)) if at == spec && vw == w => (s, st)
+      case _ =>
+        val s = simPaths(vw, paths, years, seed)
+        (s, measure(s, years))
+    Verdict(paths, years, vw, st, fidelityRows(a, st, Some(sims), years, paths, seed, w),
+            reportedRecordRows(a, Some(sims), years, paths, seed, w), sims.head)
+
+  /** The verdict's warnings at export time: what the emitted paths cannot support. */
+  def warnVerdict(a: Anchors, v: Verdict): Unit =
+    val banded = bandedOf(v.rows)
+    def bad(c: GateClass): Vector[String] = failedInAt(a, v.st, banded, c)
+    val realismBad   = bad(GateClass.Realism)
+    val mechanismBad = bad(GateClass.Mechanism)
+    val fidelityBad  = bad(GateClass.Fidelity)
+    if realismBad.nonEmpty then
+      eprintln("WARNING: this world FAILS the realism bands " + realismBad.mkString("[", ", ", "]") +
+               " — the emitted path is not market-like")
+    if mechanismBad.nonEmpty then
+      eprintln("NOTE: mechanisms inert in this world " + mechanismBad.mkString("[", ", ", "]") +
+               " — conclusions that lean on them are not supported here")
+    if fidelityBad.nonEmpty then
+      eprintln("NOTE: levels not readable in this world " + fidelityBad.mkString("[", ", ", "]") +
+               " — rank comparisons survive, anything reading a level off these does not")
+
+  /** The TSV and its sidecar for path `k`. */
+  def writeEmitted(a: Anchors, file: String, p: Path, k: Int, spec: EmitSpec, v: Verdict): Unit =
     // A non-finite path is refused, not written -- a file whose every row reads NaN is not data.
     // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
     // before calling; here it THROWS, because this is also API and a `System.exit` in a library
     // method takes a test harness down whole rather than failing one test.
-    require(p.price.forall(_.isFinite) && p.sat.forall(_.isFinite) &&
-            p.logHi.forall(_.isFinite) && p.logLo.forall(_.isFinite) &&
-            p.logVolume.forall(_.isFinite) && p.divYield.forall(_.isFinite) &&
-            p.traded.forall(_.isFinite) && p.logOpen.forall(_.isFinite) &&
-            p.names.forall(_.forall(_.isFinite)) &&
-            p.macroPanel.forall(m => (0 to 8).forall(j => m.member(j).forall(_.isFinite))) &&
-            p.macroNullPanel.forall(m => (0 to 8).forall(j => m.member(j).forall(_.isFinite))),
-            s"path $k holds a non-finite value; refusing $file")
-    val dates = sessionDates(p.price.length, startYmd)
-    writeEmitTsv(file, p, dates)
-    writeEmitSidecar(a, file, p, k, w, years, seed, startYmd, dates, gateSt, gatePaths, gateYears,
-                     gateRows, gateReported, gateW, gateLevel)
+    val table = emitTable(p)
+    require(tableIsFinite(table), s"path $k holds a non-finite value; refusing $file")
+    val dates = sessionDates(p.price.length, spec.startYmd)
+    writeEmitTsv(file, table, dates)
+    val head = Vector(
+      """  "header": true,""",
+      """  "path": {""",
+      s"""    "index": $k,""",
+      s"""    "baseSeed": ${spec.seed},""",
+      """    "seedStride": 7919,""",
+      s"""    "pathSeed": ${spec.seed + k.toLong * 7919L},""",
+      calendarLines(spec, dates),
+      "  },")
+    writeEmitSidecar(a, file, SidecarShape("date" +: table.map(_.name), head, p, episodesBlock(p)),
+                     spec.world, v)
+
+  /** The path or chunk block's horizon and calendar lines, shared by both formats. */
+  def calendarLines(spec: EmitSpec, dates: Vector[String]): String =
+    Vector(
+      s"""    "years": ${spec.years},""",
+      s"""    "sessions": ${dates.length},""",
+      s"""    "burnIn": $BurnIn,""",
+      s"""    "sessionsPerYear": $DaysPerYear,""",
+      s"""    "calendar": ${jsonStr(if spec.startYmd.isEmpty then "synthetic-365-252" else "weekday")},""",
+      s"""    "startDate": ${jsonStr(dates.head)},""",
+      s"""    "endDate": ${jsonStr(dates.last)}""").mkString("\n")
 
   /** The basket's optional columns: the aggregate, then one per name. */
   def basketColumns(p: Path): Vector[String] =
@@ -11046,39 +11261,149 @@ object MarketSim:
   def basketAggregate(names: Vector[Array[Double]]): Array[Double] =
     Array.tabulate(names.head.length)(i => math.log(names.map(lp => math.exp(lp(i) - lp(0))).sum / names.size))
 
-  def writeEmitTsv(file: String, p: Path, dates: Vector[String]): Unit =
-    // The optional columns, present only when their channel ran -- a channels-off file is
-    // byte-identical to its predecessor schema's.  LOG columns throughout: see the 7 -> 8 and
-    // 8 -> 9 notes at `EmitSchema`.
-    val header = (EmitColumns
-      ++ (if p.sat.isEmpty then Vector() else Vector("logSat"))
-      ++ (if p.logHi.isEmpty then Vector() else Vector("logHigh", "logLow"))
-      ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
-      ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield"))
-      ++ (if p.logOpen.isEmpty then Vector() else Vector("logOpen"))
-      ++ basketColumns(p) ++ sectorColumns(p)
-      ++ (if p.macroPanel.isEmpty then Vector() else MacroK.Columns)
-      ++ (if p.macroNullPanel.isEmpty then Vector() else MacroK.NullColumns)).mkString("\t")
-    val basketAgg = if p.names.isEmpty then Array.emptyDoubleArray else basketAggregate(p.names)
-    val rows = header +: Vector.tabulate(dates.length) { i =>
-      val base =
-        s"${dates(i)}\t${ef(p.price(i))}\t${ef(p.bond(i))}\t${ef(p.rate(i))}\t${ef(p.cpi(i))}\t" +
-        s"${ef(p.liq(i))}\t${ef(p.bliq(i))}\t${ef(p.fundamental(i))}\t${ef(p.inflPress(i))}"
-      val s1 = if p.sat.isEmpty then base else s"$base\t${ef(math.log(p.sat(i)))}"
-      val s2 = if p.logHi.isEmpty then s1 else s"$s1\t${ef(p.logHi(i))}\t${ef(p.logLo(i))}"
-      val s3 = if p.logVolume.isEmpty then s2 else s"$s2\t${ef(p.logVolume(i))}"
-      val s4 = if p.traded.isEmpty then s3 else s"$s3\t${ef(math.log(p.traded(i)))}\t${ef(p.divYield(i))}"
-      val s5 = if p.logOpen.isEmpty then s4 else s"$s4\t${ef(p.logOpen(i))}"
-      val s6 = (if p.names.isEmpty then s5
-                else s5 + "\t" + ef(basketAgg(i)) + p.names.map(lp => "\t" + ef(lp(i))).mkString) +
-               p.sectors.map(lp => "\t" + ef(lp(i))).mkString
-      def panelCells(m: MacroPanel): String =
-        s"\t${ef(m.spread(i))}\t${ef(m.slope(i))}\t${ef(m.cond(i))}\t" +
-        s"${ef(m.ivol(i))}\t${ef(m.yield10(i))}\t${ef(m.credit(i))}\t" +
-        s"${ef(m.policy(i))}\t${ef(m.bank(i))}\t${ef(m.output(i))}"
-      s6 + p.macroPanel.map(panelCells).getOrElse("") + p.macroNullPanel.map(panelCells).getOrElse("")
-    }
+  /** One emitted column: its name and its sessions. */
+  final case class EmitColumn(name: String, values: Array[Double])
+
+  /** Every numeric column a path emits, in the TSV's order after `date`.  The optional columns are
+    * present only when their channel ran -- a channels-off file is byte-identical to its
+    * predecessor schema's -- and they are LOG columns throughout (the 7 -> 8 and 8 -> 9 notes at
+    * `EmitSchema`).  The one table the TSV, the f32 stream and the sidecar's `columns` read, so no
+    * two of them can disagree. */
+  def emitTable(p: Path): Vector[EmitColumn] =
+    def logged(name: String, v: Array[Double]): EmitColumn = EmitColumn(name, v.map(math.log))
+    val base = Vector(p.price, p.bond, p.rate, p.cpi, p.liq, p.bliq, p.fundamental, p.inflPress)
+    EmitColumns.tail.zip(base).map(EmitColumn(_, _))
+      ++ (if p.sat.isEmpty then Vector() else Vector(logged("logSat", p.sat)))
+      ++ (if p.logHi.isEmpty then Vector() else Vector(EmitColumn("logHigh", p.logHi), EmitColumn("logLow", p.logLo)))
+      ++ (if p.logVolume.isEmpty then Vector() else Vector(EmitColumn("logVolume", p.logVolume)))
+      ++ (if p.traded.isEmpty then Vector()
+          else Vector(logged("logTraded", p.traded), EmitColumn("divYield", p.divYield)))
+      ++ (if p.logOpen.isEmpty then Vector() else Vector(EmitColumn("logOpen", p.logOpen)))
+      ++ (if p.names.isEmpty then Vector()
+          else EmitColumn("logBasket", basketAggregate(p.names)) +:
+               p.names.zipWithIndex.map((lp, q) => EmitColumn(s"logName${q + 1}", lp)))
+      ++ p.sectors.zipWithIndex.map((lp, q) => EmitColumn(s"logSector${q + 1}", lp))
+      ++ p.macroPanel.toVector.flatMap(m => MacroK.Columns.indices.map(j => EmitColumn(MacroK.Columns(j), m.member(j))))
+      ++ p.macroNullPanel.toVector.flatMap(m =>
+           MacroK.NullColumns.indices.map(j => EmitColumn(MacroK.NullColumns(j), m.member(j))))
+
+  def tableIsFinite(table: Vector[EmitColumn]): Boolean = table.forall(_.values.forall(_.isFinite))
+
+  /** Whether `name` is a column some world emits -- the check `-emitcols` makes before anything is
+    * simulated, so a misspelt column is refused rather than read as a channel that did not run. */
+  def emitColumnKnown(name: String): Boolean =
+    val optional = Vector("logSat", "logHigh", "logLow", "logVolume", "logTraded", "divYield", "logOpen",
+                          "logBasket")
+    def indexed(prefix: String): Boolean =
+      val q = name.stripPrefix(prefix)
+      name.startsWith(prefix) && q.nonEmpty && !q.startsWith("0") && q.forall(c => c >= '0' && c <= '9')
+    EmitColumns.tail.contains(name) || optional.contains(name) || MacroK.Columns.contains(name) ||
+      MacroK.NullColumns.contains(name) || indexed("logName") || indexed("logSector")
+
+  def writeEmitTsv(file: String, table: Vector[EmitColumn], dates: Vector[String]): Unit =
+    val header = ("date" +: table.map(_.name)).mkString("\t")
+    val rows = header +: Vector.tabulate(dates.length)(i => dates(i) + table.map(c => "\t" + ef(c.values(i))).mkString)
     file.asPath.writeLines(rows)
+
+  /** The stream's format, little-endian IEEE-754 single precision: the TSV's six decimals are
+    * about a single's precision, so the stream loses nothing the TSV carried. */
+  val F32Format = "f32le"
+
+  /** The columns `want` names, in its order, as indices into a path's table, and the named columns
+    * the table does not carry because their channel did not run.  An empty `want` is every column. */
+  def selectColumns(table: Vector[EmitColumn], want: Vector[String]): (Vector[Int], Vector[String]) =
+    if want.isEmpty then (table.indices.toVector, Vector.empty)
+    else
+      def at(c: String): Int = table.indexWhere(_.name == c)
+      (want.map(at).filter(_ >= 0), want.filter(at(_) < 0))
+
+  /** One path's cells in the stream: each picked column's sessions in order, each cell the value
+    * at single precision with negative zero folded to positive, as `ef` folds it in the TSV. */
+  def f32PathBytes(table: Vector[EmitColumn], picked: Vector[Int]): Array[Byte] =
+    val n = table.headOption.fold(0)(_.values.length)
+    val buf = java.nio.ByteBuffer.allocate(picked.length * n * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    for c <- picked; x <- table(c).values do buf.putFloat(if x == 0.0 then 0.0f else x.toFloat)
+    buf.array()
+
+  /** What streaming a chunk leaves for its sidecar: a path of the chunk, the columns written, the
+    * named columns its world does not carry, and each path's episodes entry. */
+  final case class Streamed(p: Path, names: Vector[String], absent: Vector[String], episodes: Vector[String])
+
+  /** The stream's cells for paths `from until from + count`, simulated a batch at a time at a
+    * channel level computed once, each batch dropped once written. */
+  def streamF32(file: String, spec: EmitSpec, range: (Int, Int), want: Vector[String]): Either[String, Streamed] =
+    val (from, count) = range
+    val out =
+      if count < 1 then Left(s"an -emitf32 chunk of no paths; nothing written to $file")
+      else
+        try Right(java.io.BufferedOutputStream(java.io.FileOutputStream(file)))
+        catch case e: java.io.IOException => Left(s"cannot write $file: ${e.getMessage}")
+    out.flatMap { o =>
+      try
+        val level = worldLevel(spec.world)
+        val batch = math.max(1, 2 * Runtime.getRuntime.availableProcessors)
+        val first = simRangeAt(spec.world, level, from, math.min(batch, count), spec.years, spec.seed)
+        val table = emitTable(first.head)
+        val (picked, absent) = selectColumns(table, want)
+        val episodes = Vector.newBuilder[String]
+        var failed: Option[String] = None
+        var start = from
+        var paths = first
+        while failed.isEmpty && start < from + count do
+          val cells = parMap(paths) { p =>
+            val t = emitTable(p)
+            Option.when(tableIsFinite(t))((f32PathBytes(t, picked), episodeRowsJson(p)))
+          }
+          val bad = cells.indexWhere(_.isEmpty)
+          cells.zipWithIndex.foreach {
+            case (Some((bytes, ep)), j) if bad < 0 || j < bad =>
+              o.write(bytes)
+              episodes += s"""      { "index": ${start + j}, "rows": [\n$ep\n      ] }"""
+            case _ => ()
+          }
+          if bad >= 0 then failed = Some(s"path ${start + bad} holds a non-finite value; nothing written to $file")
+          start += paths.length
+          if failed.isEmpty && start < from + count then
+            paths = simRangeAt(spec.world, level, start, math.min(batch, from + count - start), spec.years, spec.seed)
+        o.flush()
+        failed.toLeft(Streamed(first.head, picked.map(table(_).name), absent, episodes.result()))
+      catch case e: java.io.IOException => Left(s"cannot write $file: ${e.getMessage}")
+      finally o.close()
+    }
+
+  /** THE F32 STREAM (`-emitf32`): paths `from until from + count` as ONE chunk file of `F32Format`,
+    * path-major -- each path's columns in the sidecar's order, each column's sessions in order --
+    * beside one sidecar for the chunk.  A chunk of thousands of paths never sits in memory whole.
+    * `want` selects the columns, all of them when empty.  `Left` names the first path holding a
+    * non-finite value: the partial file is removed and no sidecar written.  `Right` is the columns
+    * written and the sessions a path. */
+  def writeF32Chunk(a: Anchors, file: String, spec: EmitSpec, range: (Int, Int), want: Vector[String],
+                    v: Verdict): Either[String, (Int, Int)] =
+    streamF32(file, spec, range, want) match
+      case Left(m) =>
+        java.nio.file.Files.deleteIfExists(file.asPath)
+        Left(m)
+      case Right(s) =>
+        val dates = sessionDates(s.p.price.length, spec.startYmd)
+        val head = Vector(
+          s"""  "format": ${jsonStr(F32Format)},""",
+          """  "layout": ["path", "column", "session"],""",
+          s"""  "columnsAbsent": ${s.absent.map(jsonStr).mkString("[", ", ", "]")},""",
+          """  "paths": {""",
+          s"""    "first": ${range._1},""",
+          s"""    "count": ${range._2},""",
+          s"""    "baseSeed": ${spec.seed},""",
+          """    "seedStride": 7919,""",
+          calendarLines(spec, dates),
+          "  },")
+        writeEmitSidecar(a, file, SidecarShape(s.names, head, s.p, episodesBlockOf(s.p, "paths", s.episodes.mkString(",\n"))),
+                         spec.world, v)
+        Right((s.names.length, dates.length))
+
+  /** What one sidecar describes besides the run and its verdict: the file's columns, the lines
+    * naming its format and its path or chunk of paths, a path of the file -- whose channels decide
+    * what the gate scope lists -- and the file's episodes block. */
+  final case class SidecarShape(columns: Vector[String], head: Vector[String], p: Path, episodes: String)
 
   /** Member `index` of an exported calibration archive, as ARGUMENTS.
     *
@@ -11335,11 +11660,8 @@ object MarketSim:
       s""""macro": { "macro": ${gateW.macroPanel}, "source": ${source(w.macroPanel > 0 && w.macroNull != 1)} }""",
     ).mkString(", ")
 
-  def writeEmitSidecar(a: Anchors, file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
-                       startYmd: String, dates: Vector[String], gateSt: WorldStats,
-                       gatePaths: Int, gateYears: Int, gateRows: Vector[FidelityRow],
-                       gateReported: Vector[ReportedRow], gateW: World, gateLevel: Path): Unit =
-    val n            = p.price.length
+  def writeEmitSidecar(a: Anchors, file: String, shape: SidecarShape, w: World, v: Verdict): Unit =
+    val (p, gateSt, gateW, gateRows, gateReported) = (shape.p, v.st, v.world, v.rows, v.reported)
     val gateBanded   = bandedOf(gateRows)
     val realismBad   = failedInAt(a, gateSt, gateBanded, GateClass.Realism)
     val mechanismBad = failedInAt(a, gateSt, gateBanded, GateClass.Mechanism)
@@ -11378,36 +11700,14 @@ object MarketSim:
       s"""  "version": ${jsonStr(Version)},""",
       s"""  "schema": $EmitSchema,""",
       s"""  "file": ${jsonStr(file)},""",
-      s"""  "columns": ${strList(EmitColumns
-        ++ (if p.sat.isEmpty then Vector() else Vector("logSat"))
-        ++ (if p.logHi.isEmpty then Vector() else Vector("logHigh", "logLow"))
-        ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
-        ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield"))
-        ++ (if p.logOpen.isEmpty then Vector() else Vector("logOpen"))
-        ++ basketColumns(p) ++ sectorColumns(p)
-        ++ (if p.macroPanel.isEmpty then Vector() else MacroK.Columns)
-        ++ (if p.macroNullPanel.isEmpty then Vector() else MacroK.NullColumns))},""",
-      """  "header": true,""",
-      """  "path": {""",
-      s"""    "index": $k,""",
-      s"""    "baseSeed": $seed,""",
-      """    "seedStride": 7919,""",
-      s"""    "pathSeed": ${seed + k.toLong * 7919L},""",
-      s"""    "years": $years,""",
-      s"""    "sessions": $n,""",
-      s"""    "burnIn": $BurnIn,""",
-      s"""    "sessionsPerYear": $DaysPerYear,""",
-      s"""    "calendar": ${jsonStr(if startYmd.isEmpty then "synthetic-365-252" else "weekday")},""",
-      s"""    "startDate": ${jsonStr(dates.head)},""",
-      s"""    "endDate": ${jsonStr(dates.last)}""",
-      "  },",
+      s"""  "columns": ${strList(shape.columns)},""") ++ shape.head ++ Vector(
       """  "world": {""",
       worldJsonBody(w).mkString(",\n"),
       "  },",
       s"""  "worldDigest": ${jsonStr(worldDigest(w))},""",
       """  "gate": {""",
-      s"""    "ensemblePaths": $gatePaths,""",
-      s"""    "ensembleYears": $gateYears,""",
+      s"""    "ensemblePaths": ${v.paths},""",
+      s"""    "ensembleYears": ${v.years},""",
       // WHICH RULER, and WHICH SERIES.  Without the first, a `-anchors nasdaq` run's verdict is
       // indistinguishable from an S&P one in its own provenance record.  Without the second, a
       // PASS would sit beside emitted columns it never examined, and `logSat` is exactly the
@@ -11419,21 +11719,22 @@ object MarketSim:
       // `fidelityUnanchored` below -- name what was graded, in the artifact that carries the
       // verdict.
       s"""    "anchors": ${jsonStr(a.name)},""",
-      s"""    "gradedSeries": ${strList(Vector("price", "bond")
+      s"""    "gradedSeries": ${strList((Vector("price", "bond")
         ++ (if p.sat.isEmpty then Vector() else Vector("logSat"))
         ++ (if p.logHi.isEmpty then Vector() else Vector("logHigh", "logLow"))
         ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
         ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield"))
         ++ (if p.logOpen.isEmpty then Vector() else Vector("logOpen"))
         ++ basketColumns(p) ++ sectorColumns(p)
-        ++ (if p.macroPanel.exists(!_.sibling) then MacroK.Columns else Vector()))},""",
+        ++ (if p.macroPanel.exists(!_.sibling) then MacroK.Columns else Vector())).filter(shape.columns.contains))},""",
       // The field that says a column reached the file UNGRADED: `logSat` is covered by the
       // `satellite *` rows and the bar columns by the `bar *` rows, and the one case today is a
       // NULL macro panel (`-macronull`), whose four columns are a sibling path's and grade
       // nothing by construction -- said here, in the artifact, rather than in a doc nobody reads
       // beside the data.
-      s"""    "ungradedChannelSeries": ${strList((if p.macroPanel.exists(_.sibling) then MacroK.Columns else Vector.empty)
-        ++ (if p.macroNullPanel.isEmpty then Vector.empty else MacroK.NullColumns))},""",
+      // an f32 chunk may carry a selection; both lists name only what is in the file
+      s"""    "ungradedChannelSeries": ${strList(((if p.macroPanel.exists(_.sibling) then MacroK.Columns else Vector.empty)
+        ++ (if p.macroNullPanel.isEmpty then Vector.empty else MacroK.NullColumns)).filter(shape.columns.contains))},""",
       // Since schema 19 the verdict grades every derived series and the macro panel on every
       // world (`verdictWorld`), so `verdictSeries` lists everything it graded -- read off the
       // verdict's own readings (`gateSt`), which is what its rows were graded from -- and
@@ -11468,8 +11769,8 @@ object MarketSim:
       "  },",
       // the verdict's readings, led by the level ITS channels were sampled at: the level is a
       // function of the primary alone, so it is this file's level wherever this file has one
-      channelReadingsBlock(gateSt, gateLevel),
-      episodesBlock(p),
+      channelReadingsBlock(gateSt, v.level),
+      shape.episodes,
       """  "fidelity": [""",
       fidelity.mkString(",\n"),
       "  ],",
@@ -11578,26 +11879,54 @@ object MarketSim:
   /** THE EVENT LABELS block of the sidecar (schema 21): the path's 20%+ declines with their joint
     * shape, on `logTraded` when the file carries it and on the log of `price` otherwise.  Row
     * indices are the TSV's; the Rust twin's `episodes_block` carries the fields' meanings. */
-  def episodesBlock(p: Path): String =
-    val (series, lp) =
-      if p.traded.isEmpty then ("price", p.price.map(lnDet))
-      else ("logTraded", p.traded.map(lnDet))
+  def episodesBlock(p: Path): String = episodesBlockOf(p, "rows", episodeRowsJson(p))
+
+  /** The series a path's episodes are read on: the traded close where the world pays dividends. */
+  def episodeSeries(p: Path): (String, Array[Double]) =
+    if p.traded.isEmpty then ("price", p.price.map(lnDet)) else ("logTraded", p.traded.map(lnDet))
+
+  /** One path's episode rows, one JSON object a line. */
+  def episodeRowsJson(p: Path): String =
+    val (_, lp) = episodeSeries(p)
     val spread = p.macroPanel.filter(!_.sibling).map(_.spread)
     def optInt(x: Option[Int]): String = x.fold("null")(_.toString)
     def optF(x: Option[Double]): String = x.fold("null")(ef)
-    val rows = episodeRows(lp, p.rate, spread).map { e =>
+    episodeRows(lp, p.rate, spread).map { e =>
       s"""      { "peak": ${e.peak}, "trough": ${e.trough}, "regain": ${optInt(e.regain)}, "sessionsToTrough": ${e.trough - e.peak}, """ +
       s""""sessionsToRegain": ${optInt(e.regain.map(_ - e.trough))}, "runUp3y": ${optF(e.runUp3y)}, "depth": ${ef(e.depth)}, """ +
       s""""volPeakOverMedian": ${if e.volPeakOverMedian.isNaN || e.volPeakOverMedian.isInfinite then "null" else ef(e.volPeakOverMedian)}, """ +
       s""""worstSession": ${ef(e.worstSession)}, "worst20": ${ef(e.worst20)}, "rateChange": ${ef(e.rateChange)}, "spreadRise": ${optF(e.spreadRise)} }"""
-    }
+    }.mkString(",\n")
+
+  /** The sidecar's episodes block: `body` under `key`, one path's rows (`rows`) or a chunk's paths,
+    * each with its index and rows (`paths`). */
+  def episodesBlockOf(p: Path, key: String, body: String): String =
     s"""  "episodes": {
-    "series": ${jsonStr(series)},
+    "series": ${jsonStr(episodeSeries(p)._1)},
     "rule": "declines of 20%+ from the trailing-252-session high, each to the first regain of its peak; the next may start at the next such high after the trough",
-    "rows": [
-${rows.mkString(",\n")}
+    ${jsonStr(key)}: [
+$body
     ]
   },"""
+
+  /** The f32 stream's flags, refused before anything is simulated where they cannot mean what they
+    * say. */
+  def checkStreamFlags(emit: String, emitF32: String, cols: Vector[String], emitGate: Int, validate: Boolean): Unit =
+    if emit.nonEmpty && emitF32.nonEmpty then usage("-emit and -emitf32 each name the output file; give one")
+    if cols.nonEmpty && emitF32.isEmpty then
+      usage("-emitcols selects the -emitf32 stream's columns; the TSV carries every column")
+    if emitF32.nonEmpty then
+      // the verdict of an -emitf32 run is the world's, the same whatever the chunk
+      if emitGate == 0 then
+        usage("-emitgate 0 grades the emitted paths themselves, and an -emitf32 chunk is never held whole; " +
+              "give the gate ensemble a size")
+      if validate then
+        usage("-validate grades the report, which an -emitf32 run does not print; the chunk's sidecar carries the verdict")
+      cols.zipWithIndex.foreach { (c, i) =>
+        if !emitColumnKnown(c) then
+          usage(s"-emitcols: no world emits a column [$c]; the columns are the TSV's, less `date`")
+        if cols.take(i).contains(c) then usage(s"-emitcols names [$c] twice")
+      }
 
   // ---- entry point ---------------------------------------------------------------------------
   def main(args: Array[String]): Unit =
@@ -11613,6 +11942,7 @@ ${rows.mkString(",\n")}
     var digestOnly = false
     var emitPath = 0; var emitAll = false; var emitStart = ""; var emitGate = DefaultEmitGate
     var emitFrom = 0
+    var emitF32 = ""; var emitCols = Vector.empty[String]
     var gateReq = GateDefault
     var fitnessOnly = false; var calibrateN = 0
     var powerReport = false; var bufferReport = false; var releaseReport = false
@@ -11841,6 +12171,8 @@ ${rows.mkString(",\n")}
       case "-emitfrom"   => emitFrom = intOr("-emitfrom", consumeNext)
       case "-emitstart"  => emitStart = consumeNext
       case "-emitgate"   => emitGate = intOr("-emitgate", consumeNext)
+      case "-emitf32"    => emitF32 = consumeNext
+      case "-emitcols"   => emitCols = consumeNext.split(",", -1).map(_.trim).toVector
       case "-gate"       => gateReq = parseGate(consumeNext)
       case "-validate"   => validate = true
       case "-fitness"    => fitnessOnly = true
@@ -12015,6 +12347,7 @@ ${rows.mkString(",\n")}
     // Refused rather than ignored: silently writing 0..paths-1 under a flag that asked for a
     // different range is how a chunked batch ends up with every chunk holding path 0.
     if emitFrom > 0 && !emitAll then usage("-emitfrom applies to -emitall; use -emitpath for one path")
+    checkStreamFlags(emit, emitF32, emitCols, emitGate, validate)
     // A bad index here is the one place the rule list has to be discoverable: the report names
     // the rules but not their numbers, and the numbers are what the flag takes.
     if powerArms.exists(i => i < 1 || i > Rules.size) then
@@ -12329,6 +12662,21 @@ ${rows.mkString(",\n")}
       runBufferReport(anchors, paths, years, seed, cost, single, w, gateReq)
       return
 
+    if emitF32.nonEmpty then
+      // The world's verdict at the calibration horizon, whatever the chunk: a chunk never enlarges
+      // or replaces the gate ensemble, so every chunk of a bundle carries the same one.
+      val verdict = verdictOf(anchors, w, (emitGate, GateYears), seed, None)
+      warnVerdict(anchors, verdict)
+      val range = if emitAll then (emitFrom, paths) else (emitPath, 1)
+      writeF32Chunk(anchors, emitF32, EmitSpec(w, years, seed, emitStart), range, emitCols, verdict) match
+        case Right((cols, sessions)) =>
+          eprintln(s"wrote ${range._2} path(s), $cols columns x $sessions sessions as $F32Format, to $emitF32 " +
+                   s"(+ sidecar ${sidecarName(emitF32)})")
+        case Left(m) =>
+          eprintln(s"REFUSED: $m")
+          System.exit(2)
+      return
+
     eprintln(s"simulating $paths paths x $years years")
     val sims = simPaths(w, paths, years, seed)
     val st = measure(sims, years)
@@ -12344,28 +12692,13 @@ ${rows.mkString(",\n")}
     // THE VERDICT WORLD: every derived series and the macro panel graded, at the anchor set's
     // dials where the caller left them off (`verdictWorld`); its own ensemble whenever it is not
     // the report's world, since the report and the emitted paths stay the caller's
-    val vw = verdictWorld(anchors, w)
-    val ownVerdict = (verdictPaths, verdictYears) == (paths, years) && vw == w
-    // the verdict's own ensemble, which its shorter record horizons are cut from
-    val verdictMain = if ownVerdict then sims else simPaths(vw, verdictPaths, verdictYears, seed)
-    val verdictSt = if ownVerdict then st else measure(verdictMain, verdictYears)
-    val verdictRows = fidelityRows(anchors, verdictSt, Some(verdictMain), verdictYears, verdictPaths, seed, w)
-    val verdictBanded = bandedOf(verdictRows)
-    val verdictReported = reportedRecordRows(anchors, Some(verdictMain), verdictYears, verdictPaths, seed, w)
+    val verdict = verdictOf(anchors, w, (verdictPaths, verdictYears), seed, Some((sims, st, (paths, years))))
+    val verdictSt = verdict.st
+    val verdictBanded = bandedOf(verdict.rows)
 
     if emit.nonEmpty then
-      val realismBad   = failedInAt(anchors, verdictSt, verdictBanded, GateClass.Realism)
-      val mechanismBad = failedInAt(anchors, verdictSt, verdictBanded, GateClass.Mechanism)
-      val fidelityBad  = failedInAt(anchors, verdictSt, verdictBanded, GateClass.Fidelity)
-      if realismBad.nonEmpty then
-        eprintln("WARNING: this world FAILS the realism bands " + realismBad.mkString("[", ", ", "]") +
-                 " — the emitted path is not market-like")
-      if mechanismBad.nonEmpty then
-        eprintln("NOTE: mechanisms inert in this world " + mechanismBad.mkString("[", ", ", "]") +
-                 " — conclusions that lean on them are not supported here")
-      if fidelityBad.nonEmpty then
-        eprintln("NOTE: levels not readable in this world " + fidelityBad.mkString("[", ", ", "]") +
-                 " — rank comparisons survive, anything reading a level off these does not")
+      warnVerdict(anchors, verdict)
+      val spec = EmitSpec(w, years, seed, emitStart)
       // path k is a function of (world, years, seed, k) alone, so an index past the report
       // ensemble is simulated directly rather than forcing a larger run
       def pathAt(k: Int): Path =
@@ -12389,20 +12722,16 @@ ${rows.mkString(",\n")}
           for k <- emitFrom until emitFrom + paths yield
             val f = indexedName(emit, k, width)
             refuseNonFinite(batch(k - emitFrom), k, f)
-            writeEmitted(anchors, f, batch(k - emitFrom), k, w, years, seed, emitStart, verdictSt,
-                         verdictPaths, verdictYears, verdictRows, verdictReported, vw, verdictMain.head)
+            writeEmitted(anchors, f, batch(k - emitFrom), k, spec, verdict)
             f
         else
           val p = pathAt(emitPath)
           refuseNonFinite(p, emitPath, emit)
-          writeEmitted(anchors, emit, p, emitPath, w, years, seed, emitStart, verdictSt,
-                       verdictPaths, verdictYears, verdictRows, verdictReported, vw, verdictMain.head)
+          writeEmitted(anchors, emit, p, emitPath, spec, verdict)
           Vector(emit)
-      val sessions = pathAt(if emitAll then emitFrom else emitPath).price.length
-      eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size + (if w.satBeta > 0.0 then 1 else 0)
-        + (if w.rangeScale > 0.0 then 2 else 0) + (if w.volIdio > 0.0 then 1 else 0)
-        + (if w.divYield > 0.0 then 2 else 0) + (if w.overnight > 0.0 then 1 else 0)
-        + (if w.basket > 0 then w.basket + 1 else 0)} columns x $sessions sessions, " +
+      val first = pathAt(if emitAll then emitFrom else emitPath)
+      val sessions = first.price.length
+      eprintln(s"wrote ${written.size} path(s), ${1 + emitTable(first).size} columns x $sessions sessions, " +
                s"to ${written.head}${if written.size > 1 then s" .. ${written.last}" else ""} " +
                s"(+ sidecar ${sidecarName(written.head)})")
 
@@ -12558,15 +12887,15 @@ ${rows.mkString(",\n")}
     println("    NOTE: a multi-year row is judged by where the record falls among the world's single")
     println("      histories of the record's length: a MISS is a record outside their joint band")
     println("      (`within`), which a record-like world clears on every such row 90% of the time.")
-    verdictRows.foreach { r =>
+    verdict.rows.foreach { r =>
       val flag = if r.miss then "  <-- MISS" else ""
       println(f"     ${r.name}%-22s model ${r.model}%8.2f   real ${r.real}%8.2f   ${fidelityJudgement(r)}%s$flag%s")
     }
     reportedRows(anchors, verdictSt).foreach: (name, model, record) =>
       println(f"     $name%-22s model $model%8.2f   real $record%8.2f   reported, not graded")
-    if verdictReported.nonEmpty then
+    if verdict.reported.nonEmpty then
       println("    REPORTED RECORDS, never graded: the same rows read off windows the set does not grade on")
-      verdictReported.foreach { r =>
+      verdict.reported.foreach { r =>
         val flag = if r.row.miss then "  outside" else ""
         println(f"     ${r.row.name}%-22s model ${r.row.model}%8.2f   real ${r.row.real}%8.2f   ${fidelityJudgement(r.row)}%s$flag%s   ${r.window}%s")
       }

@@ -16,7 +16,8 @@ class RecordBandSuite extends FunSuite:
   /** the record-band fixture's rows, then the conditional rate rows' (`rateafter-2026-09-30.tsv`,
     * the same columns) without their header */
   private lazy val lines: Vector[String] =
-    fixtureLines("recordbands-2026-09-26.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1)
+    fixtureLines("recordbands-2026-09-26.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
+      fixtureLines("volexit-2026-10-03.tsv").drop(1)
 
   private def row(set: String, name: String): Vector[Double] =
     lines.map(_.split('\t').toVector).find(r => r(0) == set && r(1) == name)
@@ -51,8 +52,9 @@ class RecordBandSuite extends FunSuite:
     assertEquals(header.drop(30), Vector("jointC", "jointLo", "jointHi"), "and the joint band")
     for (set, a) <- sets do
       assertEquals(a.recordBands.map(_.name),
-        MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows ++ MarketSim.RateAfterRows,
-        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows")
+        MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows ++ MarketSim.RateAfterRows ++
+          MarketSim.VolExitRows,
+        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows")
       for b <- a.recordBands do
         val r = row(set, b.name)
         assertEquals(b.record, r.head, s"$set ${b.name}: record")
@@ -465,6 +467,20 @@ class RecordBandSuite extends FunSuite:
       assertEqualsDouble(term(hi + sd), MarketSim.SdRelRef, 1e-12, "one sd past")
       assertEqualsDouble(term(lo - 2.0 * sd), 2.0 * MarketSim.SdRelRef, 1e-12, "two sd short")
       assertEqualsDouble(term(Double.NaN), 4.0 * MarketSim.SdRelRef, 1e-12, "unmeasurable")
+  }
+
+  // THE VOLATILITY EXIT reads hand series as stated: a calm index is held throughout, so both rows
+  // read zero; an index always past 2% volatility is in cash from the first session a decision
+  // earns, so the timing row is buy-and-hold's growth with its sign turned.
+  test("the volatility exit reads hand series as stated") {
+    def day(r: Double) = MarketSim.VolExitDay(r, r, 0.0, 1.0)
+    val calm = Vector.tabulate(600)(i => day(if i % 2 == 0 then 0.002 else -0.001))
+    assertEquals(MarketSim.volExitOf(calm), Vector(0.0, 0.0))
+    val wild = Vector.tabulate(600)(i => day(if i % 2 == 0 then 0.03 else -0.031))
+    val timing = MarketSim.volExitOf(wild)(0)
+    assert(timing > 0.0, "cash beats an index that loses in its swings")
+    val start = MarketSim.VolExitWindow + 1
+    assert(MarketSim.volExitOf(wild.take(start + MarketSim.DaysPerYear - 1))(0).isNaN)
   }
 
   // `monthEnds` reads the synthetic calendar's month ends in integer arithmetic; they are the month

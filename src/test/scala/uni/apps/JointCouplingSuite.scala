@@ -13,7 +13,7 @@ import uni.*
  */
 class JointCouplingSuite extends FunSuite:
 
-  val Coupling = "test-data/equity-anchors/joint-coupling-2026-08-31.tsv"
+  val Coupling = "test-data/equity-anchors/joint-coupling-2026-10-03.tsv"
 
   /** Empty where the fixture is absent, which is a skip and not a failure: the artifact ships
     * without `test-data/`, so a source-tarball build must not fail here. */
@@ -64,6 +64,40 @@ class JointCouplingSuite extends FunSuite:
   def med4(x: Vector[Double]): Double =
     val s = x.sorted
     (s(1) + s(2)) / 2.0
+
+  test("the satellite depth bands are the window and its blocks at the record's drift") {
+    val a = rows(Coupling)
+    assume(a.nonEmpty, s"$Coupling absent")
+    def at(stat: String): Double =
+      a.find(r => r(0) == "w1999" && r(1) == stat).getOrElse(fail(s"fixture row [w1999 $stat] missing"))(2).toDouble
+    assertEquals((at("refDriftPrimary"), at("refDriftSat")), MarketSim.SatRefDrift)
+    val w = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77)
+    val st = MarketSim.measure(MarketSim.simPaths(w, 2, 10, MarketSim.DefaultSeed), 10)
+    val names = MarketSim.gateChecks(MarketSim.SP500Anchors, st).map(_._1)
+    for (stat, row) <- Vector(("d5Ratio", "satellite d5 ratio"), ("d10Ratio", "satellite d10 ratio")) do
+      val xs = a.filter(r => r(1) == stat && (r(0) == "w1999" || r(0).startsWith("b"))).map(_(2).toDouble)
+      assertEquals(xs.size, 6, "the window and its five blocks")
+      val want = f"$row%s ${math.floor(xs.min * 10.0) / 10.0}%.2f-${math.ceil(xs.max * 10.0) / 10.0}%.2f"
+      assert(names.contains(want), s"no gate row [$want]")
+  }
+
+  test("redrifting carries the reference drift and takes the world's out") {
+    val p = MarketSim.simulate(MarketSim.Defaults, 20, MarketSim.DefaultSeed)
+    val r = MarketSim.redrifted(p.price, MarketSim.SatRefDrift._1)
+    val got = (math.log(r.last) - math.log(r.head)) / (r.length - 1) * MarketSim.DaysPerYear
+    assertEqualsDouble(got, MarketSim.SatRefDrift._1, 1e-9)
+    def median(v: Vector[Double]): Double =
+      val s = v.sorted
+      if s.size % 2 == 1 then s(s.size / 2) else (s(s.size / 2 - 1) + s(s.size / 2)) / 2.0
+    def at(drift: Double): (Double, Double) =
+      val w = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, drift = drift)
+      val sims = MarketSim.simPaths(w, 8, 100, MarketSim.DefaultSeed)
+      val raw = median(sims.map(s => MarketSim.depthShares(s.sat)._1 / MarketSim.depthShares(s.price)._1))
+      (MarketSim.satStats(sims).get.d5Ratio, raw)
+    val (lo, hi) = (at(0.11), at(0.165))
+    assert(math.abs(hi._2 - lo._2) > 2.0 * math.abs(hi._1 - lo._1),
+      f"the raw d5 ratio moves with drift (${lo._2}%.3f -> ${hi._2}%.3f) far more than the re-drifted one (${lo._1}%.3f -> ${hi._1}%.3f)")
+  }
 
   test("the satellite leg discriminates and sits on its coupling anchors") {
     val a = rows(Coupling)

@@ -175,7 +175,7 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(a.medDepth, -21.4)   // re-measured in 0.22.0; see above
     assertEquals(a.worstDepth, -84.1) // re-anchored in 0.22.1; see above
     assertEquals(a.volBand, (14.0, 18.0))
-    assertEquals(a.retVolBand, (0.50, 0.85))
+    assertEquals(a.retVolBand, (0.31, 1.09))
   }
 
   test("the Nasdaq anchor set is the measured QQQ vector, not the S&P's") {

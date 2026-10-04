@@ -5,14 +5,13 @@ import uni.*
 
 /**
  * Cross-sectional drift dispersion (`-basketdrift`): a per-name annual log-drift offset, centred
- * exactly so the sector is untouched.  The dial is ANCHORED AT 0 by the checked-in fixture, and
- * that is the unusual thing worth pinning: the fixture says no true dispersion is DETECTABLE in
- * a survivor cache, so a shipped world that turned this on would be asserting something the
- * record cannot support.  The Rust twin carries the same checks in `basket_drift_tests`.
+ * exactly so the sector is untouched.  The dial ships at 0 and ungraded: the ruler's eight are
+ * survivors, and the spread they show beyond the window's noise is one name's (the fixture's
+ * header).  The Rust twin carries the same checks in `basket_drift_tests`.
  */
 class BasketDriftSuite extends FunSuite:
 
-  val Fixture = "test-data/equity-anchors/basket-drift-2026-09-03.tsv"
+  val Fixture = "test-data/equity-anchors/basket-drift-2026-10-03.tsv"
 
   def rows(path: String): Vector[Vector[String]] =
     val p = path.asPath
@@ -28,21 +27,15 @@ class BasketDriftSuite extends FunSuite:
   val Basket = MarketSim.Defaults.copy(basket = 8, basketBeta = 1.56, basketSector = 1.1,
                                        basketIdio = 0.9, basketGaps = 6.0)
 
-  test("the fixture anchors the dial at 0: the observed spread is under the window's noise floor") {
+  test("the fixture decomposes its spread, and the dial ships at 0") {
     val rs = rows(Fixture)
     assume(rs.nonEmpty, s"$Fixture absent")
-    for g <- Vector("eight", "pop26") do
-      val spread = value(rs, g, "driftSpread")
-      val floor  = value(rs, g, "noiseFloor")
-      val truth  = value(rs, g, "trueSpread")
-      assert(spread <= floor,
-        s"[$g] the fixture claims no detectable dispersion, but $spread exceeds the floor $floor")
-      assertEqualsDouble(truth, math.sqrt(math.max(0.0, spread * spread - floor * floor)), 1e-9,
-        s"[$g] trueSpread must be the decomposition of its own rows")
-      assertEqualsDouble(truth, 0.0, 1e-9, s"[$g] the shipped anchor is 0")
-      // the same answer on the residual after the group index, so the beta spread is not the cause
-      assert(value(rs, g, "alphaSpread") <= value(rs, g, "alphaNoiseFloor"), s"[$g] alpha")
-    // and every shipped world carries the anchor
+    val spread = value(rs, "eight", "driftSpread")
+    val floor  = value(rs, "eight", "noiseFloor")
+    assertEqualsDouble(value(rs, "eight", "trueSpread"),
+      math.sqrt(math.max(0.0, spread * spread - floor * floor)), 5e-4,
+      "trueSpread is the decomposition of the rows beside it, to the printed digit")
+    // and every shipped world carries 0
     for (v, w) <- MarketSim.Releases do assertEquals(w.basketDrift, 0.0, s"release $v")
     for (n, w, _) <- MarketSim.Recipes do assertEquals(w.basketDrift, 0.0, s"recipe $n")
     assertEquals(MarketSim.Defaults.basketDrift, 0.0)

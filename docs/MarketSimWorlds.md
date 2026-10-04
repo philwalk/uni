@@ -44,7 +44,7 @@ Two checks, with different jobs and different lifetimes. Use both.
 exit 0. Nothing to parse, so a caller can assert on it without depending on any other output:
 
 ```
-[ "$(market_sim.exe -version)" = "0.24.5" ] || { echo "wrong simulator" >&2; exit 1; }
+[ "$(market_sim.exe -version)" = "0.24.6" ] || { echo "wrong simulator" >&2; exit 1; }
 ```
 
 This catches the wrong binary, and it is the only check available *before* you spend the run. It
@@ -207,8 +207,8 @@ place, so a failed reinstall silently leaves the previous one there. Install to 
 invoke the absolute path, so the path itself carries the assertion:
 
 ```
-cargo install vastblue-uni@0.24.5 --root ~/.local/uni-0.24.5
-~/.local/uni-0.24.5/bin/market_sim.exe -version
+cargo install vastblue-uni@0.24.6 --root ~/.local/uni-0.24.6
+~/.local/uni-0.24.6/bin/market_sim.exe -version
 ```
 
 Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
@@ -296,25 +296,41 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
 was searched under it. **The 0.24.6 sets** are the two to draw from now: `0.24.6-nasdaq.json` and
-`0.24.6-sp500.json`, 30 members each, member 0 the recipe itself, return per vol held at the record
-(the 0.24.5 sets, which ran low on it, stay as published). Their membership test is the verdict's own read on four
-fresh seeds at 200 paths × 100 years with every derived series and the macro panel graded: every
-class passes on all four, and no row misses on three or more of them unless the recipe misses it too,
-where 9 of the 150 members of `0.24.2-sp500.json` pass every class on all four under the same verdict
-(it predates the channels' grading; keep it for its worlds, not as a set). As a set, every graded
-row's median member distance from the record (percentile points from 50, or the log ratio) is no
-further than the outgoing set's beyond 5 points or 0.02. The members were searched at that same read,
-200 × 100 with every class gated: a search at fewer paths or under 100 years, or gating realism and
-mechanism alone, admits mostly members the test rejects (under 100 years the 250-session rung grades
-another era, and return per vol, a fidelity gate, sat under its floor on most Nasdaq candidates). The
-set-level reading is each row's median over members and seeds, its range across reads, beside the
-record: on the S&P set return per vol 0.68 (0.60-0.76; 0.69), the avoided share 53.0% (47.2-61.2;
-64.7), kurtosis 26.3 (21.8), equity vol 16.8% (15.7%), the median decline 0.73 years (0.66), the
-3-year variance ratio 1.24 (0.75), the wings 6.7 / 8.2 (7.6 / 6.7), the floor share 10.9% (14.6%),
-leverage corr -0.07, 0.42 misses a read; on the Nasdaq set return per vol 0.37 (0.27-0.44; 0.38), the
-avoided share 41.1% (27.8-46.6; the splice's 59.8), kurtosis 9.8 (9.6), equity vol 24.1% (26.9%), the
-bubble coupling +0.15 (+1.10, missed on two reads in three), the wings 6.5 / 7.2 (7.6 / 6.7), the
-floor share 28% (37%), 0.95 misses a read. To run one:
+`0.24.6-sp500.json`, 30 members each, member 0 the recipe itself (the 0.24.5 sets, which ran low on
+return per vol, stay as published). The members sample the long-run drift's uncertainty given the
+record: one history pins the drift only to its own sampling width, and a set whose members shared
+one drift would tell a consumer the long-run return is known exactly. The 30 members fill the 30
+equal-probability strata of the drift's posterior, one each -- a flat prior conditioned on the
+record's return per vol and on every other graded row, through the share of judged worlds at each
+drift that pass them. Member 0, the recipe, fills the stratum holding the record; members 1-29 fill
+the rest in increasing order of return per vol, each its source world with only the drift moved.
+Their return per vol runs 0.14-0.65 on the Nasdaq (QQQ 0.38) and 0.51-0.85 on the S&P (CRSP
+1954-2026 0.69). The S&P's low side is a lower bound: at return per vol 0.53, worlds bred there pass
+the membership test 11 times in 22, against 22% of the pool's members moved there, so the posterior
+weights that side too lightly. The return-per-vol gate is the record's own joint band (Nasdaq -0.18-0.97, S&P
+0.31-1.09), so it refuses only what the record rules out. A member's `score`, `worstRow` and
+`seededFrom` are its source world's search readings, at that world's drift. The membership test is
+the verdict's own read on four fresh seeds at 200 paths × 100 years with every derived series and
+the macro panel graded: every class passes on all four, and no row misses on three or more of them
+unless the recipe misses it too, where 9 of the 150 members of `0.24.2-sp500.json` pass every class
+on all four under the same verdict (it predates the channels' grading; keep it for its worlds, not
+as a set). As a set, on every graded row the recipe does not miss, the record's position in the
+set's pooled predictive (the mean over members of the record's percentile less 50, or of the log
+ratio) is no further from the middle than the outgoing set's beyond 5 points or 0.02, and the
+spread of member positions left after removing the drift's linear effect is at most 1.45 times the
+outgoing set's, plus the same tolerance. A median member's distance cannot test a sampled dial: it
+rewards members bunched at the record, and it passed a set whose members all leaned one way. The
+members' source worlds were searched at that same read, 200 × 100 with every class gated: a search
+at fewer paths or under 100 years, or gating realism and mechanism alone, admits mostly members the
+test rejects (under 100 years the 250-session rung grades another era). The set-level reading is
+each row's median over members and seeds, its range across reads, beside the record: on the S&P set
+return per vol 0.68 (0.50-0.86; 0.69), the avoided share 53.5% (48.4-60.7; 64.7), kurtosis 24.5
+(21.8), equity vol 16.7% (15.7%), the median decline 0.76 years (0.66), the 3-year variance ratio
+1.22 (0.75), the wings 7.0 / 8.0 (7.6 / 6.7), the floor share 10.3% (14.6%), leverage corr -0.07,
+0.28 misses a read; on the Nasdaq set return per vol 0.39 (0.13-0.65; 0.38), the avoided share
+39.6% (27.8-51.8; the splice's 59.8), kurtosis 9.9 (9.6), equity vol 24.1% (26.9%), the bubble
+coupling +0.14 (+1.10, missed on three reads in five), the wings 6.5 / 7.2 (7.6 / 6.7), the floor
+share 29% (37%), 0.84 misses a read. To run one:
 
 ```
 market_sim.exe -worldset test-data/worlds/0.24.6-nasdaq.json -worldindex 3 -anchors nasdaq -paths 200 -years 40 -emitall -emit m3.tsv
@@ -369,6 +385,40 @@ own sample to be the judge and therefore gives each chunk its own, smaller, nois
 measured at the caller's `-years` rather than the calibration horizon. And the
 padding follows the highest index of that invocation, so chunks either side of 1000 differ in width:
 sort numerically, or emit the batch in one invocation.
+
+### Streaming thousands of paths
+
+`-emitf32 F` writes the paths `-emit` would write as ONE binary file plus one sidecar `F.json` for
+the chunk. Cells are little-endian IEEE-754 f32, path-major: path, then column, then session, so
+column c of the chunk's j-th path starts at byte `(j × columns + c) × sessions × 4`. `-emitall`,
+`-emitfrom` and `-paths` pick the paths as they do for `-emit`. Paths are simulated and written a
+batch at a time, so a chunk of thousands never sits in memory, and a path's bytes do not depend on
+the chunk that holds it.
+
+```
+market_sim.exe -atrelease 0.24.6-nasdaq-basket -anchors nasdaq -macronull 2 -years 56   -emitall -emitfrom 0 -paths 200 -emitf32 chunk-0000.f32   -emitcols price,logTraded,bond,rate,liq,logSat,logOpen,logHigh,logLow,logVolume,logName1,...
+```
+
+`-emitcols` lists the columns in the order to write them; the default is every column the TSV
+carries except `date`. A named column whose channel did not run in this world is listed under
+`columnsAbsent` and not written; a name no world emits is refused. The `nullMacro*` columns need
+`-macronull 2`.
+
+The chunk's sidecar is the TSV's with `format` (`"f32le"`), `layout` (`["path", "column",
+"session"]`), `columnsAbsent` and a `paths` block (`first`, `count`, `baseSeed`, `seedStride` and
+the calendar) in place of `header` and `path`; path k's seed is `baseSeed + k × seedStride`, and
+its dates follow from `calendar` and `startDate`. `episodes.paths` holds each path's index and
+rows. `gate.gradedSeries` and `gate.ungradedChannelSeries` list only columns in the file.
+
+The verdict is the `-emitgate` ensemble's at the calibration horizon, whatever the chunk, so every
+chunk of a bundle carries the same `gate`, `channels`, `fidelity` and `reportedRows`. No report is
+printed; `-validate` and `-emitgate 0` are refused.
+
+Values are the TSV's at single precision (the TSV's six decimals are about f32's precision), with
+negative zero written as positive. The Scala twin's chunk matches the Rust one except about one
+cell in three million, which differs by one f32 ulp: the twins' doubles differ in their last bits.
+200 paths of 56 years in 36 columns make a 406 MB chunk, written in 1.7 s on 24 cores with the
+verdict.
 
 ## When the choice matters, and when it does not
 
@@ -584,7 +634,8 @@ The first passed at 0.000% in a world where the second read 10.9%.
 
 `-satbeta`/`-satidio` are anchored on the *coupling* — correlation, beta, volatility ratio, and
 the state-flatness that makes them hold in stress. Those four rows are graded against
-`joint-coupling-2026-08-31.tsv`. **Its marginals are graded too — as RATIOS to the primary leg**,
+`joint-coupling-2026-10-03.tsv`, measured from Yahoo's public SPY and QQQ adjusted closes over
+1999–2026. **Its marginals are graded too — as RATIOS to the primary leg**,
 not as levels: kurtosis, both clustering lags, the 5% and 10% depth shares, and the crash rate,
 each against what QQQ holds to SPY over their shared window. That is the same doctrine the depth
 rungs use when they grade each world at its own volatility, and it is the honest one here, because
@@ -592,6 +643,18 @@ the satellite is a second leg at *this* world's scale and is not claimed to be a
 against QQQ's absolute levels it would miss on kurtosis in both directions, which is why the level
 comparison is the wrong question to ask of it. Use the satellite when you need a *second correlated
 equity leg*; use the `-anchors nasdaq` recipe when you need a world graded against Nasdaq levels.
+
+**The depth rows read both legs at the record's drift.** The 5% and 10% depth shares and the crash
+rate depend on drift as well as on the coupling: read raw, the d5 ratio rises 0.035 for every 0.01
+of the world's drift, so a band drawn from one 27-year window would cap the world's long-run drift
+with that window's. These rows therefore replace each leg's own realized drift with SPY's and QQQ's
+over the window (8.24% and 10.26% a year) before reading them; the d5 ratio then moves 0.007 per
+0.01 of drift and still answers to the coupling (satellite beta 1.0 → 1.4 moves it 1.34 → 1.42).
+Their bands are the window and its five 5-year blocks, read the same way, rounded outward: d5
+1.0–1.7, d10 1.1–2.2. Taking the drift out entirely is not the alternative it looks like — a
+driftless century-long leg sits more than 5% below its peak almost always, so both ratios pin near 1
+whatever the coupling. Re-drifting sets aside the relative drift between the legs, which the
+`satellite rel-trend` rows grade.
 
 One row carries a stated tension rather than a clean pass: the model's leg opens about 1.6 crash
 episodes per primary episode against the record's 1.17. One history cannot resolve that ratio —
@@ -984,6 +1047,25 @@ is the 1999-2002 window's (the NDX price index from 1990 reads −2.1). The verd
 against the record's band; the loss grades it at judgment 3.0 on the Nasdaq set, the row the consumer's
 production gap turns on, and at 0 on the S&P set.
 
+**The volatility exit** — `vol-exit timing pts/yr` and `vol-exit 3x interaction pts/yr` — reads the
+consumer's simple exit at the absolute thresholds it trades, written down completely: the sample sd
+of the last 24 daily simple returns of the printed close; hold below 1.5%, cash at or above 2.0%,
+keep the position between, start holding; decided at a close, filled at the next, earning from
+there; cash at the short rate over 252; the 3x leg reset daily at three times the total return, less
+twice the rate plus 0.60% over the session's calendar days over 360, less a 0.86% expense ratio over
+252. The timing row is the rule at 1x less buy-and-hold, points a year of log growth; the
+interaction row is the rule on the 3x leg less the leg held, less the timing row. A world reads its
+printed close (`logTraded`), its total-return price, its own rate and the synthetic calendar's days.
+QQQ 1999-2026 reads +4.1 and +23.2, against bands of −2.7 to +13.0 and +2.2 to +50.4 (the two rows'
+own joint band at 0.05, `volexit-2026-10-03.tsv`); CRSP 1954-2026, which has no printed close and
+reads its total return for both, −0.5 and +1.1 (−1.7 to +1.1, −1.8 to +5.7). The verdict judges both
+rows against those bands; the loss weighs them 0. On seeds 1-4 at 200 × 100 `0.24.6-nasdaq` reads
++0.1 to +0.7 and +9 to +11, the 11th-18th percentile of QQQ's resamples, and `0.24.6-sp500` −1.1 and
++0.1 to +0.4, the 14th-16th and 33rd-39th; every member of both 0.24.6 sets reads inside on every
+seed. QQQ's record sits inside the 5th-95th of the Nasdaq worlds' 27-year histories on both rows,
+whose 95th reads about +6.0 and +29 to +34; its window is the one the consumer's rule was selected
+on (see [Each set on its own record](#each-set-on-its-own-record)).
+
 **The timing rows** read what a 10-month moving-average exit does, the property a timing arm's
 withdrawal objective turns on, and the market's own one-year trend, against each set's own index at
 its month-end closes (`timing-2026-09-30.tsv`, from `record_bands -timing`): CRSP's with dividends
@@ -1137,7 +1219,7 @@ with it.
 | `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
 | `-divyield` | DIVIDENDS: the world's mean dividend yield, %/yr. The session yield is Y × fundamental/price over the world's mean of it (a world constant solved on the same fixed ensemble as the bar level — the ensemble's mean fundamental/price is 2.06 at the default and 2.30 on the Nasdaq recipe, and a per-path mean would leak the path's future), so a rich session yields less and the ensemble's pooled mean yield is the dial; the reported median path's mean reads about 0.9× of it (2.62 at 2.95, 0.69 at 0.78), valuation epochs skewing the path means; `-emit` gains `logTraded` (the total-return `price` deflated by the accrued yield — `price` itself is unchanged) and `divYield`. Anchored 2.95 on Shiller's S&P 1954–2023 and 0.78 on QQQ 2005–2026 (`dividend-2026-09-02.tsv`); the level is graded when on. An identity parameter, never searched | 0 (off) |
 | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
-| `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector, graded against the eight's basket on the set's own primary; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0 on the consumer's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.24.0-basket` names the default with it on (`0.23.1-basket` the 0.23.1 world). The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.7 / 0.85 / 8.0 there, which `-atrelease 0.24.0-nasdaq-basket` names | 0 (off) |
+| `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector, graded against the eight's basket on the set's own primary; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0; graded against SMH's eight largest holdings as of 2026-10-02, 2012–2026 (`basket-2026-10-03.tsv`); `-atrelease 0.24.0-basket` names the default with it on (`0.23.1-basket` the 0.23.1 world). The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.7 / 0.85 / 8.0 there, which `-atrelease 0.24.0-nasdaq-basket` names | 0 (off) |
 | `-basketdrift` | CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a fraction of the primary's realized volatility, drawn once per name per path and centred exactly so the sector's log drift is untouched. Moves the SPREAD of time below peak across names, not its median. **Anchored at 0** and off in every recipe: the record cannot supply a positive value (below) | 0 (off) |
 | `-sectors` | THE SECTOR CHANNEL: K sector legs as observational second-pass instances of the primary — each its beta on the primary's observed return (betas drawn once per path at the record's dispersion, centred), its own idio on the vol state (`-sectoridio`, a fraction of the primary's realized volatility) and a slow relative drift, an AR(1) state of sd `-sectordriftsd` (a fraction of the primary's annualized volatility) and half-life `-sectordrifthalf` years, centred across the legs. `-emit` gains `logSector1..K`. Graded on the ten-industry ruler as ratios that carry across primaries ([below](#the-sector-channel--sectors)). Anchored K 10, idio 0.7, drift 0.25, half-life 2 on both sets | 0 (off) |
 | `-macro` | THE MACRO PANEL: 1 emits seven observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R² — and five draw-free levels, `macroYield10` (DGS10: the 10-year the slope is a difference of), `macroPolicy` (DFF: the loop's own policy rate, re-set at a meeting to the nearest quarter point and held), and the credit system: `macroBankCredit` (TOTBKCR) and `macroOutput` (GDP) as indices with `macroCredit` (TOTBKCR/GDP, percent) the ratio they imply. No scale dials but the spread's drawdown term (`-spreaddd`, read off the record): a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
@@ -1625,7 +1707,7 @@ inside its band but one: the avoided share's record at the 88th-90th percentile 
 long-window multi-year rows between the 2nd and 38th, the 250-session rung at the 34th-39th. The
 bubble coupling misses on three seeds of four, the record at the 95th-97th percentile (93rd-95th
 against the NDX from 1990). All 30 members of `0.24.6-nasdaq.json` pass the set rule; their avoided
-share reads 41.1% and their coupling +0.15.
+share reads 39.6% and their coupling +0.14.
 
 ## A basket of names — `-basket`
 
@@ -1638,9 +1720,10 @@ the spiral, the satellite's construction) plus its **own idio**, riding the vol 
 its **own gaps**, a Student-t jump stream of its own. The model has no sector index, so the
 basket's equal-weight aggregate *is* the sector, and it is graded against SMH's relation to SPY.
 
-The ruler is a population of real names, not an index (`basket-2026-09-02.tsv`: the consumer's eight
-semiconductor names under SMH, 2012–2026, every number reproducing their published ones). Three
-levels, graded on every verdict — at the set's dials where the caller left the basket off:
+The ruler is a population of real names, not an index (`basket-2026-10-03.tsv`: SMH's eight largest
+holdings as of 2026-10-02 — NVDA, TSM, AMD, AVGO, MU, INTC, AMAT, KLAC — held fixed so the bands
+compare across releases, 2012–2026, from Yahoo's public adjusted closes). Three levels, graded on
+every verdict — at the set's dials where the caller left the basket off:
 
 The record column below is the eight read against **SPY**; the Nasdaq anchor set grades the same
 names against QQQ, at its own bands and its own dials (below).
@@ -1648,11 +1731,11 @@ names against QQQ, at its own bands and its own dials (below).
 | level | rows | record | model at the anchored dials, 200 × 100 |
 |---|---|---|---|
 | per name | vol ratio to the primary; sessions past 10% per year | 1.9–3.4×; 0.4–5.1 | 2.49×; 2.13 |
-| the aggregate vs the primary | corr; beta; vol ratio | 0.77; 1.56; 2.0× | 0.793; 1.562; 1.97× |
-| the cross-section | pairwise corr; idio share; same-day tail coincidence | 0.59; 0.37; 0.48 | 0.575; 0.374; 0.547 |
+| the aggregate vs the primary | corr; beta; vol ratio | 0.77; 1.54; 1.99× | 0.793; 1.562; 1.97× |
+| the cross-section | pairwise corr; idio share; same-day tail coincidence | 0.55; 0.40; 0.46 | 0.575; 0.374; 0.547 |
 
 The mechanism row is what a beta-plus-noise leg cannot pass: pairwise correlation on the primary's
-worst decile of days must exceed its middle decile (record 0.60 vs 0.28; model 0.682 vs 0.212),
+worst decile of days must exceed its central 45–55% (record 0.56 vs 0.22; model 0.682 vs 0.212),
 which the split between shared and idiosyncratic variance produces because only the shared part
 rides the spiral. The names' time more than 20% below their running peak is **reported, not
 graded**: the eight read 0.08–0.61 because they are names selected today as winners — the
@@ -1672,7 +1755,7 @@ on it (`basketSector` 0.8; the dial moves with the world because the shared leg 
 the primary's own slow moves are); see its recipe paragraph below.
 
 **The basket dials do not transport between anchor sets.** The eight correlate more with QQQ
-(0.837) than with SPY (0.770), so the shared leg has to carry more and the sector's own noise
+(0.840) than with SPY (0.773), so the shared leg has to carry more and the sector's own noise
 less: `-basketsector` falls 1.1 → 0.7 and `-basketbeta` follows its anchor, 1.56 → 1.37. The
 higher-volatility primary also wants a lower `-basketidio` (0.9 → 0.85) and more own gaps
 (6.0 → 8.0), because the cross-section rows need per-name tails the shared leg cannot supply. The
@@ -1680,9 +1763,9 @@ Nasdaq recipe reads:
 
 | level | statistic | the eight, under QQQ | model |
 |---|---|---|---|
-| a name | vol ratio to the primary; sessions past ±10%/yr | 2.0×; 1.9 | 2.04×; 3.78 |
-| the aggregate vs the primary | corr; beta; vol ratio | 0.84; 1.37; 1.63× | 0.853; 1.371; 1.61× |
-| the cross-section | pairwise corr; idio share; same-day tail coincidence | 0.59; 0.37; 0.48 | 0.567; 0.380; 0.537 |
+| a name | vol ratio to the primary; sessions past ±10%/yr | 2.1×; 2.0 | 2.04×; 3.78 |
+| the aggregate vs the primary | corr; beta; vol ratio | 0.84; 1.35; 1.60× | 0.853; 1.371; 1.61× |
+| the cross-section | pairwise corr; idio share; same-day tail coincidence | 0.55; 0.40; 0.46 | 0.567; 0.380; 0.537 |
 
 **The gap rate is high by construction, not by dial.** Level 1 grades a name's volatility as a
 *ratio* to the primary, and that ratio's anchor is the eight against QQQ over 2012–2026 (20.6%
@@ -1696,47 +1779,45 @@ range (0.4–5.1, AMD at the top); read the rate as a level, not as a match. The
 ### Why the names sit below their peaks, and what `-basketdrift` does about it
 
 The names spend more of their time than the record's do more than 20% below their running peak —
-0.548 on the S&P recipe and 0.710 on the Nasdaq, where the consumer's eight read 0.084–0.610 with a
-median of 0.236. That row is **reported, not graded**. What is in it is the **common drift**, and
+0.548 on the S&P recipe and 0.710 on the Nasdaq, where the ruler's eight read 0.084–0.610 with a
+median of 0.331. That row is **reported, not graded**. What is in it is the **common drift**, and
 that is survivorship.
 
-Measured over the eight's own window (`basket-drift-2026-09-03.tsv`, 2012–2026, T = 14.6 years):
+Measured over the eight's own window (`basket-drift-2026-10-03.tsv`, 2012–2026, T = 14.6 years):
 
-| | the eight | the 26-name population |
+| | the eight | without INTC |
 |---|---|---|
-| spread of realized log drift across names | 0.068 | 0.075 |
-| noise that a 14.6-year window generates on its own | 0.070 | 0.085 |
-| true dispersion left over | **0** | **0** |
-| their common drift | +0.304 | +0.229 |
+| spread of realized log drift across names | 0.095 | 0.065 |
+| noise that a 14.6-year window generates on its own | 0.072 | 0.071 |
+| true dispersion left over | 0.062 | **0** |
+| their common drift | +0.297 | |
 
 A name's realized drift over a finite window is its true drift plus estimation noise of
-sd (idio vol)/√T, so a cross-section is dispersed even when every true drift is identical. For
-both groups the observed spread is *below* that floor: over this window, among these names, no
-true drift dispersion is detectable at all. And both groups are selected today — survivors — which
-truncates the left tail and biases the estimate downward, so 0 is a floor from biased data rather
-than a measurement of the world.
+sd (idio vol)/√T, so a cross-section is dispersed even when every true drift is identical. The
+eight's spread exceeds that floor by 0.062 a year, and all of it is one name: INTC's +0.114 against
+the other seven's +0.262 to +0.447. And the list is selected today — survivors — which truncates
+the left tail. One name in a survivor sample does not calibrate a dial.
 
-The gap that is left is the level: +0.304 a year for the eight against the shared leg's +0.117 over
+The gap that is left is the level: +0.297 a year for the eight against the shared leg's +0.117 over
 the same horizon. These are the names that won. Dispersion around the right centre cannot close
 that, and the dial shows it — at 200 × 100 the spread of time below peak runs 0.14 (off, pure
 estimation noise) → 0.52 at 0.6 → 0.67 at 0.9, while the median moves only 0.528 → 0.557 and the
-aggregate's correlation, beta and volatility ratio do not move at all. Raising the centre to +0.304
+aggregate's correlation, beta and volatility ratio do not move at all. Raising the centre to +0.297
 would close the row and would be calibrating the model to names selected for having won, so it is
 not on offer.
 
 Two mechanism properties keep that reading honest, and both are pinned by
 `BasketDriftSuite` / `basket_drift_tests`. A name's **own gaps are symmetric**, so the gap channel
 imposes no drift of its own: the down-skew belongs to the index, which already reaches every name
-through the shared leg (across the eight, own moves past 10% run 41 up to 32 down with mean +0.011,
-while SMH itself reads 1 up to 3 down at skew −0.27). And the **drift offsets are centred exactly**,
+through the shared leg (across the eight, own moves past 10% run 43 up to 37 down with mean +0.007,
+while SMH itself reads 1 up to 3 down at skew −0.28). And the **drift offsets are centred exactly**,
 so turning the dial up moves the cross-section without moving the sector.
 
-So `-basketdrift` ships at 0 and no recipe turns it on. The model agrees with the record there:
-run the same decomposition on the model's own names over a 15-year window and the spread of
-realized drift is 0.090 against a noise floor of 0.081, a ratio of 1.11 where the eight read 0.97 —
-both say estimation noise explains what you see. (The naive floor understates a fat-tailed,
-clustered series, which is why the model's ratio sits slightly above 1; it biases both readings the
-same way and the record's conclusion is the conservative one.)
+So `-basketdrift` ships at 0, ungraded, and no recipe turns it on. Run the same decomposition on
+the model's own names over a 15-year window and the spread of realized drift is 0.090 against a
+noise floor of 0.081, a ratio of 1.11; the eight read 1.32 with INTC and 0.92 without it. (The
+naive floor understates a fat-tailed, clustered series, which is why the model's ratio sits
+slightly above 1.)
 
 ### The dial's real use: a null world for a rule that ranks names
 

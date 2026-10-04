@@ -36,6 +36,8 @@ const USAGE: &str =
                     [-joint A] [-of N] [-header] [-coupling | -multiyear [-long]]
        record_bands -rateafter -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]
        record_bands -sectors DIR [-resamples N] [-seed S]
+       record_bands -volexit (-closes FILE | -french FILE) -fred DFF -from -to -set -series
+                    [-resamples N] [-seed S] [-joint A] [-of N] [-header]
 
   -rateafter    THE CONDITIONAL RATE ROWS (`RATE_AFTER_ROWS`): the -fred rate on the equity window's
                 session dates, the two years after each 20% decline's trough; the record by
@@ -46,6 +48,12 @@ const USAGE: &str =
                 the ruler), -yahoo FILE (its log returns compounded, -splice as below) or -shiller
                 FILE (a `month,price,dividend,cpi` CSV of Shiller's monthly S&P -- monthly AVERAGES,
                 for comparison only)
+  -volexit     THE VOLATILITY EXIT's rows (`VOL_EXIT_ROWS`): the simple exit on the printed close at
+                1.5% / 2.0%, cash at the -fred rate, the 3x leg reset daily, each session joined to
+                the rate at its start and the calendar days it spans; the record, its one-year
+                block resamples (`vol_exit_resamples`), their joint band. -closes FILE is a
+                `date,close,adj_close` CSV (Yahoo's printed and adjusted closes); -french FILE reads
+                CRSP's daily total return as both, having no printed close
   -sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,
                 `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the
                 library publishes them (unzipped), the first monthly block of each; prints the
@@ -467,6 +475,137 @@ fn timing_mode(args: &[String]) -> bool {
     true
 }
 
+/// Days from 1970-01-01 of an ISO date (Hinnant's `days_from_civil`).
+fn civil_days(d: &str) -> i64 {
+    let p = |a: usize, b: usize| -> i64 {
+        d.get(a..b)
+            .and_then(|x| x.parse().ok())
+            .unwrap_or_else(|| usage(&format!("not a date [{d}]")))
+    };
+    let (y0, m, day) = (p(0, 4), p(5, 7), p(8, 10));
+    let y = if m <= 2 { y0 - 1 } else { y0 };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// `(date, printed close, adjusted close)` for every session of a `date,close,adj_close` CSV.
+fn read_closes(file: &str) -> Vec<(String, f64, f64)> {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    text.lines()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let f: Vec<&str> = l.split(',').map(str::trim).collect();
+            let num = |k: usize| -> f64 {
+                f.get(k)
+                    .and_then(|x| x.parse().ok())
+                    .unwrap_or_else(|| usage(&format!("{file}: unreadable row [{l}]")))
+            };
+            (f[0].to_string(), num(1), num(2))
+        })
+        .collect()
+}
+
+/// THE VOLATILITY EXIT's rows (`-volexit`): the record's sessions over `-from`..`-to`, each the
+/// printed close's and the total return's simple returns, the `-fred` rate at the previous
+/// session's date (the last one known on or before it), and the calendar days since that session;
+/// the record and its joint band over the two rows at `-joint` x 2 / `-of`.
+fn volexit_mode(args: &[String]) -> bool {
+    if !args.iter().any(|a| a == "-volexit") {
+        return false;
+    }
+    let opt = |flag: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let req = |flag: &str| opt(flag).unwrap_or_else(|| usage(&format!("-volexit wants {flag}")));
+    let (from, to, set, series) = (req("-from"), req("-to"), req("-set"), req("-series"));
+    let resamples: usize =
+        opt("-resamples").map_or(20_000, |v| num(&v, "-resamples wants an integer"));
+    let seed: u64 = opt("-seed").map_or(20_260_918, |v| num(&v, "-seed wants an integer"));
+    let joint: f64 = opt("-joint").map_or(0.10, |v| num(&v, "-joint wants a share"));
+    let of: usize = opt("-of").map_or(2, |v| num(&v, "-of wants a row count"));
+    // (date, printed close level, total-return level)
+    let levels: Vec<(String, f64, f64)> = match (opt("-closes"), opt("-french")) {
+        (Some(f), None) => read_closes(&f),
+        (None, Some(f)) => {
+            let mut level = 1.0;
+            read_french(&f)
+                .into_iter()
+                .map(|(d, x)| {
+                    level *= 1.0 + x / 100.0;
+                    (d, level, level)
+                })
+                .collect()
+        }
+        _ => usage("-volexit wants exactly one of -closes FILE and -french FILE"),
+    };
+    let levels: Vec<(String, f64, f64)> = levels
+        .into_iter()
+        .filter(|(d, _, _)| d.as_str() >= from.as_str() && d.as_str() <= to.as_str())
+        .collect();
+    let rates = read_fred(&req("-fred"));
+    let rate_on = |d: &str| -> f64 {
+        let k = rates.partition_point(|(rd, _)| rd.as_str() <= d);
+        if k == 0 {
+            usage(&format!("no -fred rate on or before {d}"))
+        }
+        rates[k - 1].1
+    };
+    let days: Vec<ms::VolExitDay> = (1..levels.len())
+        .map(|i| {
+            let (d0, c0, t0) = &levels[i - 1];
+            let (d1, c1, t1) = &levels[i];
+            ms::VolExitDay {
+                close_ret: c1 / c0 - 1.0,
+                total_ret: t1 / t0 - 1.0,
+                rate: rate_on(d0),
+                days: (civil_days(d1) - civil_days(d0)) as f64,
+            }
+        })
+        .collect();
+    let window = format!("{}..{}", levels[1].0, levels[levels.len() - 1].0);
+    let record = ms::vol_exit_of(&days);
+    let reads = ms::vol_exit_resamples(&days, resamples, seed);
+    eprintln!(
+        "{series}: {} sessions {window}; timing {:.4}, interaction {:.4}; {resamples} resamples, seed {seed}",
+        days.len(),
+        record[0],
+        record[1]
+    );
+    if args.iter().any(|a| a == "-header") {
+        let pcts: Vec<String> = ms::RECORD_BAND_PCTS
+            .iter()
+            .map(|p| format!("p{p}"))
+            .collect();
+        println!(
+            "set\trow\tseries\twindow\tn\tresamples\trecord\t{}\tjointC\tjointLo\tjointHi",
+            pcts.join("\t")
+        );
+    }
+    let ks = [0usize, 1];
+    let (c, edges) = ms::record_band_joint(&reads, &ks, joint * ks.len() as f64 / of as f64);
+    for (&k, (lo, hi)) in ks.iter().zip(&edges) {
+        let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
+        let qs: Vec<String> = ms::record_band_quantiles(&col)
+            .iter()
+            .map(|v| format!("{v:.6}"))
+            .collect();
+        println!(
+            "{set}\t{}\t{series}\t{window}\t{}\t{resamples}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
+            ms::VOL_EXIT_ROWS[k],
+            days.len(),
+            record[k],
+            qs.join("\t")
+        );
+    }
+    true
+}
+
 fn sector_mode(args: &[String]) -> bool {
     let Some(k) = args.iter().position(|a| a == "-sectors") else {
         return false;
@@ -490,10 +629,8 @@ fn sector_mode(args: &[String]) -> bool {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if sector_mode(&args) {
-        return;
-    }
-    if timing_mode(&args) {
+    // a mode that reads its own arguments runs and is done
+    if sector_mode(&args) || timing_mode(&args) || volexit_mode(&args) {
         return;
     }
     let o = parse_args(&args);

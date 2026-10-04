@@ -12,7 +12,7 @@ import uni.*
  */
 class BasketAnchorSuite extends FunSuite:
 
-  val Fixture = "test-data/equity-anchors/basket-2026-09-02.tsv"
+  val Fixture = "test-data/equity-anchors/basket-2026-10-03.tsv"
 
   def rows(path: String): Vector[Vector[String]] =
     val p = path.asPath
@@ -130,10 +130,10 @@ class BasketAnchorSuite extends FunSuite:
     assert(b.pairCorrWorst > b.pairCorrMid + 0.15, f"stress must raise pairwise correlation materially: ${b.pairCorrWorst}%.3f vs ${b.pairCorrMid}%.3f")
     // the discrimination: idio riding the spiral too (the satellite's construction for every
     // name) removes the mechanism -- shared and idio variance rise together in stress
-    // A DISCLOSED reading, not a gate.  Since the own-gap channel became symmetric the model
-    // lands inside the eight's 0.08-0.61 but above their median (0.236): what is left of the gap
-    // is their COMMON drift, +0.304/yr against the shared leg's, which is the survivorship the
-    // fixture discloses -- see `basket-drift-2026-09-03.tsv`.
+    // A DISCLOSED reading, not a gate.  The model lands inside the eight's 0.08-0.61 but above
+    // their median (0.331): what is left of the gap is their COMMON drift, +0.297/yr against the
+    // shared leg's, which is the survivorship the fixture discloses -- see
+    // `basket-drift-2026-10-03.tsv`.
     val eightD20 = eight(rs, "d20").sorted
     assert(b.nameD20 > eightD20(eightD20.size / 2),
       f"the names' time below peak is a disclosed reading, expected above the winners' median: ${b.nameD20}%.3f")

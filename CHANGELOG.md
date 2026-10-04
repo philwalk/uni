@@ -51,6 +51,43 @@ set's beyond tolerance. In this model a higher drift raises the short rate and c
 the floor; the set's median member reads 1.90% and 27.9% of sessions at the floor (record 2.14%
 and 37.3%), where `0.24.5-nasdaq.json`'s read 1.91% and 28.1%.
 
+**The volatility exit, at 1x and 3x.** Two record-band rows read the consumer's simple
+volatility exit, written down completely: hold the index while the sample sd of the last 24 daily
+returns of the printed close is under 1.5%, cash at the short rate at or above 2.0%, keep the
+position between, decided at a close and filled at the next; the 3x leg reset daily with financing
+at the rate plus 0.60% and a 0.86% expense ratio. `vol-exit timing pts/yr` is the rule at 1x less
+buy-and-hold; `vol-exit 3x interaction pts/yr` the rule on the 3x leg less the leg held, less the
+timing row. QQQ 1999-2026 reads +4.1 and +23.2 (bands −2.7 to +13.0 and +2.2 to +50.4); CRSP
+1954-2026 −0.5 and +1.1 (−1.7 to +1.1, −1.8 to +5.7). The verdict judges both; the loss weighs them
+0. Both 0.24.6 recipes and every member of both 0.24.6 sets read inside on seeds 1-4.
+
+**Streamed output.** `-emitf32 F` writes the paths `-emit` would write as one file of
+little-endian f32 cells, path-major (path, then column, then session), with one sidecar for the
+chunk; `-emitcols` picks the columns and their order. A path's bytes do not depend on the chunk
+that holds it, and paths are written a batch at a time, so a bundle of thousands is a few chunks:
+200 paths of 56 years in 36 columns make a 406 MB chunk written in 1.7 s on 24 cores, verdict
+included. Every chunk carries the `-emitgate` ensemble's verdict, whatever its size. Values are
+the TSV's at single precision. The Scala twin's chunk differs from the Rust one in about one cell
+in three million, by one f32 ulp.
+
+**The basket ruler, fixed and public.** The basket is graded against SMH's eight largest holdings as
+of 2026-10-02 (NVDA, TSM, AMD, AVGO, MU, INTC, AMAT, KLAC), held fixed, read from Yahoo's public
+adjusted closes over 2012-2026 (`basket-2026-10-03.tsv` and `basket-drift-2026-10-03.tsv` replace the
+2026-09-02 and 2026-09-03 fixtures). Four bands move: beta 1.2-1.8 on the S&P (1.3-1.9) and 1.0-1.6
+on the Nasdaq (1.1-1.7), the S&P vol ratio 1.6-2.3 (1.7-2.4), pairwise correlation 0.39-0.85
+(0.42-0.86) and tail coincidence 0.33-0.58 (0.35-0.60). No verdict changes: every member of both
+sets reads inside every basket band on seeds 1-4, the closest 0.055 from an edge. The names' drift
+dispersion now reads 0.062 a year beyond the window's noise, all of it INTC's; `-basketdrift` still
+ships at 0, ungraded.
+
+**Satellite depth rows at the record's drift.** The satellite's d5, d10 and crash ratios read both
+legs with their own realized drift replaced by SPY's and QQQ's over 1999-2026 (8.24% and 10.26% a
+year). Read raw, the d5 ratio rose 0.035 per 0.01 of the world's drift, so one 27-year window's
+drift capped the S&P set's long-run drift; it now moves 0.007 per 0.01 and still answers to the
+coupling. The d10 band is 1.1-2.2 (0.7-2.2); d5 stays 1.0-1.7. The coupling fixture is
+re-measured from Yahoo's public closes (`joint-coupling-2026-10-03.tsv`), with the depth rows'
+window and blocks beside it. Every member of both sets passes all three rows on seeds 1-4.
+
 **Upgrading**
 
 - **Sidecar schema 28 → 29.** `reportedRows` follows `fidelity`: each a `fidelity` row led by its
@@ -61,12 +98,25 @@ and 37.3%), where `0.24.5-nasdaq.json`'s read 1.91% and 28.1%.
   reads as before.
 - The Nasdaq's loss spreads at the splice's 56 years: the avoided share 0.27, the coupling 0.32,
   the long window's variance ratios 0.22 / 0.33 and decline gap 0.43.
-- API: `write_emitted` takes the reported rows after the fidelity rows; new
-  `reported_record_rows`, `ReportedRecord`, `ReportedRow`, `RowFamily`; `Anchors` gains
+- Schema 29 also covers the `-emitf32` chunk's sidecar: `format`, `layout`, `columnsAbsent` and
+  `paths` (`first`, `count`, the seeds and the calendar) where a TSV's carries `header` and `path`;
+  `episodes.paths` holds each path's index and rows; `gate.gradedSeries` and
+  `gate.ungradedChannelSeries` list only the file's columns. The TSV and its sidecar are unchanged.
+- API: `write_emitted` takes an `EmitSpec` (world, years, seed, start date) and a `Verdict`
+  (`verdict_of`: the gate ensemble's statistics, fidelity rows and reported rows); new
+  `write_f32_chunk`, `emit_table`, `EmitColumn`, `emit_column_known`, `reported_record_rows`,
+  `ReportedRecord`, `ReportedRow`, `RowFamily`; `Anchors` gains
   `vr250_eras` and `reported`, and `multi_year` is an `Option`; `vr250_era_of` takes the set's
   eras and fractional years; `variance_ratio` is public. The Scala twin matches.
 - `record_bands`: `-splice FILE -at DATE` continues a `-yahoo` series with a second file's returns
   dated after DATE; `-timing` reads `-yahoo`; `-coupling` also prints `variance ratio 250d`.
+- New `SAT_REF_DRIFT` (`SatRefDrift`): the satellite depth rows' reference drifts.
+- `Anchors`' basket fields: S&P corr 0.773, beta 1.536, vol ratio 1.986; Nasdaq 0.840, 1.345,
+  1.601. The basket fixtures carry no population rows.
+- `fidelity` gains `vol-exit timing pts/yr` and `vol-exit 3x interaction pts/yr` (schema 29 covers
+  them). New `VOL_EXIT_ROWS`, `VolExitDay`, `vol_exit_of`, `vol_exit_days_of_path` and
+  `vol_exit_resamples`; each set carries 22 `RecordBand`s. `record_bands -volexit` reads a
+  `date,close,adj_close` file (`-closes`) or CRSP (`-french`) beside a `-fred` rate.
 - **Speed.** A world's measurement reads in about half the time with the derived channels on,
   bit for bit the same: month ends come from integer calendar arithmetic, and the correlations
   and clustering lags sum `MatD`'s way without its temporaries.

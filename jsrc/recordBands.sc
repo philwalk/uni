@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.5
+//> using dep org.vastblue:uni_3:0.24.6
 
 // THE RECORD BANDS: one real record's own sampling spread on every fidelity row a single daily
 // series can be read the model's way.  The generator behind
@@ -64,6 +64,12 @@ object RecordBands {
     "              the ruler), -yahoo FILE (its log returns compounded, -splice as above) or -shiller",
     "              FILE (Shiller's monthly S&P as `month,price,dividend,cpi` -- monthly AVERAGES, for",
     "              comparison only)",
+    "-volexit     THE VOLATILITY EXIT's rows (`VolExitRows`): the simple exit on the printed close at",
+    "              1.5% / 2.0%, cash at the -fred rate, the 3x leg reset daily, each session joined to",
+    "              the rate at its start and the calendar days it spans; the record, its one-year",
+    "              block resamples (`volExitResamples`), their joint band. -closes FILE is a",
+    "              `date,close,adj_close` CSV (Yahoo's printed and adjusted closes); -french FILE reads",
+    "              CRSP's daily total return as both, having no printed close",
     "-sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,",
     "              `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the",
     "              library publishes them (unzipped), the rows of `sectors-2026-09-30.tsv` with 5-95",
@@ -164,7 +170,80 @@ object RecordBands {
         h >= 2
       case _ => false
 
+  /** Days from 1970-01-01 of an ISO date (Hinnant's `days_from_civil`). */
+  def civilDays(d: String): Long =
+    def p(a: Int, b: Int): Long = d.slice(a, b).toLongOption.getOrElse(usage(s"not a date [$d]"))
+    val (y0, m, day) = (p(0, 4), p(5, 7), p(8, 10))
+    val y = if m <= 2 then y0 - 1 else y0
+    val era = Math.floorDiv(y, 400L)
+    val yoe = y - era * 400
+    val doy = (153 * (if m > 2 then m - 3 else m + 9) + 2) / 5 + day - 1
+    val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    era * 146097 + doe - 719468
+
+  /** `(date, printed close, adjusted close)` for every session of a `date,close,adj_close` CSV. */
+  def readCloses(file: String): Vector[(String, Double, Double)] =
+    file.asPath.lines.toVector.drop(1).filter(_.trim.nonEmpty).map { l =>
+      val f = l.split(',').map(_.trim)
+      def num(k: Int): Double = f.lift(k).flatMap(_.toDoubleOption).getOrElse(usage(s"$file: unreadable row [$l]"))
+      (f(0), num(1), num(2))
+    }
+
+  /** THE VOLATILITY EXIT's rows (`-volexit`): the record's sessions over `-from`..`-to`, each the
+    * printed close's and the total return's simple returns, the `-fred` rate at the previous
+    * session's date (the last one known on or before it), and the calendar days since that session;
+    * the record and its joint band over the two rows at `-joint` x 2 / `-of`. */
+  def volexitMode(args: Array[String]): Unit =
+    def opt(flag: String): Option[String] =
+      val i = args.indexOf(flag)
+      if i < 0 then None else args.lift(i + 1)
+    def req(flag: String): String = opt(flag).getOrElse(usage(s"-volexit wants $flag"))
+    val (from, to, set, series) = (req("-from"), req("-to"), req("-set"), req("-series"))
+    val resamples = opt("-resamples").map(_.toInt).getOrElse(20000)
+    val seed = opt("-seed").map(_.toLong).getOrElse(20260918L)
+    val joint = opt("-joint").map(_.toDouble).getOrElse(0.10)
+    val of = opt("-of").map(_.toInt).getOrElse(2)
+    val all: Vector[(String, Double, Double)] = (opt("-closes"), opt("-french")) match
+      case (Some(f), None) => readCloses(f)
+      case (None, Some(f)) =>
+        var level = 1.0
+        readFrench(f).map { (d, x) =>
+          level *= 1.0 + x / 100.0
+          (d, level, level)
+        }
+      case _ => usage("-volexit wants exactly one of -closes FILE and -french FILE")
+    val levels = all.filter((d, _, _) => d >= from && d <= to)
+    val rates = readFred(req("-fred"))
+    val rateMap = rates.toMap
+    def rateOn(d: String): Double =
+      rateMap.getOrElse(d, {
+        val k = rates.lastIndexWhere(_._1 <= d)
+        if k < 0 then usage(s"no -fred rate on or before $d") else rates(k)._2
+      })
+    val days = (1 until levels.length).toVector.map { i =>
+      val (d0, c0, t0) = levels(i - 1)
+      val (d1, c1, t1) = levels(i)
+      MarketSim.VolExitDay(c1 / c0 - 1.0, t1 / t0 - 1.0, rateOn(d0), (civilDays(d1) - civilDays(d0)).toDouble)
+    }
+    val window = s"${levels(1)._1}..${levels.last._1}"
+    val record = MarketSim.volExitOf(days)
+    val reads = MarketSim.volExitResamples(days, resamples, seed)
+    eprintln(f"$series%s: ${days.length}%d sessions $window%s; timing ${record(0)}%.4f, interaction ${record(1)}%.4f; " +
+             s"$resamples resamples, seed $seed")
+    if args.contains("-header") then
+      println("set\trow\tseries\twindow\tn\tresamples\trecord\t" +
+              MarketSim.RecordBandPcts.map(p => s"p$p").mkString("\t") + "\tjointC\tjointLo\tjointHi")
+    val ks = Vector(0, 1)
+    val (c, edges) = MarketSim.recordBandJoint(reads, ks, joint * ks.length / of)
+    for (k, (lo, hi)) <- ks.zip(edges) do
+      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      println(f"$set%s\t${MarketSim.VolExitRows(k)}%s\t$series%s\t$window%s\t${days.length}%d\t$resamples%d\t${record(k)}%.6f\t" +
+              qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
+
   def main(args: Array[String]): Unit = {
+    if args.contains("-volexit") then
+      volexitMode(args)
+      return
     if args.contains("-timing") then
       def opt(flag: String): Option[String] =
         val i = args.indexOf(flag)
