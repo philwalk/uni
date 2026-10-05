@@ -18,7 +18,7 @@
 # it here.  `MacroPanelSuite` / `macro_panel_tests` re-derive the shipped bands from this file;
 # editing a graded row moves them.
 #
-# Measured 2026-09-06 and re-read 2026-10-04 from public sources: FRED's fredgraph.csv, fetched
+# Measured 2026-09-06 and re-read 2026-10-04 from published sources: FRED's fredgraph.csv, fetched
 # 2026-10-04 and each series cut at the date it was first measured to (1990-01-02 .. 2026-09-04;
 # NFCILEVERAGE weekly, Fridays); equity histories CRSP = Ken French F-F_Research_Data_Factors_daily
 # (the 202608 file, cut at 2026-06-30) Mkt-RF + RF compounded, the value-weighted US market TOTAL
@@ -106,7 +106,7 @@
 #                    of the four references' medians (the twins' `pctile(.., 0.5)`).  A lag of -L
 #                    means the member was already firing when the lookback window opened.
 #
-# Windows: the equity history's own span from 1990-01-02 (CRSP ends 2026-06-30 in the 202606 file).
+# Windows: the equity history's own span from 1990-01-02 (CRSP read through 2026-06-30).
 # DFF's rows were added 2026-09-10.  They are SHAPE rows only: the
 # equity-relation rows need the four reference histories at the vintage the rest of this file was
 # measured at, and the policy member is reported rather than graded, so nothing here reads them.

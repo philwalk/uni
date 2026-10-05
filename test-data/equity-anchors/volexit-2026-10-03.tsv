@@ -18,7 +18,7 @@
 # `RECORD_BAND_PCTS`, and a joint band over the two rows that a record-like world clears on both
 # at once 95% of the time (their own family: the other banded rows' bands are unchanged).
 #
-# nasdaq  QQQ, 1999-03-11..2026-08-20: Yahoo's chart API, the printed close (split-adjusted) for the
+# nasdaq  QQQ, 1999-03-11..2026-08-20 (Yahoo Finance): the printed close (split-adjusted) for the
 #         rule's signal and the adjusted close for its total return; the set's equity window.
 # sp500   CRSP value-weighted US market total return from Ken French's
 #         F-F_Research_Data_Factors_daily (202606), Mkt-RF + RF compounded, as both the signal and

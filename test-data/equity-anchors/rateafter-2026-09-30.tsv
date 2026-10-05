@@ -11,7 +11,7 @@
 # 20000 resamples, seed 20260918; the joint band over the two rows at 2/18 of the set's 0.10 (the
 # sets' other 16 banded rows keep their 2026-09-26 bands, which were split over 16).
 #
-# Sources, public: QQQ adjusted closes from Yahoo's chart API (1999-03-10..2026-08-20); CRSP from
+# Sources: QQQ, Yahoo Finance's adjusted closes (1999-03-10..2026-08-20); CRSP from
 # Ken French's F-F_Research_Data_Factors_daily (Mkt-RF + RF, 1954-01-04..2026-06-30); DFF from
 # FRED (fredgraph.csv?id=DFF). A session without a rate on its date is dropped.
 #   record_bands -set nasdaq -series QQQ -yahoo <data>/QQQ.csv -fred <data>/DFF.csv -rateafter

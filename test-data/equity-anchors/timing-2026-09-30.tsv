@@ -32,7 +32,7 @@
 #             window's first session, the level at each calendar month's last session;
 #             1926-07..2026-06, 1200 months, 10 declines. Total return.
 #   IXIC+NDX  the Nasdaq Composite's daily log returns through 1985-10-01, the Nasdaq-100's after
-#             (Yahoo's chart API, ^IXIC and ^NDX closes), summed from 1971-02-08, the level at each
+#             (Yahoo Finance's ^IXIC and ^NDX closes), summed from 1971-02-08, the level at each
 #             calendar month's last session; 1971-02..2026-09 (the last month to the 18th), 668
 #             months, 7 declines. Price indexes.
 #   NDX       the Nasdaq-100's alone, the same way, 1990-01..2026-09, 441 months.

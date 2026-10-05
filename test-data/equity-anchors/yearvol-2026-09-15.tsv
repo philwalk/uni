@@ -20,24 +20,27 @@
 # ON the record's ordinary year; the pooled gap is the bust.  CRSP from 1926 reads 0.75 for the
 # same reason (1929-33).
 #
-# Sources: SPY and QQQ Yahoo adjusted close from the consumer's cache (through 2026-08-03); CRSP = Ken
-# French F-F_Research_Data_Factors_daily (202606 vintage), Mkt-RF + RF compounded into a price
-# index, log returns of it.  Measured 2026-09-15.
+# Sources: SPY and QQQ, Yahoo Finance's adjusted closes (retrieved 2026-10-04, read through
+# 2026-08-03); CRSP = Ken French F-F_Research_Data_Factors_daily (the 202608 file, read through
+# 2026-06-30), Mkt-RF + RF compounded into a price index, log returns of it.  Measured 2026-09-15,
+# re-read 2026-10-04.  The median of an even count of years is the mean of the two middle ones, the
+# tails are linearly interpolated percentiles, and the top decile is the round(n/10) most volatile
+# years' share of the included years' summed r^2.
 section	series	window	stat	n	value
 yearvol	SPY	w1993	medianYearVol	33	15.4203
-yearvol	SPY	w1993	pooledVol	8433	18.5804
+yearvol	SPY	w1993	pooledVol	8433	18.5806
 yearvol	SPY	w1993	ratio	33	0.8299
 yearvol	SPY	w1993	p10YearVol	33	10.0840
 yearvol	SPY	w1993	p90YearVol	33	25.9449
 yearvol	SPY	w1993	topDecileVarShare	33	0.3097
 yearvol	QQQ	w1999	medianYearVol	27	18.2583
-yearvol	QQQ	w1999	pooledVol	6891	26.9137
+yearvol	QQQ	w1999	pooledVol	6891	26.9140
 yearvol	QQQ	w1999	ratio	27	0.6784
 yearvol	QQQ	w1999	p10YearVol	27	13.6064
-yearvol	QQQ	w1999	p90YearVol	27	40.5755
+yearvol	QQQ	w1999	p90YearVol	27	40.5754
 yearvol	QQQ	w1999	topDecileVarShare	27	0.4083
 yearvol	QQQ	w2007	medianYearVol	19	18.1811
-yearvol	QQQ	w2007	pooledVol	4926	22.2726
+yearvol	QQQ	w2007	pooledVol	4926	22.2731
 yearvol	QQQ	w2007	ratio	19	0.8163
 yearvol	QQQ	w2007	p10YearVol	19	13.5622
 yearvol	QQQ	w2007	p90YearVol	19	32.9480

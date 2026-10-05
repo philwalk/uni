@@ -1,6 +1,6 @@
 # SPY-QQQ COUPLING: the anchor vector for the satellite equity leg (`satBeta`/`satIdio`),
 # which JointCouplingSuite / joint_coupling_tests re-derive from this file. Editing a graded
-# row moves the shipped test bands. Measured from Yahoo's public chart API (adjusted closes,
+# row moves the shipped test bands. Measured from Yahoo Finance's daily history (adjusted closes,
 # daily simple returns, inner-joined) over 1999-03-10..2026-08-31; the w1993 rows read the
 # Nasdaq-100 index (^NDX, price only) against SPY from 1993-01-29, for the longer window.
 #

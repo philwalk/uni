@@ -4,9 +4,10 @@
 #             full-sample denominator -- `uni.apps.MarketSim.autocorrAbs`, the function the model
 #             grades itself with) at lags 1, 2, 5, 10, 20, 60, 120, with the window's annual
 #             volatility and daily kurtosis (Pearson, 3 = normal) as context.  CRSP = Ken French
-#             F-F_Research_Data_Factors_daily (202606 vintage), Mkt-RF + RF, the century (w1926),
-#             post-war (w1954) and QQQ's own span (w1999); SPY and QQQ = Yahoo adjusted close log
-#             returns; NDX = the Nasdaq-100 index close, a price index.  The shipped `clustering
+#             F-F_Research_Data_Factors_daily (through 2026-06-30), Mkt-RF + RF, the century (w1926),
+#             post-war (w1954) and QQQ's own span (w1999); SPY and QQQ = Yahoo Finance's adjusted
+#             close log returns; NDX = the Nasdaq-100 index close, a price index; SPY, QQQ and NDX
+#             through 2026-09-04, each window's first session a zero return.  The shipped `clustering
 #             lag 1` / `lag 20` anchors are this file's CRSP w1926 ac1 / ac20 rows.
 # levprofile  the leverage-effect profile corr(r_t, |r_t+k|) at k = 1, 2, 3, 5, 10, 20 on the same
 #             windows -- the record's vol after a decline stays elevated for 2-20 sessions; the
@@ -20,7 +21,10 @@
 #             and its two recipes 1.44 -- and `SPY-QQQ own` the slope between the two anchor sets'
 #             shipped numbers (20.7 at 16.0%, 25.6 at 26.9%).
 #
-# Measured 2026-09-07 from the consumer's caches; the leverage-effect rows added 2026-09-08.
+# Measured 2026-09-07 and re-read 2026-10-04 from published sources: Ken French's daily file (the
+# 202608 file) and Yahoo Finance's adjusted closes (retrieved 2026-10-04).  Every row reproduces the
+# first read but four annVol rows, which read Yahoo's adjusted-close vintage (0.0001).  The
+# leverage-effect rows were added 2026-09-08.
 section	series	window	stat	n	value
 profile	CRSP	w1926	ac1	26274	0.2982
 profile	CRSP	w1926	ac2	26274	0.3314
@@ -74,7 +78,7 @@ profile	SPY	w1993	ac10	8458	0.2812
 profile	SPY	w1993	ac20	8458	0.2148
 profile	SPY	w1993	ac60	8458	0.0841
 profile	SPY	w1993	ac120	8458	0.0908
-profile	SPY	w1993	annVol	8458	18.5498
+profile	SPY	w1993	annVol	8458	18.5497
 profile	SPY	w1993	kurtosis	8458	14.4181
 levprofile	SPY	w1993	lev1	8458	-0.1259
 levprofile	SPY	w1993	lev2	8458	-0.1284
@@ -132,7 +136,7 @@ elasticity	EWJ	w2007	annVol	4746	20.7832
 elasticity	EWJ	w2007	crashesPerCentury	4746	21.2389
 elasticity	EWL	w2007	annVol	4746	19.6784
 elasticity	EWL	w2007	crashesPerCentury	4746	31.8584
-elasticity	EWN	w2007	annVol	4746	25.1016
+elasticity	EWN	w2007	annVol	4746	25.1017
 elasticity	EWN	w2007	crashesPerCentury	4746	31.8584
 elasticity	EWP	w2007	annVol	4746	28.3100
 elasticity	EWP	w2007	crashesPerCentury	4746	5.3097
@@ -150,7 +154,7 @@ elasticity	EWY	w2007	annVol	4746	32.6325
 elasticity	EWY	w2007	crashesPerCentury	4746	31.8584
 elasticity	EWZ	w2007	annVol	4746	37.4868
 elasticity	EWZ	w2007	crashesPerCentury	4746	15.9292
-elasticity	IWM	w2007	annVol	4746	24.9150
+elasticity	IWM	w2007	annVol	4746	24.9149
 elasticity	IWM	w2007	crashesPerCentury	4746	31.8584
 elasticity	QQQ	w2007	annVol	4746	22.4735
 elasticity	QQQ	w2007	crashesPerCentury	4746	37.1681
@@ -160,7 +164,7 @@ elasticity	SOXX	w2007	annVol	4746	32.1548
 elasticity	SOXX	w2007	crashesPerCentury	4746	58.4071
 elasticity	SPY	w2007	annVol	4746	19.7917
 elasticity	SPY	w2007	crashesPerCentury	4746	26.5487
-elasticity	VFINX	w2007	annVol	4746	19.9082
+elasticity	VFINX	w2007	annVol	4746	19.9081
 elasticity	VFINX	w2007	crashesPerCentury	4746	26.5487
 elasticity	VGTSX	w2007	annVol	4746	20.0117
 elasticity	VGTSX	w2007	crashesPerCentury	4746	15.9292

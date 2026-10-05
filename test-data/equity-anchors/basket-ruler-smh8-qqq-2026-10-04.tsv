@@ -1,6 +1,6 @@
 # AN EXAMPLE BASKET RULER, not a default: no set grades a basket unless a run names a ruler
 # (`-basketruler`). SMH's eight largest holdings as of 2026-10-02 -- NVDA TSM AMD AVGO MU INTC AMAT
-# KLAC -- against QQQ, adjusted closes from Yahoo's public chart API. To re-measure: write the nine
+# KLAC -- against QQQ, Yahoo Finance's adjusted closes. To re-measure: write the nine
 # symbols' adjusted closes as one wide CSV (`date,QQQ,NVDA,...`) and run `record_bands -basket
 # -closes WIDE.csv -closesdate D -from 2012-01-04 -to 2026-08-31`; a later fetch reads slightly
 # differently, every distribution since recomputing the adjusted series. The `dials` group is

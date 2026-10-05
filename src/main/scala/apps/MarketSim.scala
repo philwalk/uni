@@ -5015,7 +5015,7 @@ object MarketSim:
     * still are.  A printed claim that no longer follows from the file is worse than no claim,
     * which is the same reason the envelope row carries its own bounds in its name. */
   val RetAc1Record: (Double, Double, Double, Double, Double) =
-    (0.0471, 0.0232, -0.0577, -0.1058, -0.0180)
+    (0.0471, 0.0232, -0.0577, -0.1056, -0.0180)
 
   val VarRatioSlopeBands: Vector[(Int, Int, Double, Double)] =
     Vector((20, 60, -0.20, 0.10), (60, 120, -0.15, 0.15))

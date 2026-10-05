@@ -69,9 +69,9 @@ const USAGE: &str =
                 momentum, trend and shape rows of `sectors-2026-09-30.tsv`, with 5-95
                 block-bootstrap bands where a row has one
 
-  -yahoo FILE   a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo's chart API, one row a
-                session): the `dlog_adj_close` column; the first row is the anchor
-                price, not a return, and is skipped
+  -yahoo FILE   a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo Finance's daily
+                history, one row a session): the `dlog_adj_close` column; the first row is the
+                anchor price, not a return, and is skipped
   -splice FILE -at DATE
                 a second such file continuing the -yahoo one: the -yahoo file's returns dated on or
                 before DATE, then this file's dated after it (the Nasdaq splice: ^IXIC through

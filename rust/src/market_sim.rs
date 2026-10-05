@@ -7439,7 +7439,7 @@ const VAR_RATIO_BANDS: [(usize, f64, f64); 4] = [
 /// own `ac1` readings, and `persistence_anchor_tests` checks they still are. A printed claim that
 /// no longer follows from the file is worse than no claim, which is the same reason the envelope
 /// row carries its own bounds in its name.
-const RET_AC1_RECORD: (f64, f64, f64, f64, f64) = (0.0471, 0.0232, -0.0577, -0.1058, -0.0180);
+const RET_AC1_RECORD: (f64, f64, f64, f64, f64) = (0.0471, 0.0232, -0.0577, -0.1056, -0.0180);
 
 const VAR_RATIO_SLOPE_BANDS: [(usize, usize, f64, f64); 2] =
     [(20, 60, -0.20, 0.10), (60, 120, -0.15, 0.15)];

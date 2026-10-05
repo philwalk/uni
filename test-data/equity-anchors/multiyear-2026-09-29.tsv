@@ -1,5 +1,5 @@
 # THE MULTI-YEAR ROWS (2026-09-29; the decline length rows added and every row regenerated from
-# public sources 2026-09-30): the record's own reading of `multiYearReadings` /
+# published sources 2026-09-30): the record's own reading of `multiYearReadings` /
 # `multi_year_readings`, the statistics a year or more of a series is one observation of.
 #
 # annual autocorr           the lag-1 correlation of successive annual log changes
@@ -31,9 +31,9 @@
 # `Anchors.multiYear` / `multiYearLong` (`multi_year`, `multi_year_long`) are the graded series'
 # records, and a test per twin re-derives them.
 #
-# nasdaq  QQQ, adjusted closes from Yahoo's chart API, 1999-03-11..2026-08-20; long window IXIC+NDX,
+# nasdaq  QQQ, Yahoo Finance's adjusted closes, 1999-03-11..2026-08-20; long window IXIC+NDX,
 #         the Nasdaq Composite's daily log returns through 1985-10-01 and the Nasdaq-100's after
-#         (Yahoo ^IXIC and ^NDX closes; price indexes), 1971-02-08..2026-09-18, the bubble window;
+#         (Yahoo Finance's ^IXIC and ^NDX closes; price indexes), 1971-02-08..2026-09-18, the bubble window;
 #         reported, the NDX PRICE index alone, 1990-01-03..2026-09-18.
 # sp500   CRSP value-weighted US market total return from Ken French's
 #         F-F_Research_Data_Factors_daily (202606): Mkt-RF + RF compounded into an index without

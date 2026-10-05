@@ -21,7 +21,7 @@
 #            windows by their rows (QQQ's 15 at 0.0833, its 2 DFF rows at 0.0111 and its TLT row at 0.0056;
 #            the S&P's 13 at 0.0722, its 2 century rows, its 2 DFF rows and its TLT row likewise).  Each row's own p5..p95 held the QQQ resamples all at once 42.7% of the time.
 #
-# nasdaq  QQQ, Yahoo's public adjusted closes (chart API, taken 2026-10-04): daily log returns
+# nasdaq  QQQ, Yahoo Finance's adjusted closes (retrieved 2026-10-04): daily log returns
 #         1999-03-11..2026-08-20, the window the Nasdaq set's levels were measured over.  The file's
 #         first row is the anchor price and carries no return.
 # sp500   CRSP value-weighted US market total return from Ken French's
@@ -31,7 +31,7 @@
 # DFF     the daily effective federal funds rate (FRED's full run, fredgraph.csv?id=DFF, fetched
 #         2026-09-25), the rate rows' record for both sets, read on Monday-Friday dates over the set's own
 #         equity window.  A level, so no session drops out.
-# TLT     the bond row's record for both sets: Yahoo's public adjusted closes (chart API, taken
+# TLT     the bond row's record for both sets: Yahoo Finance's adjusted closes (retrieved
 #         2026-10-04), daily log returns 2002-07-31..2026-08-03.
 #
 # WHERE A LOSS TARGET IS NOT THIS RECORD, and stays as it is (the verdict carries both):

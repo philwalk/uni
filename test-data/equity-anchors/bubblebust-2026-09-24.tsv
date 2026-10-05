@@ -16,13 +16,15 @@
 #
 # Each set grades its own index's longest record (2026-10-03):
 # nasdaq  IXIC+NDX, the splice: the Nasdaq Composite's daily log returns through 1985-10-01, the
-#         Nasdaq-100's after (Yahoo's chart API, ^IXIC and ^NDX closes; price indexes),
+#         Nasdaq-100's after (Yahoo Finance's ^IXIC and ^NDX closes; price indexes),
 #         1971-02-08..2026-09-18.  QQQ's record starts 1999-03-10, nine years too late for a 3-year
 #         run-up into the 2000-03 peak, and the consumer's rules were selected on the NDX from 1990,
 #         so its NDX rows (1990-01-03..2026-09-18) are reported, not graded (`NASDAQ_REPORTED`).
 # sp500   CRSP value-weighted US market total return from Ken French's
-#         F-F_Research_Data_Factors_daily (202606) over the century, the tail window: Mkt-RF + RF
+#         F-F_Research_Data_Factors_daily over the century, the tail window: Mkt-RF + RF
 #         compounded into an index without a leading 1.0, then its log returns.
+# Re-read 2026-10-04 from published sources (Yahoo Finance's ^IXIC and ^NDX closes, Ken French's
+# 202608 daily file) by the commands below: every row identical.
 #
 # TWO MORE EXTREME ROWS on the same windows (2026-09-27): `largest 3y run-up` (`runUp3yOf` /
 # `run_up_3y_of`, the maximum log return over any 756 sessions) and `longest calm stretch`
