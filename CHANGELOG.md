@@ -96,9 +96,11 @@ little-endian f32 cells, path-major (path, then column, then session), with one 
 chunk; `-emitcols` picks the columns and their order. A path's bytes do not depend on the chunk
 that holds it, and paths are written a batch at a time, so a bundle of thousands is a few chunks:
 200 paths of 56 years in 36 columns make a 406 MB chunk written in 1.7 s on 24 cores, verdict
-included. Every chunk carries the `-emitgate` ensemble's verdict, whatever its size. Values are
-the TSV's at single precision. The Scala twin's chunk differs from the Rust one in about one cell
-in three million, by one f32 ulp.
+included. Every chunk carries the `-emitgate` ensemble's verdict, whatever its size; `-emitgate 0`
+and `-validate` are refused with it. Values are the simulation's doubles at single precision; the
+TSV prints the same doubles at six decimals, so the two differ by the TSV's rounding, most relative
+to the smallest values such as `rate`. The Scala twin's chunk differs from the Rust one in about one
+cell in three million, by one f32 ulp.
 
 **The basket is a null world, graded only against the client's own ruler.** The basket's names
 are exchangeable by construction: a shared leg on the primary plus each name's own idio and
@@ -114,7 +116,8 @@ names:
   pair ranges. Every row uses the model's own definition, so idio share is read on the aggregate.
   The Scala twin is `jsrc/recordBands.sc -basket`, byte-identical.
 - `-basketruler FILE` grades the eight basket rows and the mechanism row against the ruler. It sets
-  N to the ruler's names and the four dials to its fitted ones. The model reads under the ruler's
+  N to the ruler's names and the four dials to its fitted ones, on a `-worldset` member as on a
+  recipe. The model reads under the ruler's
   coverage: name k counts over its listing's share of each path. A 45-name model's aggregate is
   therefore read against the 10 to 45 names the record held, not all 45, since diversification
   moves the aggregate rows by most of a band. A ruler whose record fails the mechanism premise is
@@ -411,8 +414,8 @@ Fixtures, each from `record_bands` on public sources: `recordbands-2026-09-26.ts
 
 **`-power`.**
 
-- Two rows per arm: `real 15y PWR p10 %` and `PWR < 4% starts %`. Each is the perpetual
-  withdrawal rate on the monthly grid, from wealth 1 with quarterly CPI-indexed withdrawals over a
+- Two rows per arm: `real 15y PWR p10 %` and `PWR < 4% starts %`. Each is the perfect
+  withdrawal rate (the rate that exhausts wealth exactly at the horizon's end) on the monthly grid, from wealth 1 with quarterly CPI-indexed withdrawals over a
   180-month horizon. The rows are the 10th percentile over starts with a full horizon, and the
   share under 4% a year.
 - Arms 10-13 are new: `sign 12m vs cash, monthly`, `SMA 10m, monthly`, and the daily

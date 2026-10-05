@@ -16621,9 +16621,10 @@ fn min_total(v: &[f64]) -> f64 {
     sorted_total(v)[0]
 }
 
-// ---- the perpetual withdrawal rate ----------------------------------------------------------
+// ---- the perfect withdrawal rate ----------------------------------------------------------
 
-/// THE PERPETUAL WITHDRAWAL RATE of an arm, on the monthly grid a withdrawal schedule runs on.
+/// THE PERFECT WITHDRAWAL RATE of an arm (the rate that exhausts wealth exactly at the horizon's
+/// end; Suarez, Suarez and Walz 2015), on the monthly grid a withdrawal schedule runs on.
 /// Month t ends at the last session of each calendar month of the synthetic calendar
 /// (`month_ends`). The arm holds through month t the exposure its rule had decided by the end
 /// of month t-1 (`e` at that session), the remainder in cash, rebalanced monthly: month t
@@ -21951,9 +21952,29 @@ fn with_world_set(args: Vec<String>) -> Vec<String> {
     let text = std::fs::read_to_string(&file)
         .unwrap_or_else(|e| cli_die(&format!("-worldset {file} cannot be read: {e}")));
     let mut out = world_set_flags(&text, &file, index).unwrap_or_else(|m| cli_die(&m));
+    // THE RULER SETS THE BASKET: with `-basketruler` on the command line the member's own basket
+    // size and dials give way to the ruler's, as a recipe's do; a `-basket*` flag after
+    // `-worldset` still overrides
+    if args.iter().any(|a| a == "-basketruler") {
+        out = out
+            .chunks(2)
+            .filter(|p| !BASKET_FLAGS.contains(&p[0].as_str()))
+            .flatten()
+            .cloned()
+            .collect();
+    }
     out.extend(args);
     out
 }
+
+/// The flags a basket ruler sets, which a `-worldset` member's fields must not pre-empt.
+const BASKET_FLAGS: [&str; 5] = [
+    "-basket",
+    "-basketbeta",
+    "-basketsector",
+    "-basketidio",
+    "-basketgaps",
+];
 
 #[expect(
     clippy::too_many_lines,
@@ -24730,14 +24751,14 @@ mod contract_tests {
     /// Every fidelity target must be classified as equity or bond, exactly once. The subset check
     /// this replaces caught renames but not ADDITIONS: a new equity target would simply never
     /// appear in the equity section, and a shorter table reads as a shorter list of concerns.
-    /// THE PERPETUAL WITHDRAWAL RATE of buy-and-hold on the default world's 40-year path at seed
+    /// THE PERFECT WITHDRAWAL RATE of buy-and-hold on the default world's 40-year path at seed
     /// 20260813 (the `-emit` fixture's path: price 15.205607 at its first session, 480 month
     /// ends) reads what an independent implementation of the same definition read off the
     /// emitted file: 287 starts, 7.8060 at the first, minimum 2.3736, p10 3.8441, median
     /// 8.6133, 33 starts under 4%. The rule layer on a hand exposure: all cash reads the cash
     /// leg's own compounding, a switch pays the turnover once.
     #[test]
-    fn the_perpetual_withdrawal_rate_reads_what_an_independent_implementation_read() {
+    fn the_perfect_withdrawal_rate_reads_what_an_independent_implementation_read() {
         let p = &sim_paths(&default_world(), 1, 40, 20_260_813)[0];
         assert!(
             (p.price[0] - 15.205_607).abs() < 5e-7,
@@ -30356,6 +30377,41 @@ mod open_tests {
 #[cfg(test)]
 mod basket_ruler_tests {
     use super::*;
+
+    /// A ruler turns a set member's basket on: `-worldset` seeds the member's basket size and
+    /// dials as flags, and with `-basketruler` on the line those give way to the ruler's.
+    #[test]
+    fn a_ruler_sets_a_set_members_basket() {
+        let file = "../test-data/worlds/0.24.6-nasdaq.json";
+        if !std::path::Path::new(file).exists() {
+            return;
+        }
+        let base: Vec<String> = ["-worldset", file, "-worldindex", "3"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let plain = with_world_set(base.clone());
+        assert!(
+            plain.iter().any(|a| a == "-basket"),
+            "a member seeds its basket size"
+        );
+        let mut with_ruler = base;
+        with_ruler.extend(["-basketruler".to_string(), "r.tsv".to_string()]);
+        let ruled = with_world_set(with_ruler);
+        assert!(
+            !ruled.iter().any(|a| BASKET_FLAGS.contains(&a.as_str())),
+            "with a ruler the member's basket flags give way"
+        );
+        assert!(
+            ruled.iter().any(|a| a == "-drift"),
+            "the other dials still seed"
+        );
+        assert_eq!(
+            ruled.len() + 10,
+            plain.len() + 2,
+            "five flag pairs dropped, the ruler pair added"
+        );
+    }
 
     const CLOSES: &str = "../test-data/equity-anchors/basket-closes-synthetic-2026-10-04.csv";
     const SYNTHETIC: &str = "../test-data/equity-anchors/basket-ruler-synthetic-2026-10-04.tsv";

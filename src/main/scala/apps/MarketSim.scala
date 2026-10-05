@@ -8637,9 +8637,10 @@ object MarketSim:
   val StatNames: Vector[String] = gradingStats(
     ArmPath(Array(0.0, 0.0), Array(0.0, 0.0), Array(0.0), 1.0, 0, 0, 0, 0, 0), 1).map(_._1)
 
-  // ---- the perpetual withdrawal rate ----------------------------------------------------------
+  // ---- the perfect withdrawal rate ----------------------------------------------------------
 
-  /** THE PERPETUAL WITHDRAWAL RATE of an arm, on the monthly grid a withdrawal schedule runs on.
+  /** THE PERFECT WITHDRAWAL RATE of an arm (the rate that exhausts wealth exactly at the horizon's
+    * end; Suarez, Suarez and Walz 2015), on the monthly grid a withdrawal schedule runs on.
     * Month t ends at the last session of each calendar month of the synthetic calendar
     * (`monthEnds`).  The arm holds through month t the exposure its rule had decided by the end of
     * month t-1 (`e` at that session), the remainder in cash, rebalanced monthly: month t earns
@@ -12038,6 +12039,13 @@ object MarketSim:
     * world cannot be silently skipped here.  A block that does not carry exactly them is REFUSED:
     * a missing dial would take the shipped default, which is a different world wearing a member's
     * name. */
+  /** The flags a basket ruler sets, which a `-worldset` member's fields must not pre-empt. */
+  val BasketFlags: Set[String] = Set("-basket", "-basketbeta", "-basketsector", "-basketidio", "-basketgaps")
+
+  /** `worldSetArgs`' flag pairs without the basket's, for a run that names a ruler. */
+  def withoutBasketFlags(seeded: Seq[String]): Seq[String] =
+    seeded.grouped(2).filterNot(p => BasketFlags.contains(p.head)).flatten.toSeq
+
   def worldSetArgs(file: String, index: Int): Seq[String] =
     val MemberLine = """^"member":\s*(\d+),?$""".r
     val FieldLine  = """^"([A-Za-z][A-Za-z0-9]*)":\s*(.+?),?$""".r
@@ -12775,7 +12783,11 @@ $body
             case j  =>
               if j + 1 >= args.length then usage("-worldindex wants a member number")
               intOr("-worldindex", args(j + 1))
-          worldSetArgs(args(i + 1), k)
+          // THE RULER SETS THE BASKET: with `-basketruler` on the command line the member's own
+          // basket size and dials give way to the ruler's, as a recipe's do; a `-basket*` flag
+          // after `-worldset` still overrides
+          val seeded = worldSetArgs(args(i + 1), k)
+          if args.contains("-basketruler") then withoutBasketFlags(seeded) else seeded
     var trendShare = dw.trendShare; var depth = dw.depth
     var stress = dw.stress; var beta = dw.beta
     var volPersist = dw.volPersist; var volOfVol = dw.volOfVol

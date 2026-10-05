@@ -1086,13 +1086,13 @@ class MarketSimContractSuite extends FunSuite:
     assert(MarketSim.episodeRows(dip, Array.fill(dip.length)(0.0), None).isEmpty)
   }
 
-  // THE PERPETUAL WITHDRAWAL RATE of buy-and-hold on the default world's 40-year path at seed
+  // THE PERFECT WITHDRAWAL RATE of buy-and-hold on the default world's 40-year path at seed
   // 20260813 (the `-emit` fixture's path: price 15.205607 at its first session, 480 month ends)
   // reads what an independent implementation of the same definition read off the emitted file:
   // 287 starts, 7.8060 at the first, minimum 2.3736, p10 3.8441, median 8.6133, 33 starts under
   // 4%.  The rule layer on a hand exposure: all cash reads the cash leg's own compounding, a
   // switch pays the turnover once.
-  test("the perpetual withdrawal rate reads what an independent implementation read") {
+  test("the perfect withdrawal rate reads what an independent implementation read") {
     val p = MarketSim.simPaths(MarketSim.Defaults, 1, 40, 20260813L).head
     assert(math.abs(p.price(0) - 15.205607) < 5e-7, s"the fixture's path: ${p.price(0)}")
     val ends = MarketSim.monthEnds(p.price.length)

@@ -226,3 +226,14 @@ class BasketRulerSuite extends FunSuite:
                                           basketGaps = 6.0), 3, MarketSim.DefaultSeed)
     assert(a.sat.sameElements(b.sat) && a.logHi.sameElements(b.logHi), "the basket reads its own stream only")
   }
+
+  test("a ruler turns a set member's basket on: the member's own basket flags give way") {
+    val file = "test-data/worlds/0.24.6-nasdaq.json"
+    if file.asPath.exists then
+      val seeded = MarketSim.worldSetArgs(file, 3)
+      assert(seeded.contains("-basket"), "a member seeds its basket size")
+      val ruled = MarketSim.withoutBasketFlags(seeded)
+      assert(!ruled.exists(MarketSim.BasketFlags.contains), "with a ruler the member's basket flags give way")
+      assert(ruled.contains("-drift"), "the other dials still seed")
+      assertEquals(ruled.length, seeded.length - 10, "five flag pairs dropped")
+  }
