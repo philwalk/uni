@@ -65,6 +65,10 @@ object RecordBands {
     "              by `rateReadings`, its resamples by `rateResamples`, their own joint band",
     "-bond         print the bond row (`BondBandRows`) of a -yahoo window (TLT) instead: the record",
     "              by `bondReadings`, its resamples by `bondResamples`, its own joint band",
+    "-bond10       print the 10-year leg's rows (`Bond10BandRows`) of a -yahoo window instead -- FRED's",
+    "              DGS10 as a par bond, with -fred DFF as the short rate its excess return is read",
+    "              over: the record by `bond10Readings`, its resamples by `bond10Resamples`, their",
+    "              own joint band over the three rows",
     "-rateafter    THE CONDITIONAL RATE ROWS (`RateAfterRows`): the -fred rate on the equity window's",
     "              session dates, the two years after each 20% decline's trough; the record by",
     "              `rateAfterOfReturns`, its paired block resamples, their own joint band",
@@ -397,7 +401,7 @@ object RecordBands {
     var splice = Vector.empty[(String, String)]; var pending = ""; var column = ""
     var set = ""; var series = ""; var rows = Vector.empty[String]
     var resamples = 20000; var seed = 20260918L; var header = false
-    var joint = 0.10; var of = 0; var coupling = false; var rate = false; var bond = false
+    var joint = 0.10; var of = 0; var coupling = false; var rate = false; var bond = false; var bond10 = false
     var multiyear = false; var long = false; var rateafter = false
     eachArg(args.toSeq, usage) {
       case "-yahoo"     => yahoo = consumeNext
@@ -425,6 +429,7 @@ object RecordBands {
       case "-long"      => long = true
       case "-rate"      => rate = true
       case "-bond"      => bond = true
+      case "-bond10"    => bond10 = true
       case "-rateafter" => rateafter = true
       case a            => usage(s"unrecognized arg [$a]")
     }
@@ -432,6 +437,14 @@ object RecordBands {
     val afterRate =
       if !rateafter then ""
       else if fred.isEmpty then usage("-rateafter wants a -fred rate beside the equity")
+      else
+        val f = fred
+        fred = ""
+        f
+    // `-bond10` reads the short rate beside its DGS10 file, for the excess-return row
+    val cashRate =
+      if !bond10 then ""
+      else if fred.isEmpty then usage("-bond10 wants a -fred DFF beside the DGS10 file")
       else
         val f = fred
         fred = ""
@@ -489,6 +502,10 @@ object RecordBands {
       return
     if bond then
       printBondRows(set, series, resamples, seed, joint, of, header, r, window)
+      return
+    if bond10 then
+      if yahoo.isEmpty || splice.nonEmpty then usage("-bond10 reads one FRED DGSn file given as -yahoo")
+      printBond10Rows(set, series, resamples, seed, joint, of, header, yahoo, cashRate, dated, window)
       return
     eprintln(s"$series: ${r.length} returns $window, ${r.count(_ == 0.0)} exactly zero; " +
              s"$resamples resamples, seed $seed")
@@ -596,6 +613,88 @@ object RecordBands {
       println(f"shape\t$table%s\t\tall\tmedian pairwise correlation\t${s(1)}%.6f\t\t\t${n(0)}%d")
       println(f"shape\t$table%s\t\tmarket worst decile\tmedian pairwise correlation\t${s(2)}%.6f\t\t\t${n(1)}%d")
       println(f"shape\t$table%s\t\tmarket middle decile\tmedian pairwise correlation\t${s(3)}%.6f\t\t\t${n(2)}%d")
+
+  /** The 10-year leg's two rows (`Bond10BandRows`) on a bond series -- FRED's DGS10 read as a par
+    * bond -- the record by `bond10Readings`, its one-year-block resamples by `bond10Resamples`,
+    * their own joint band over the two rows. */
+  /** `date -> (modified duration, the prior observation's date)` of the n-year par Treasury
+    * `readTreasury` rebuys at each observation, keyed by the date of the return it earns: the
+    * duration bought at the prior observation's yield. */
+  def treasuryDurations(lines: Vector[String], years: Double): Map[String, (Double, String)] =
+    val obs = lines.drop(1).flatMap { l =>
+      val f = l.split(',').map(_.trim)
+      f.lift(1).flatMap(_.toDoubleOption).map(v => (f(0), v / 100.0))
+    }
+    (1 until obs.length).map { i =>
+      val y = obs(i - 1)._2
+      val d = if y > 0.0 then (1.0 - MarketSim.expDet(-2.0 * years * MarketSim.lnDet(1.0 + y / 2.0))) / y else years
+      (obs(i)._1, (d, obs(i - 1)._1))
+    }.toMap
+
+  /** `(first day number, running log accrual by day)` of FRED's daily DFF file: every calendar day
+    * accrues `ln(1 + rate / 365)` at the last rate published (percent a year). */
+  def cashCurve(file: String): (Long, Array[Double]) =
+    val obs = file.asPath.lines.toVector.drop(1).flatMap { l =>
+      val f = l.split(',').map(_.trim)
+      f.lift(1).flatMap(_.toDoubleOption).map(v => (daysFromCivil(f(0)), v / 100.0))
+    }
+    if obs.isEmpty then usage(s"$file: no rates")
+    val first = obs.head._1
+    val last  = obs.last._1
+    val cum = new Array[Double]((last - first + 1).toInt)
+    var acc = 0.0; var rate = obs.head._2; var j = 0
+    var day = first
+    while day <= last do
+      if j < obs.length && obs(j)._1 == day then
+        rate = obs(j)._2
+        j += 1
+      acc += MarketSim.lnDet(1.0 + rate / 365.0)
+      cum((day - first).toInt) = acc
+      day += 1
+    (first, cum)
+
+  /** The short rate's log accrual over the days after `from` through `to` (`cashCurve`). */
+  def cashAccrual(curve: (Long, Array[Double]), from: String, to: String): Double =
+    def at(d: String): Double =
+      val k = daysFromCivil(d) - curve._1
+      if k < 0 then 0.0 else curve._2(math.min(k, curve._2.length - 1L).toInt)
+    at(to) - at(from)
+
+  /** The 10-year leg's three rows (`Bond10BandRows`) on FRED's DGS10 read as a par bond -- each
+    * session's return, the duration it was bought at, and its log return over DFF's accrual across
+    * the same days -- the record by `bond10Readings` at the window's own sessions a year, its
+    * one-year-block resamples by `bond10Resamples`, their own joint band over the three rows. */
+  def printBond10Rows(set: String, series: String, resamples: Int, seed: Long, joint: Double, of: Int,
+                      header: Boolean, file: String, cashFile: String, dated: Vector[(String, Double)],
+                      window: String): Unit =
+    val lines = file.asPath.lines.toVector
+    val head  = lines.headOption.getOrElse("").split(',').map(_.trim)
+    if !(head.length == 2 && head(0) == "observation_date" && head(1).startsWith("DGS")) then
+      usage(s"$file: -bond10 reads a FRED DGSn file")
+    val years = head(1).drop(3).toDoubleOption.getOrElse(usage(s"$file: [${head(1)}] is not a DGSn series"))
+    val durs  = treasuryDurations(lines, years)
+    val curve = cashCurve(cashFile)
+    val held  = dated.map((d, _) => durs.getOrElse(d, usage(s"$file: no duration for $d")))
+    val r     = dated.map(_._2).toArray
+    val dur   = held.map(_._1).toArray
+    val ex    = dated.zip(held).map { case ((d, x), h) => x - cashAccrual(curve, h._2, d) }.toArray
+    // sessions a year over the window, from the first return's purchase to the last return
+    val span    = (daysFromCivil(dated.last._1) - daysFromCivil(held.head._2)).toDouble / 365.25
+    val perYear = dated.length.toDouble / span
+    val record  = MarketSim.bond10Readings(r, dur, ex, perYear)
+    eprintln(f"$series%s: ${r.length}%d returns $window%s, bond10 vol per duration ${record(0)}%.4f, depth vs vol ${record(1)}%.4f, " +
+             f"excess ${record(2)}%.4f pts/yr at $perYear%.2f sessions a year; $resamples%d resamples, seed $seed%d")
+    val reads = MarketSim.bond10Resamples(r, dur, ex, perYear, resamples, seed)
+    if header then
+      println("set\trow\tseries\twindow\tn\tresamples\trecord\t" +
+              MarketSim.RecordBandPcts.map(p => s"p$p").mkString("\t") + "\tjointC\tjointLo\tjointHi")
+    val alpha = joint * 3.0 / (if of == 0 then 3 else of)
+    val (c, edges) = MarketSim.recordBandJoint(reads, Vector(0, 1, 2), alpha)
+    for (name, k) <- MarketSim.Bond10BandRows.zipWithIndex do
+      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      val (lo, hi) = edges(k)
+      println(f"$set%s\t$name%s\t$series%s\t$window%s\t${r.length}%d\t$resamples%d\t${record(k)}%.6f\t" +
+              qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
 
   def printBondRows(set: String, series: String, resamples: Int, seed: Long, joint: Double, of: Int,
                     header: Boolean, r: Array[Double], window: String): Unit =

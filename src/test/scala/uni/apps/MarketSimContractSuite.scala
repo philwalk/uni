@@ -921,14 +921,18 @@ class MarketSimContractSuite extends FunSuite:
                          rangeDown = c.rangeDown, volIdio = c.volIdio, overnight = c.overnight,
                          divYield = c.divYield,
                          sectors = c.sectors, sectorIdio = c.sectorIdio, sectorDriftSd = c.sectorDriftSd,
-                         sectorDriftHalf = c.sectorDriftHalf, macroPanel = c.macroPanel), d)
+                         sectorDriftHalf = c.sectorDriftHalf, macroPanel = c.macroPanel, bond10 = d.bond10), d)
+    assertEquals(vw.bond10, MarketSim.VerdictBond10, "the verdict runs the 10-year leg")
     assertEquals(MarketSim.ChannelDials.of(MarketSim.verdictWorld(MarketSim.NasdaqAnchors, d)),
                  MarketSim.NasdaqChannelDials)
     val w = d.copy(satBeta = 1.5, satIdio = 0.5, macroPanel = 1, macroNull = 1)
     val v = MarketSim.verdictWorld(MarketSim.SP500Anchors, w)
     assert(v.satBeta == 1.5 && v.satIdio == 0.5 && v.macroNull == 0 && v.basket == 0,
            "a channel the caller turned on keeps its dials; the rest are anchored but the basket")
-    assertEquals(MarketSim.verdictWorld(MarketSim.SP500Anchors, sp), sp)
+    // the channel recipe's verdict world is the recipe itself, but for the 10-year leg
+    val vsp = MarketSim.verdictWorld(MarketSim.SP500Anchors, sp)
+    assertEquals(vsp.bond10, MarketSim.VerdictBond10)
+    assertEquals(vsp.copy(bond10 = sp.bond10), sp)
   }
 
   test("the boom regime is absent at zero and releases inherit that") {

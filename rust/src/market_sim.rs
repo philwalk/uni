@@ -268,7 +268,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // ruler omits it unless an `-emitf32` run's `-emitcols` names it. A world without a basket loses
 // the basket rows, readings and `verdictSeries` entries the verdict used to supply.
 // `channels.macro` gained `warnings`, `falseAlarm` and `allClear` (`warning_counts`).
-const EMIT_SCHEMA: u32 = 30;
+const EMIT_SCHEMA: u32 = 31;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -804,6 +804,8 @@ pub fn default_world() -> World {
         crowd_impact: 0.030,
         panic: 0.0,
         duration: 13.5,
+        bond10: 0.0,
+        term_premium: 0.10,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -960,6 +962,8 @@ fn v0_19_2() -> World {
         crowd_impact: 0.088,
         panic: 0.0,
         duration: 13.5,
+        bond10: 0.0,
+        term_premium: 0.0,
         easing: 0.045,
         unwind: 0.35,
         floorhold: 0.0,
@@ -1078,6 +1082,8 @@ fn v0_24_1() -> World {
         crowd_impact: 0.03,
         panic: 0.0,
         duration: 13.5,
+        bond10: 0.0,
+        term_premium: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -1145,6 +1151,8 @@ pub fn releases() -> Vec<(&'static str, World)> {
     pre.crowd_impact = 0.06;
     pre.drift = 0.100;
     pre.duration = 13.5;
+    pre.bond10 = 0.0;
+    pre.term_premium = 0.0;
     pre.infl_size = 0.07;
     pre.discount = 4.0;
     pre.margin = 0.0008;
@@ -1357,10 +1365,14 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
 /// The 0.24.6 recipes. THE DRIFT HELD AT THE RECORD: each 0.24.5 recipe at the drift that puts
 /// return per vol at its record on seeds 1-4 at 200 x 100, every other dial unchanged -- QQQ's
 /// 0.38 for the Nasdaq (the 0.24.5 recipe reads 0.30), CRSP 1954-2026's 0.69 for the S&P (0.61).
+/// THE TERM PREMIUM at the record: 0.10 a year of duration puts the 10-year leg's log return over
+/// the short rate at DGS10-over-DFF's 0.78 a year, 1962-2026 (both recipes and the default read
+/// -0.02 to -0.04 without it and 8.0 more per unit of the dial).
 /// The Nasdaq basket recipe takes the Nasdaq's drift under `0.24.5-nasdaq-basket`'s channel dials.
 fn rows_0246(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
     let nq = World {
         drift: 0.151_192_56,
+        term_premium: 0.10,
         ..recipe_0245_nasdaq(nq_0244)
     };
     vec![
@@ -1374,6 +1386,7 @@ fn rows_0246(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
             "0.24.6-sp500",
             World {
                 drift: 0.147_474_57,
+                term_premium: 0.10,
                 ..with_sectors(
                     recipe_0245_sp500(recipe_0244_sp500_channels(v0_24_4())),
                     SP500_CHANNEL_DIALS,
@@ -2070,6 +2083,8 @@ fn v0_23_0() -> World {
         crowd_impact: 0.030,
         panic: 0.0,
         duration: 13.5,
+        bond10: 0.0,
+        term_premium: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2207,6 +2222,8 @@ fn v0_22_1() -> World {
         crowd_impact: 0.030,
         panic: 0.0,
         duration: 13.5,
+        bond10: 0.0,
+        term_premium: 0.0,
         easing: 0.060,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2346,6 +2363,8 @@ fn v0_22_0() -> World {
         crowd_impact: 0.030,
         panic: 0.0,
         duration: 13.5,
+        bond10: 0.0,
+        term_premium: 0.0,
         easing: 0.060,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2485,6 +2504,8 @@ fn v0_21_0() -> World {
         crowd_impact: 0.07,
         panic: 0.0,
         duration: 13.5,
+        bond10: 0.0,
+        term_premium: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2624,6 +2645,8 @@ fn v0_20_0() -> World {
         crowd_impact: 0.07,
         panic: 0.0,
         duration: 13.5,
+        bond10: 0.0,
+        term_premium: 0.0,
         easing: 0.046,
         unwind: 0.35,
         floorhold: 0.0,
@@ -3364,6 +3387,16 @@ pub struct World {
     pub panic: f64,
     /// bond duration: sensitivity of its fair value to the rate
     pub duration: f64,
+    /// THE 10-YEAR LEG: a second bond market at this duration (0 = off), the same state, flows
+    /// and noise scale as the bond's at `duration`, on its own stream; emitted as `bond10` and
+    /// graded against FRED's DGS10 read as a par bond. A consumer holding a 10-year Treasury
+    /// (duration about 8) reads this leg, not the long bond's
+    pub bond10: f64,
+    /// THE TERM PREMIUM, percentage points a year per year of duration: every bond leg carries the
+    /// short rate plus this times its duration, where a bond without it earns the short rate alone.
+    /// Sampled with the sets (a record pins it only to its own sampling width) and graded by the
+    /// 10-year leg's log return over the short rate against FRED's DGS10 over DFF, 1962-2026
+    pub term_premium: f64,
     /// CAP on policy accommodation under equity stress, in rate points
     pub easing: f64,
     /// how fast that accommodation is withdrawn, per year
@@ -3413,6 +3446,8 @@ pub struct Path {
     pub bliq: Vec<f64>,
     /// flight-to-safety asset price (its own Market)
     pub bond: Vec<f64>,
+    /// the 10-year leg's price (its own Market at `World::bond10`; empty when the leg is off)
+    pub bond10: Vec<f64>,
     /// inflation pressure, for regime classification
     pub infl_press: Vec<f64>,
     /// realized price level, deterministic from pressure
@@ -3440,6 +3475,8 @@ pub struct Path {
     /// the world's bond duration, carried so the gate can judge bond volatility RELATIVE to it;
     /// a fixed absolute band can only ever fit one bond
     pub duration: f64,
+    /// the 10-year leg's duration, 0 when the leg is off
+    pub bond10_duration: f64,
     pub mean_crowd_flow: f64,
     /// BINDING diagnostic for the disaster channel: collapses begun post burn-in on this path.
     pub disasters: usize,
@@ -3507,6 +3544,7 @@ impl Path {
             liq: cut(&self.liq),
             bliq: cut(&self.bliq),
             bond: cut(&self.bond),
+            bond10: cut(&self.bond10),
             infl_press: cut(&self.infl_press),
             cpi: cut(&self.cpi),
             mean_trend_share: self.mean_trend_share,
@@ -3519,6 +3557,7 @@ impl Path {
             mean_bond_stress: self.mean_bond_stress,
             pct_bond_stress: self.pct_bond_stress,
             duration: self.duration,
+            bond10_duration: self.bond10_duration,
             mean_crowd_flow: self.mean_crowd_flow,
             disasters: self.disasters,
             booms: self.booms,
@@ -5489,6 +5528,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let mut lq = vec![0.0f64; tot];
     let mut bq = vec![0.0f64; tot];
     let mut bp = vec![0.0f64; tot];
+    let mut b10p = vec![0.0f64; tot];
     let mut ip = vec![0.0f64; tot];
     let mut cp = vec![0.0f64; tot];
     let dt = 1.0 / DAYS_PER_YEAR as f64;
@@ -5507,6 +5547,20 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     // `gain_mult` are: the equity spiral's scale speed, the bond's left at its default.
     eq_m.scale_mu = w.stress_adapt;
     let mut bd_m = Market::new(K_VALUE_BOND, w.stress, 1.0);
+    // THE 10-YEAR LEG: a second bond market at `bond10` years on the same state and flows at its
+    // own duration scale, its noise on its own stream, so the long bond and every other series
+    // are bit-identical whether the leg runs or not
+    let b10_on = w.bond10 > 0.0;
+    let k10 = w.bond10 / DURATION_REF;
+    let mut b10_m = Market::new(K_VALUE_BOND, w.stress, 1.0);
+    let mut b10rng = NumPyRng::new(seed ^ 0xb01d_10c7u64);
+    let mut fair_b10 = 0.0f64;
+    // THE TERM PREMIUM each leg carries over the short rate, per year (exactly 0.0 when off, and
+    // `rate + 0.0` is `rate`)
+    let tp_b = w.term_premium / 100.0 * w.duration;
+    let tp_b10 = w.term_premium / 100.0 * w.bond10;
+    let mut slow_b10 = 0.0f64;
+    let mut news_b10 = 0.0f64;
     // THE AMPLIFIER STUDY's gain scale: the equity market's alone (the bond's impact IS its
     // reference). Exact forms at 1 and 0.5; anything else goes through `exp_det` on a log, which
     // the twins' parity run guards.
@@ -5968,6 +6022,15 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             if w.news_bond > 0.0 {
                 news_b = NEWS_BOND_DECAY * news_b - bk * comp;
                 bd_m.log_p -= bk * comp;
+                if b10_on {
+                    let bk10 = if bk < 0.0 {
+                        -w.news_bond * k10
+                    } else {
+                        w.news_bond * k10
+                    };
+                    news_b10 = NEWS_BOND_DECAY * news_b10 - bk10 * comp;
+                    b10_m.log_p -= bk10 * comp;
+                }
             }
             if nrng.next_f64() < p_news {
                 log_vbase -= perm * size;
@@ -5986,6 +6049,12 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                     };
                     news_b += leg;
                     bd_m.log_p += leg;
+                    if b10_on {
+                        // the same news, the same skip draw, at the leg's duration
+                        let leg10 = leg * (w.bond10 / w.duration);
+                        news_b10 += leg10;
+                        b10_m.log_p += leg10;
+                    }
                 }
                 news_j = size;
             }
@@ -6016,6 +6085,11 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             let bm = -w.slow_beta * sm * (w.duration / DURATION_REF) * infl_sign;
             bd_m.log_p += bm;
             slow_b += w.slow_perm * bm;
+            if b10_on {
+                let bm10 = -w.slow_beta * sm * k10 * infl_sign;
+                b10_m.log_p += bm10;
+                slow_b10 += w.slow_perm * bm10;
+            }
             slow_g = w.slow_phi * slow_g - w.slow_lev * slow_k * zs;
         }
         infl_press += w.infl_speed * (infl_target - infl_press);
@@ -6044,7 +6118,10 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 + 0.01 * (1.0 + 25.0 * infl_press) * sqdt * rng.randn(),
         );
         // bond fair value: carry minus duration times the realised rate move
-        fair_b += rate * dt - w.duration * (rate - r_old);
+        fair_b += (rate + tp_b) * dt - w.duration * (rate - r_old);
+        if b10_on {
+            fair_b10 += (rate + tp_b10) * dt - w.bond10 * (rate - r_old);
+        }
         // The discount markdown applies to the OBSERVED equity price directly — same-day,
         // like the bond's duration response — because equities reprice discount-rate news
         // immediately. Routing it through the slow value channel smeared rate news over ~40
@@ -6664,6 +6741,17 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         };
         let bond_noise = SIGMA_N_BOND * (w.duration / DURATION_REF) * rng.randn();
         let _ret_b = bd_m.step(bond_fair, bond_flow + bond_noise);
+        if b10_on {
+            let flow10 = -w.margin * eq_m.stress_idx * b10_m.stress_idx
+                + w.refuge * k10 * eq_stress_for_refuge * 0.0f64.max(1.0 - b10_m.stress_idx);
+            let fair10 = if w.news_bond > 0.0 {
+                fair_b10 + slow_b10 + news_b10
+            } else {
+                fair_b10 + slow_b10
+            };
+            let noise10 = SIGMA_N_BOND * k10 * b10rng.randn();
+            let _ret10 = b10_m.step(fair10, flow10 + noise10);
+        }
 
         px[i] = (eq_m.log_p - markdown).exp();
         fv[i] = (log_vbase - markdown).exp();
@@ -6671,6 +6759,9 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         lq[i] = eq_m.last_liq;
         bq[i] = bd_m.last_liq;
         bp[i] = bd_m.log_p.exp();
+        if b10_on {
+            b10p[i] = b10_m.log_p.exp();
+        }
         ip[i] = infl_press;
         log_cpi += (pi_base + infl_press) * dt;
         cp[i] = log_cpi.exp();
@@ -6777,6 +6868,11 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         liq: lq[BURN_IN..].to_vec(),
         bliq: bq[BURN_IN..].to_vec(),
         bond: bp[BURN_IN..].to_vec(),
+        bond10: if b10_on {
+            b10p[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
         infl_press: ip[BURN_IN..].to_vec(),
         cpi: cp[BURN_IN..].to_vec(),
         mean_trend_share: w_trend_sum / nf,
@@ -6789,6 +6885,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         mean_bond_stress: bond_stress_sum / nf,
         pct_bond_stress: bond_stress_hi as f64 / nf,
         duration: w.duration,
+        bond10_duration: w.bond10,
         mean_crowd_flow: crowd_flow_sum / nf,
         disasters: disaster_count,
         booms: boom_count,
@@ -7189,6 +7286,14 @@ pub struct WorldStats {
     pub bond_vol: f64,
     pub bond_growth: f64,
     pub bond_infl: f64,
+    /// THE 10-YEAR LEG's readings (`World::bond10`), NaN when the leg is off: its annualised RMS
+    /// volatility over the whole path, its bond return over the growth and inflation crash
+    /// episodes, read as the bond's are
+    pub bond10_vol: f64,
+    pub bond10_growth: f64,
+    pub bond10_infl: f64,
+    /// the leg's log return over the short rate, points a year
+    pub bond10_excess: f64,
     pub corr_calm: f64,
     pub corr_infl: f64,
     /// kept for parity with the Scala record; not printed
@@ -7265,6 +7370,10 @@ pub struct WorldStats {
     pub dd_eq20: f64,
     pub dd_bd5: f64,
     pub dd_bd10: f64,
+    /// the 10-year leg's share of sessions more than 10% under its peak, NaN when off
+    pub dd_b10_10: f64,
+    /// the 10-year leg's duration, 0 when off
+    pub bond10: f64,
     pub dd_bd20: f64,
 }
 
@@ -7480,6 +7589,17 @@ impl WorldStats {
             f64::NAN
         } else {
             self.dd_bd10 / expected
+        }
+    }
+
+    /// The 10-year leg's time under water relative to what its own volatility implies, the bond
+    /// row's reading on the leg; NaN when the leg is off.
+    fn bond10_depth_vs_vol(&self) -> f64 {
+        let expected = (BOND_D10_SLOPE * (self.bond10_vol * 100.0) + BOND_D10_INTERCEPT).max(0.0);
+        if expected <= 0.0 {
+            f64::NAN
+        } else {
+            self.dd_b10_10 / expected
         }
     }
 
@@ -8411,6 +8531,22 @@ pub fn rate_after_resamples(r: &[f64], rate: &[f64], resamples: usize, seed: u64
 /// 2.4 on a world whose rate spends a third of its time at zero -- one hiking cycle sinks a
 /// bond for years -- with TLT's own history at their 26th percentile.
 pub const BOND_BAND_ROWS: [&str; 1] = ["bond depth vs vol"];
+
+/// THE 10-YEAR LEG's banded rows (`bond10_readings`; `bond10-2026-10-05.tsv`): its annualised RMS
+/// volatility PER YEAR OF DURATION -- on the record each session's return over the par bond's
+/// duration at the prior yield, so the record's moving duration cancels session by session; on
+/// the model the leg's over its own -- and its time under water against what its volatility
+/// implies, the bond row's reading on the leg. The record is FRED's DGS10 read as a par bond,
+/// 1962-2026, the same for both sets.
+pub const BOND10_BAND_ROWS: [&str; 3] = [
+    "bond10 vol per duration",
+    "bond10 depth vs vol",
+    "bond10 excess return pts/yr",
+];
+
+/// The duration the verdict runs the 10-year leg at when the caller leaves it off. The vol row is
+/// per year of duration, so the choice does not move it; 8 is a 10-year Treasury's today.
+pub const VERDICT_BOND10: f64 = 8.0;
 // ---- the sector rows -------------------------------------------------------------------------
 
 /// A PANEL OF INDUSTRY PORTFOLIOS read monthly, the record ruler of a sector channel: Ken
@@ -8763,6 +8899,8 @@ pub fn record_band_years(a: Anchors, name: &str) -> usize {
         a.cluster_years
     } else if RATE_BAND_ROWS.contains(&name) || RATE_AFTER_ROWS.contains(&name) {
         a.rate_years
+    } else if BOND10_BAND_ROWS.contains(&name) {
+        a.bond10_years
     } else if BOND_BAND_ROWS.contains(&name) {
         a.bond_years
     } else if TIMING_ROWS.contains(&name) {
@@ -8976,14 +9114,50 @@ pub fn bond_resamples(r: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 1]> {
     block_resamples(r, resamples, seed, bond_readings)
 }
 
+/// The 10-year leg's rows on one series of daily log returns, each session's duration and its log
+/// return over the short rate (`BOND10_BAND_ROWS`): the annualised RMS of return over duration, in
+/// percent per year of duration; `bond_readings`' time under water on the returns; and the mean
+/// excess at `per_year` sessions a year, in points a year.
+#[must_use]
+pub fn bond10_readings(r: &[f64], dur: &[f64], ex: &[f64], per_year: f64) -> [f64; 3] {
+    let vol = (scala_sum(r.iter().zip(dur).map(|(x, d)| (x / d) * (x / d))) / r.len() as f64
+        * DAYS_PER_YEAR as f64)
+        .sqrt()
+        * 100.0;
+    [
+        vol,
+        bond_readings(r)[0],
+        scala_sum(ex.iter().copied()) / ex.len() as f64 * per_year * 100.0,
+    ]
+}
+
+/// `record_resamples` on the 10-year leg's returns and durations together, read by
+/// `bond10_readings`: the session indices are resampled, so both series take the same blocks
+/// every other block resample takes.
+#[must_use]
+pub fn bond10_resamples(
+    r: &[f64],
+    dur: &[f64],
+    ex: &[f64],
+    per_year: f64,
+    resamples: usize,
+    seed: u64,
+) -> Vec<[f64; 3]> {
+    let idx: Vec<f64> = (0..r.len()).map(|i| i as f64).collect();
+    block_resamples(&idx, resamples, seed, |x: &[f64]| {
+        let pick = |v: &[f64]| -> Vec<f64> { x.iter().map(|&i| v[i as usize]).collect() };
+        bond10_readings(&pick(r), &pick(dur), &pick(ex), per_year)
+    })
+}
+
 /// Moving one-year-block resamples of one daily series, each the series' own length, read by
 /// `read`: every block start is drawn first from one `NumPyRng(seed)`, resample-major, so the
 /// resamples are the same whatever reads them.
-fn block_resamples<const N: usize>(
+fn block_resamples<const N: usize, F: Fn(&[f64]) -> [f64; N] + Sync>(
     r: &[f64],
     resamples: usize,
     seed: u64,
-    read: fn(&[f64]) -> [f64; N],
+    read: F,
 ) -> Vec<[f64; N]> {
     let n = r.len();
     let l = DAYS_PER_YEAR;
@@ -11602,6 +11776,12 @@ struct PathRead {
     episodes: Vec<Episode>,
     dd_eq: (f64, f64, f64),
     dd_bd: (f64, f64, f64),
+    /// the 10-year leg's readings, NaN / empty when the leg is off
+    dd_b10: (f64, f64, f64),
+    bond10_vol: f64,
+    bond10_growth: Vec<f64>,
+    bond10_infl: Vec<f64>,
+    bond10_excess: f64,
     vol: f64,
     kurt: f64,
     /// the typical year: `year_vol_of`
@@ -11665,6 +11845,11 @@ fn path_read(s: &Path, years: usize) -> PathRead {
     // these elements, which are those values to the bit
     let r = daily_returns(&s.price);
     let rb = daily_returns(&s.bond);
+    let rb10: Vec<f64> = if s.bond10.is_empty() {
+        Vec::new()
+    } else {
+        daily_returns(&s.bond10)
+    };
     // the valuation gap ln(P / V), once for its dispersion and its maximum
     let gap: Vec<f64> = s
         .price
@@ -11686,6 +11871,20 @@ fn path_read(s: &Path, years: usize) -> PathRead {
             .map(|ep| (s.bond[ep.trough] / s.bond[ep.peak]).ln() * 100.0)
             .collect()
     };
+    // the 10-year leg over the same episodes, by the same regime
+    let b10_in_windows = |infl_regime: bool| -> Vec<f64> {
+        if s.bond10.is_empty() {
+            return Vec::new();
+        }
+        eps.iter()
+            .filter(|ep| {
+                let sum: f64 = scala_sum((ep.peak..=ep.trough).map(|k| s.infl_press[k]));
+                let infl = sum / 1.max(ep.trough - ep.peak + 1) as f64;
+                (infl > INFL_REGIME_EDGE) == infl_regime
+            })
+            .map(|ep| (s.bond10[ep.trough] / s.bond10[ep.peak]).ln() * 100.0)
+            .collect()
+    };
     let corr_in = |infl_regime: bool| -> f64 {
         let idx: Vec<usize> = (1..s.price.len())
             .filter(|&i| (s.infl_press[i] > INFL_REGIME_EDGE) == infl_regime)
@@ -11702,6 +11901,26 @@ fn path_read(s: &Path, years: usize) -> PathRead {
     PathRead {
         dd_eq: depth_shares(&s.price),
         dd_bd: depth_shares(&s.bond),
+        dd_b10: if s.bond10.is_empty() {
+            (f64::NAN, f64::NAN, f64::NAN)
+        } else {
+            depth_shares(&s.bond10)
+        },
+        bond10_vol: if rb10.is_empty() {
+            f64::NAN
+        } else {
+            (MatD::apply(&rb10).power(2).mean() * dpy).sqrt()
+        },
+        bond10_growth: b10_in_windows(false),
+        bond10_infl: b10_in_windows(true),
+        // each session's log return over the rate it carried, the rate the session set
+        bond10_excess: if rb10.is_empty() {
+            f64::NAN
+        } else {
+            scala_sum(rb10.iter().zip(&s.rate[1..]).map(|(x, q)| x - q / dpy)) / rb10.len() as f64
+                * dpy
+                * 100.0
+        },
         vol: (MatD::apply(&r).power(2).mean() * dpy).sqrt(),
         year_vol: year_vol_of(&r),
         kurt: kurtosis(&r),
@@ -11905,6 +12124,16 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
             .iter()
             .flat_map(|p| p.bond_infl.iter().copied())
             .collect::<Vec<f64>>()),
+        bond10_vol: med_by(|p| p.bond10_vol),
+        bond10_excess: med_by(|p| p.bond10_excess),
+        bond10_growth: med(&per
+            .iter()
+            .flat_map(|p| p.bond10_growth.iter().copied())
+            .collect::<Vec<f64>>()),
+        bond10_infl: med(&per
+            .iter()
+            .flat_map(|p| p.bond10_infl.iter().copied())
+            .collect::<Vec<f64>>()),
         corr_calm: med_by(|p| p.corr_calm),
         corr_infl: med_by(|p| p.corr_infl),
         mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
@@ -11975,6 +12204,8 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         dd_eq20: med_by(|p| p.dd_eq.2),
         dd_bd5: med_by(|p| p.dd_bd.0),
         dd_bd10: med_by(|p| p.dd_bd.1),
+        dd_b10_10: med_by(|p| p.dd_b10.1),
+        bond10: sims[0].bond10_duration,
         dd_bd20: med_by(|p| p.dd_bd.2),
     }
 }
@@ -13210,6 +13441,10 @@ pub struct Anchors {
     pub bond_window: &'static str,
     pub bond_years: usize,
     pub bond_depth: f64,
+    /// THE 10-YEAR LEG's record window: FRED's DGS10 as a par bond, the same for both sets
+    /// (`bond10_readings`; `bond10-2026-10-05.tsv`)
+    pub bond10_window: &'static str,
+    pub bond10_years: usize,
     pub short_rate: f64,
     pub short_rate_sd: f64,
     pub rate_floor: f64,
@@ -13530,6 +13765,10 @@ pub fn verdict_world(a: Anchors, w: &World) -> World {
     if w.macro_panel == 0 {
         v.macro_panel = d.macro_panel;
     }
+    // the 10-year leg runs at `VERDICT_BOND10` where the caller left it off
+    if w.bond10 <= 0.0 {
+        v.bond10 = VERDICT_BOND10;
+    }
     v.macro_null = 0;
     v
 }
@@ -13616,7 +13855,7 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
 
 /// The S&P set's `RecordBand`s: `recordbands-2026-09-26.tsv`, CRSP total return 1954-2026 and, for
 /// the two clustering rows, the century -- each row on the window the set reads it over.
-const RECORD_BANDS_SP500: [RecordBand; 22] = [
+const RECORD_BANDS_SP500: [RecordBand; 25] = [
     RecordBand {
         name: "equity vol %",
         record: 15.676352,
@@ -13860,10 +14099,43 @@ const RECORD_BANDS_SP500: [RecordBand; 22] = [
         joint_c: 0.482175,
         joint: (-1.817868, 5.673636),
     },
+    RecordBand {
+        name: "bond10 vol per duration",
+        record: 1.028623,
+        q: [
+            0.745022, 0.866291, 0.908784, 0.933807, 0.951129, 0.964725, 0.977189, 0.988839,
+            0.999548, 1.009831, 1.01917, 1.029164, 1.039033, 1.048724, 1.059101, 1.070319,
+            1.082067, 1.096044, 1.111658, 1.131763, 1.161695, 1.217523, 1.399679,
+        ],
+        joint_c: 0.481525,
+        joint: (0.880103, 1.196692),
+    },
+    RecordBand {
+        name: "bond10 depth vs vol",
+        record: 0.538402,
+        q: [
+            0.014588, 0.098099, 0.186019, 0.248408, 0.29696, 0.33879, 0.379023, 0.417377, 0.451582,
+            0.486341, 0.52212, 0.558168, 0.596334, 0.63865, 0.682208, 0.734126, 0.788801, 0.853616,
+            0.933131, 1.037088, 1.206957, 1.564555, 2.793507,
+        ],
+        joint_c: 0.481525,
+        joint: (0.125246, 1.441048),
+    },
+    RecordBand {
+        name: "bond10 excess return pts/yr",
+        record: 0.781738,
+        q: [
+            -3.88258, -1.623677, -0.91835, -0.533359, -0.277844, -0.066187, 0.110474, 0.262406,
+            0.415373, 0.554616, 0.682755, 0.824784, 0.953751, 1.091371, 1.232566, 1.383343,
+            1.539699, 1.720187, 1.908403, 2.177713, 2.577178, 3.320535, 5.53443,
+        ],
+        joint_c: 0.481525,
+        joint: (-1.374034, 3.064007),
+    },
 ];
 
 /// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ 1999-03-11..2026-08-20.
-const RECORD_BANDS_NASDAQ: [RecordBand; 22] = [
+const RECORD_BANDS_NASDAQ: [RecordBand; 25] = [
     RecordBand {
         name: "equity vol %",
         record: 26.901577,
@@ -14107,6 +14379,39 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 22] = [
         joint_c: 0.481025,
         joint: (2.17624, 50.404711),
     },
+    RecordBand {
+        name: "bond10 vol per duration",
+        record: 1.028623,
+        q: [
+            0.745022, 0.866291, 0.908784, 0.933807, 0.951129, 0.964725, 0.977189, 0.988839,
+            0.999548, 1.009831, 1.01917, 1.029164, 1.039033, 1.048724, 1.059101, 1.070319,
+            1.082067, 1.096044, 1.111658, 1.131763, 1.161695, 1.217523, 1.399679,
+        ],
+        joint_c: 0.481525,
+        joint: (0.880103, 1.196692),
+    },
+    RecordBand {
+        name: "bond10 depth vs vol",
+        record: 0.538402,
+        q: [
+            0.014588, 0.098099, 0.186019, 0.248408, 0.29696, 0.33879, 0.379023, 0.417377, 0.451582,
+            0.486341, 0.52212, 0.558168, 0.596334, 0.63865, 0.682208, 0.734126, 0.788801, 0.853616,
+            0.933131, 1.037088, 1.206957, 1.564555, 2.793507,
+        ],
+        joint_c: 0.481525,
+        joint: (0.125246, 1.441048),
+    },
+    RecordBand {
+        name: "bond10 excess return pts/yr",
+        record: 0.781738,
+        q: [
+            -3.88258, -1.623677, -0.91835, -0.533359, -0.277844, -0.066187, 0.110474, 0.262406,
+            0.415373, 0.554616, 0.682755, 0.824784, 0.953751, 1.091371, 1.232566, 1.383343,
+            1.539699, 1.720187, 1.908403, 2.177713, 2.577178, 3.320535, 5.53443,
+        ],
+        joint_c: 0.481525,
+        joint: (-1.374034, 3.064007),
+    },
 ];
 
 /// The S&P/CRSP set. The LEVELS are the ones every release before 0.21.0 hard-coded, moved rather
@@ -14151,6 +14456,8 @@ const SP500_ANCHORS: Anchors = Anchors {
     bond_window: "clean TLT, 24y",
     bond_years: 24,
     bond_depth: 1.029058,
+    bond10_window: "DGS10 par bond, 1962-2026",
+    bond10_years: 64,
     short_rate: 4.595174,
     short_rate_sd: 0.09,
     rate_floor: 14.565588,
@@ -14306,6 +14613,8 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bond_window: "clean TLT, 24y",
     bond_years: 24,
     bond_depth: 1.029058,
+    bond10_window: "DGS10 par bond, 1962-2026",
+    bond10_years: 64,
     short_rate: 2.136466,
     short_rate_sd: 1.05,
     rate_floor: 37.313224,
@@ -14584,6 +14893,35 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             VOL_EXIT_ROWS[1],
             (|st: &WorldStats| st.vol_exit[1]) as StatFn,
             band_record(a, VOL_EXIT_ROWS[1]),
+            0.0,
+        ),
+        // THE 10-YEAR LEG (the bond-fund consumer's request, 2026-10-05): its volatility and its
+        // time under water against FRED's DGS10 read as a par bond, each judged against the
+        // record's band; the loss weighs the volatility as the long bond's and the depth 0.
+        (
+            BOND10_BAND_ROWS[0],
+            (|st: &WorldStats| {
+                if st.bond10 > 0.0 {
+                    st.bond10_vol * 100.0 / st.bond10
+                } else {
+                    f64::NAN
+                }
+            }) as StatFn,
+            band_record(a, BOND10_BAND_ROWS[0]),
+            wgt(1.0, a.bond_vol_sd),
+        ),
+        (
+            BOND10_BAND_ROWS[1],
+            (|st: &WorldStats| st.bond10_depth_vs_vol()) as StatFn,
+            band_record(a, BOND10_BAND_ROWS[1]),
+            0.0,
+        ),
+        // the term premium's row: graded by its band, never priced, since the sets sample the
+        // premium rather than fit it
+        (
+            BOND10_BAND_ROWS[2],
+            (|st: &WorldStats| st.bond10_excess) as StatFn,
+            band_record(a, BOND10_BAND_ROWS[2]),
             0.0,
         ),
         // The leverage effect, graded by the one statistic that survives close-only data:
@@ -15787,7 +16125,8 @@ fn scala_sign(x: f64) -> f64 {
 /// of sessions): the loss prices them as the linear |model - target| over |target|, the log
 /// ratio's small-deviation limit, since a log ratio has no meaning across zero and grows without
 /// bound as a reading nears it.
-pub const ADDITIVE_TARGETS: [&str; 5] = [
+pub const ADDITIVE_TARGETS: [&str; 6] = [
+    "bond10 excess return pts/yr",
     "vol-timing edge pts/yr",
     "vol-exit timing pts/yr",
     "vol-exit 3x interaction pts/yr",
@@ -16848,7 +17187,7 @@ pub type Getter = fn(&World) -> f64;
         reason = "the rule is read by the tests, never by the search"
     )
 )]
-const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
+const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "divYield"];
 
 /// THE ORDER IS A CROSS-TWIN CONTRACT, restated here so a reorder fails a build rather than a
 /// diff. `-calibrate` draws one uniform per dial from a single stream in table order, so a
@@ -16858,7 +17197,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 80] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 81] = [
     "depth",
     "trendShare",
     "drift",
@@ -16939,6 +17278,7 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 80] = [
     "recessRecMult",
     "recessCredit",
     "recessInfl",
+    "termPremium",
 ];
 
 /// THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration search
@@ -17513,6 +17853,15 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             2.0,
             |w, x| w.recess_infl = x,
             |w| w.recess_infl,
+        ),
+        // the record's 10-year excess return pins the premium only to about 0.11 a year of
+        // duration, so the sets sample it over the range that uncertainty spans
+        (
+            "termPremium",
+            0.0,
+            0.30,
+            |w, x| w.term_premium = x,
+            |w| w.term_premium,
         ),
     ]
 }
@@ -18433,11 +18782,14 @@ const EQUITY_TARGETS: [&str; 44] = [
         reason = "the partition contract is read by the tests, never by a report"
     )
 )]
-const BOND_TARGETS: [&str; 9] = [
+const BOND_TARGETS: [&str; 12] = [
     "bond vol % (24y)",
     "bond growth-crash",
     "bond infl-crash",
     "bond depth vs vol",
+    "bond10 vol per duration",
+    "bond10 depth vs vol",
+    "bond10 excess return pts/yr",
     "tail hedge corr",
     "short rate %",
     "rate floor share %",
@@ -18818,7 +19170,11 @@ fn anchor_groups(a: Anchors) -> Vec<(&'static str, usize, Vec<&'static str>)> {
 }
 
 /// `anchor_groups` before the set's own fit targets filter it.
-fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 10] {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table: every fidelity target's record window, one row a group"
+)]
+fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 11] {
     [
         (
             a.equity_window,
@@ -18925,6 +19281,15 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
                 "bond infl-crash",
                 "bond depth vs vol",
                 "tail hedge corr",
+            ],
+        ),
+        (
+            a.bond10_window,
+            a.bond10_years,
+            &[
+                "bond10 vol per duration",
+                "bond10 depth vs vol",
+                "bond10 excess return pts/yr",
             ],
         ),
     ]
@@ -20339,6 +20704,9 @@ fn calendar_lines(spec: EmitSpec<'_>, dates: &[String]) -> String {
 /// one list the header, the sidecar's `columns` and its `gradedSeries` all read.
 fn channel_columns(p: &Path) -> Vec<&'static str> {
     let mut cols: Vec<&'static str> = Vec::new();
+    if !p.bond10.is_empty() {
+        cols.push("bond10");
+    }
     if !p.sat.is_empty() {
         cols.push("logSat");
     }
@@ -20447,6 +20815,9 @@ pub fn emit_table(p: &Path) -> Vec<EmitColumn<'_>> {
         .zip(base)
         .map(|(n, v)| held(n, v))
         .collect();
+    if !p.bond10.is_empty() {
+        t.push(held("bond10", &p.bond10));
+    }
     if !p.sat.is_empty() {
         t.push(logged("logSat", &p.sat));
     }
@@ -20822,6 +21193,8 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("crowdImpact", num(w.crowd_impact)),
         ("panic", num(w.panic)),
         ("duration", num(w.duration)),
+        ("bond10", num(w.bond10)),
+        ("termPremium", num(w.term_premium)),
         ("easing", num(w.easing)),
         ("unwind", num(w.unwind)),
         ("floorhold", num(w.floorhold)),
@@ -21225,6 +21598,9 @@ fn sector_scope_block(gate_w: &World, emitted: bool) -> String {
 /// its readings exist at the verdict world's dials.
 fn verdict_series_of(gate_st: &WorldStats, gate_w: &World) -> Vec<String> {
     let mut verdict_series: Vec<String> = vec!["price".to_string(), "bond".to_string()];
+    if gate_st.bond10 > 0.0 {
+        verdict_series.push("bond10".to_string());
+    }
     if gate_st.sat.is_some() {
         verdict_series.push("logSat".to_string());
     }
@@ -21304,6 +21680,11 @@ fn gate_scope_lines(
             "\"open\": {{ \"overnight\": {}, \"source\": {} }}",
             num(gate_w.overnight),
             source(w.overnight > 0.0)
+        ),
+        format!(
+            "\"bond10\": {{ \"bond10\": {}, \"source\": {} }}",
+            num(gate_w.bond10),
+            source(w.bond10 > 0.0)
         ),
         format!(
             "\"dividends\": {{ \"divYield\": {}, \"source\": {} }}",
@@ -22270,6 +22651,8 @@ pub fn main() {
     let mut fund_vol = dw.fund_vol;
     let mut rate_mean = dw.rate_mean;
     let mut duration = dw.duration;
+    let mut bond10 = dw.bond10;
+    let mut term_premium = dw.term_premium;
     let mut easing = dw.easing;
     let mut unwind = dw.unwind;
     let mut floorhold = dw.floorhold;
@@ -22490,6 +22873,8 @@ pub fn main() {
             "-fundvol" => fund_vol = req_f64(&mut it, "-fundvol"),
             "-ratemean" => rate_mean = req_f64(&mut it, "-ratemean"),
             "-duration" => duration = req_f64(&mut it, "-duration"),
+            "-bond10" => bond10 = req_f64(&mut it, "-bond10"),
+            "-termpremium" => term_premium = req_f64(&mut it, "-termpremium"),
             "-easing" => easing = req_f64(&mut it, "-easing"),
             "-unwind" => unwind = req_f64(&mut it, "-unwind"),
             "-floorhold" => floorhold = req_f64(&mut it, "-floorhold"),
@@ -22638,6 +23023,8 @@ pub fn main() {
         below_one("-haltlimit", halt_limit);
         positive("-depth", depth);
         positive("-duration", duration);
+        non_neg("-bond10", bond10);
+        non_neg("-termpremium", term_premium);
         non_neg("-stress", stress);
         non_neg("-beta", beta);
         non_neg("-volofvol", vol_of_vol);
@@ -23038,6 +23425,8 @@ pub fn main() {
         crowd_impact,
         panic: panic_k,
         duration,
+        bond10,
+        term_premium,
         easing,
         unwind,
         floorhold,
@@ -23479,6 +23868,18 @@ pub fn main() {
         jfs(BOND_LONG_RECORD.0, 1),
         jfs(BOND_LONG_RECORD.1, 1)
     );
+    if st.bond10 > 0.0 {
+        println!(
+            "  10-year leg            duration {}   vol {}% ({} per year of duration)   growth-crash {}   infl-crash {}   depth vs vol {}   excess return {} pts/yr",
+            jf(st.bond10, 0, 1),
+            jf(st.bond10_vol * 100.0, 0, 1),
+            jf(st.bond10_vol * 100.0 / st.bond10, 0, 3),
+            jfs(st.bond10_growth, 1),
+            jfs(st.bond10_infl, 1),
+            jf(st.bond10_depth_vs_vol(), 0, 3),
+            jfs(st.bond10_excess, 2)
+        );
+    }
     println!(
         "  stock-bond correlation calm {}   inflation regime {}",
         jfs(st.corr_calm, 2),
@@ -24351,9 +24752,9 @@ mod emit_sidecar_tests {
     /// wrote the file, and an edit to the world block's fields moves it visibly, here.
     #[test]
     fn the_world_digest_is_pinned_across_the_twins() {
-        assert_eq!(world_digest(&default_world()), "19c204b1db97e1cb");
+        assert_eq!(world_digest(&default_world()), "517685b907e693d8");
         let (nq, _) = named_world("0.24.5-nasdaq").expect("recipe");
-        assert_eq!(world_digest(&nq), "dc877ff8e1198f5f");
+        assert_eq!(world_digest(&nq), "5186010bf57e2f5a");
     }
 
     /// One ulp in one dial moves the digest, where the sidecar's six significant digits cannot.
@@ -26014,7 +26415,13 @@ mod contract_tests {
         let d = default_world();
         let vw = verdict_world(SP500_ANCHORS, &d);
         assert_eq!(ChannelDials::of(&vw), SP500_CHANNEL_DIALS);
-        assert_eq!(with_channel_dials(vw, ChannelDials::of(&d)), d);
+        assert_eq!(
+            vw.bond10, VERDICT_BOND10,
+            "the verdict runs the 10-year leg"
+        );
+        let mut back = with_channel_dials(vw, ChannelDials::of(&d));
+        back.bond10 = d.bond10;
+        assert_eq!(back, d);
         assert_eq!(
             ChannelDials::of(&verdict_world(NASDAQ_ANCHORS, &d)),
             NASDAQ_CHANNEL_DIALS
@@ -26029,7 +26436,11 @@ mod contract_tests {
             v.sat_beta == 1.5 && v.sat_idio == 0.5 && v.macro_null == 0 && v.basket == 0,
             "a channel the caller turned on keeps its dials; the rest are anchored but the basket"
         );
-        assert_eq!(verdict_world(SP500_ANCHORS, &sp), sp);
+        // the channel recipe's verdict world is the recipe itself, but for the 10-year leg
+        let mut vsp = verdict_world(SP500_ANCHORS, &sp);
+        assert_eq!(vsp.bond10, VERDICT_BOND10);
+        vsp.bond10 = sp.bond10;
+        assert_eq!(vsp, sp);
     }
 
     /// The default's verdict grades the bundle: every channel's rows and the macro panel's are in
@@ -27092,6 +27503,74 @@ mod episode_anchor_tests {
 ///
 /// The Scala twin carries the same checks in `BondCrashSuite`, against the same file.
 #[cfg(test)]
+mod bond10_tests {
+    use super::*;
+
+    /// THE 10-YEAR LEG is observational for every other series: it draws from its own stream and
+    /// reaches no price, so a world with it on is bit-identical to the same world with it off on
+    /// every column but its own; at the bond's own duration it reads the bond's flows, so the
+    /// two legs' returns move together.
+    #[test]
+    fn the_leg_leaves_every_other_series_bit_identical() {
+        let (w, _) = named_world("0.24.6-sp500").expect("recipe");
+        let off = simulate(&w, 5, DEFAULT_SEED);
+        let mut on_w = w;
+        on_w.bond10 = 8.0;
+        let on = simulate(&on_w, 5, DEFAULT_SEED);
+        assert!(off.bond10.is_empty(), "off emits no leg");
+        assert_eq!(
+            on.bond10.len(),
+            on.bond.len(),
+            "on emits a leg as long as the bond"
+        );
+        assert!(off.price == on.price && off.bond == on.bond && off.rate == on.rate);
+        assert!(off.cpi == on.cpi && off.bliq == on.bliq && off.infl_press == on.infl_press);
+        let rb = daily_returns(&on.bond);
+        let r10 = daily_returns(&on.bond10);
+        assert!(pearson(&rb, &r10) > 0.8, "the leg moves with the bond");
+    }
+
+    /// THE TERM PREMIUM moves only the bonds, each by its duration: a premium of 0.2 a year of
+    /// duration adds about 1.6 points a year to the 10-year leg and 2.7 to the 13.5-year bond, and
+    /// leaves the equity and the rate bit-identical.
+    #[test]
+    fn the_term_premium_moves_only_the_bonds_each_by_its_duration() {
+        let (mut w, _) = named_world("0.24.6-sp500").expect("recipe");
+        w.bond10 = 8.0;
+        w.term_premium = 0.0;
+        let off = simulate(&w, 10, DEFAULT_SEED);
+        w.term_premium = 0.2;
+        let on = simulate(&w, 10, DEFAULT_SEED);
+        assert!(off.price == on.price && off.rate == on.rate && off.cpi == on.cpi);
+        let gain = |a: &[f64], b: &[f64]| {
+            ((b[b.len() - 1] / b[0]).ln() - (a[a.len() - 1] / a[0]).ln()) / 10.0 * 100.0
+        };
+        let (g10, g) = (gain(&off.bond10, &on.bond10), gain(&off.bond, &on.bond));
+        assert!(
+            (g10 - 1.6).abs() < 0.3,
+            "the 10-year leg gains {g10} a year"
+        );
+        assert!((g - 2.7).abs() < 0.4, "the long bond gains {g} a year");
+    }
+
+    /// The leg's volatility scales with its duration: at 4 years it is about half of 8's.
+    #[test]
+    fn the_legs_volatility_scales_with_its_duration() {
+        let (w, _) = named_world("0.24.6-sp500").expect("recipe");
+        let vol = |d: f64| {
+            let mut v = w;
+            v.bond10 = d;
+            measure(&sim_paths(&v, 8, 30, DEFAULT_SEED), 30).bond10_vol
+        };
+        let (v4, v8) = (vol(4.0), vol(8.0));
+        assert!(
+            v4 > 0.0 && (v8 / v4 - 2.0).abs() < 0.3,
+            "vol at 8 {v8} against 4 {v4}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod bond_crash_tests {
     use super::*;
 
@@ -27853,6 +28332,7 @@ mod record_band_tests {
         let mut out = read("recordbands-2026-09-26.tsv");
         out.extend(read("rateafter-2026-09-30.tsv").into_iter().skip(1));
         out.extend(read("volexit-2026-10-03.tsv").into_iter().skip(1));
+        out.extend(read("bond10-2026-10-05.tsv").into_iter().skip(1));
         out
     }
 
@@ -27939,11 +28419,12 @@ mod record_band_tests {
                 .chain(BOND_BAND_ROWS.iter())
                 .chain(RATE_AFTER_ROWS.iter())
                 .chain(VOL_EXIT_ROWS.iter())
+                .chain(BOND10_BAND_ROWS.iter())
                 .copied()
                 .collect();
             assert_eq!(
                 names, expect,
-                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS, VOL_EXIT_ROWS"
+                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS, VOL_EXIT_ROWS, BOND10_BAND_ROWS"
             );
             for b in a.record_bands {
                 let r = row(set, b.name);
@@ -28736,7 +29217,12 @@ mod record_band_tests {
             match a.record_bands.iter().find(|b| b.name == *name) {
                 Some(b) => {
                     let v = banded.get(name).copied().expect("a banded reading");
-                    let want = SD_REL_REF * (b.percentile_exact(v) - 50.0).abs() / PCT_PER_SD;
+                    // an unmeasurable reading (a leg the world does not run) is four sds out
+                    let want = if v.is_finite() {
+                        SD_REL_REF * (b.percentile_exact(v) - 50.0).abs() / PCT_PER_SD
+                    } else {
+                        4.0 * SD_REL_REF
+                    };
                     assert!((dist - want).abs() < 1e-12, "{name}: {dist} vs {want}");
                 }
                 None => assert_eq!(*dist, row.3, "{name}: the fitness term"),

@@ -63,7 +63,9 @@ class VerdictReadingsSuite extends FunSuite:
     val rows = MarketSim.fidelityRows(a, st, None, 27, 8, MarketSim.DefaultSeed, world)
     val b    = MarketSim.bandedOf(rows)
     assertEquals(b.keySet, a.recordBands.map(_.name).toSet)
-    rows.filter(_.recordBand.isDefined).foreach(r => assertEquals(b(r.name), r.model))
+    // NaN where the world runs no such leg: the same reading, unmeasurable on both sides
+    rows.filter(_.recordBand.isDefined).foreach(r =>
+      assert(b(r.name) == r.model || (b(r.name).isNaN && r.model.isNaN), r.name))
   }
 
   test("predict is the return the step then makes") {

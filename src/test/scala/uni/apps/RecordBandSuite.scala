@@ -17,7 +17,7 @@ class RecordBandSuite extends FunSuite:
     * the same columns) without their header */
   private lazy val lines: Vector[String] =
     fixtureLines("recordbands-2026-09-26.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
-      fixtureLines("volexit-2026-10-03.tsv").drop(1)
+      fixtureLines("volexit-2026-10-03.tsv").drop(1) ++ fixtureLines("bond10-2026-10-05.tsv").drop(1)
 
   private def row(set: String, name: String): Vector[Double] =
     lines.map(_.split('\t').toVector).find(r => r(0) == set && r(1) == name)
@@ -53,8 +53,8 @@ class RecordBandSuite extends FunSuite:
     for (set, a) <- sets do
       assertEquals(a.recordBands.map(_.name),
         MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows ++ MarketSim.RateAfterRows ++
-          MarketSim.VolExitRows,
-        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows")
+          MarketSim.VolExitRows ++ MarketSim.Bond10BandRows,
+        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows, Bond10BandRows")
       for b <- a.recordBands do
         val r = row(set, b.name)
         assertEquals(b.record, r.head, s"$set ${b.name}: record")
@@ -426,7 +426,11 @@ class RecordBandSuite extends FunSuite:
       assertEquals(name, row._1, "in fitness row order")
       a.recordBands.find(_.name == name) match
         case Some(b) =>
-          val want = MarketSim.SdRelRef * math.abs(b.percentileExact(banded(name)) - 50.0) / MarketSim.PctPerSd
+          // an unmeasurable reading (a leg the world does not run) is four sds out
+          val v = banded(name)
+          val want =
+            if v.isFinite then MarketSim.SdRelRef * math.abs(b.percentileExact(v) - 50.0) / MarketSim.PctPerSd
+            else 4.0 * MarketSim.SdRelRef
           assertEqualsDouble(dist, want, 1e-12, name)
         case None => assertEquals(dist, row._4, s"$name: the fitness term")
   }

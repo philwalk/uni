@@ -59,7 +59,7 @@ written as its bit pattern, so it sees a change the block's six significant digi
 twins print the same digest.
 
 ```
-market_sim.exe -atrelease 0.24.5-nasdaq -digest      # dc877ff8e1198f5f
+market_sim.exe -atrelease 0.24.5-nasdaq -digest      # 5186010bf57e2f5a
 ```
 
 **After the fact — the sidecar.** `-emit F` writes a sidecar beside the TSV — `F` with its
@@ -1225,6 +1225,8 @@ with it.
 | `-easing` | **cap** on the policy rate cut under equity stress, in rate points — an anchor, re-solved to the BOTTOM of the real easing-cycle range (2007-08 ran 5.1 points): higher fails the shipped duration's depth band, lower drops the `-crossasset` short rung through its floor | 0.052 |
 | `-unwind` | how fast that cut is withdrawn, per year (0.35 is a ~2-year half-life) | 0.35 |
 | `-refuge` | flight-to-quality bid into the bond, scaled by its duration | 0.115 |
+| `-bond10` | THE 10-YEAR LEG: a second bond at this duration in years, on the same rate, credit and stress state as the bond and every flow the bond takes (carry and the rate move, the term premium, news, the slow repricing, the refuge bid and margin selling), each at the leg's duration over 13.5, its noise on its own stream, so every other series is bit-identical with it on or off. `-emit` gains `bond10`. Graded against FRED's DGS10 read as a par bond, 1962–2026 (`bond10-2026-10-05.tsv`): `bond10 vol per duration` (each session's return over the duration it was bought at; the leg's over its own), `bond10 depth vs vol`, and `bond10 excess return pts/yr` (the log return over the short rate, against DGS10 over DFF). The verdict runs the leg at duration 8 when the caller leaves it off; the vol row does not depend on that choice | 0 (off) |
+| `-termpremium` | THE TERM PREMIUM, points a year per year of duration: every bond leg carries the short rate plus this times its duration; without it a bond earns the short rate and climbs out of its drawdowns too slowly for its volatility. 0.10 puts the 10-year leg's log return over the short rate at the record's 0.78 a year (DGS10 over DFF, 1962–2026, whose start and end near a 4% yield let realised excess estimate the average premium). The record pins it only to about ±0.11, so the sets sample it (search range 0–0.30) rather than fix it | 0.10 (0 in every frozen world) |
 | `-refugedays` | half-life in sessions of the settled stress the refuge bid reads — excludes the current session, which kills the same-day stock-bond coupling while the crisis rally keeps the level; 0 reads live stress | 1 |
 | `-satbeta` | the satellite equity leg (the Nasdaq to the default world's S&P): beta on the primary's OBSERVED return, plus idio noise riding the primary's full vol state — which is what keeps the pair's correlation state-flat, as the record's is. When on, `-emit` adds a `logSat` column. Anchored 1.2 on SPY–QQQ 1999–2026; NOT searchable, like `-duration` | 0 (off) |
 | `-satidio` | the leg's idiosyncratic vol as a FRACTION of the primary's realized volatility, riding the primary's vol state; the anchored 0.77 lands correlation 0.853 and vol ratio 1.41 on the default world, on the `-anchors nasdaq` recipe, and on a kurtosis-61 world alike | 0 |

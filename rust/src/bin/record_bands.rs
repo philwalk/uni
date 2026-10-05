@@ -100,7 +100,11 @@ const USAGE: &str =
                 longest calm stretch and 250-session variance ratio (`variance_ratio`) instead, the
                 rows of `bubblebust-2026-09-24.tsv`: no resampling keeps the structure they measure
   -multiyear    print the record's multi-year rows (`multi_year_readings`) instead, the rows of
-                `multiyear-2026-09-29.tsv`; with -long under their long-window names";
+                `multiyear-2026-09-29.tsv`; with -long under their long-window names
+  -bond10       print the 10-year leg's rows (`BOND10_BAND_ROWS`) of a -yahoo window instead -- FRED's
+                DGS10 as a par bond, with -fred DFF as the short rate its excess return is read
+                over: the record by `bond10_readings`, its resamples by `bond10_resamples`, their
+                own joint band over the three rows";
 
 fn usage(msg: &str) -> ! {
     if !msg.is_empty() {
@@ -136,8 +140,11 @@ struct Opts {
     long: bool,
     rate: bool,
     bond: bool,
+    bond10: bool,
     /// `-rateafter`: the rate file read beside the equity source
     after_rate: Option<String>,
+    /// `-bond10`: the short rate (FRED DFF) its excess return is read over
+    cash: Option<String>,
     /// `-splice FILE -at DATE`, in order: each file continues the series after its date
     splice: Vec<(String, String)>,
     /// `-column NAME`: the column a French industry file in the chain is read from
@@ -161,6 +168,7 @@ fn parse_args(args: &[String]) -> Opts {
     let (mut multiyear, mut long) = (false, false);
     let mut rate = false;
     let mut bond = false;
+    let mut bond10 = false;
     let mut rateafter = false;
     let mut fred: Option<String> = None;
     let (mut joint, mut of) = (0.10f64, 0usize);
@@ -206,6 +214,7 @@ fn parse_args(args: &[String]) -> Opts {
             "-long" => long = true,
             "-rate" => rate = true,
             "-bond" => bond = true,
+            "-bond10" => bond10 = true,
             "-rateafter" => rateafter = true,
             other => usage(&format!("unrecognized arg [{other}]")),
         }
@@ -214,6 +223,11 @@ fn parse_args(args: &[String]) -> Opts {
     let after_rate = rateafter.then(|| {
         fred.take()
             .unwrap_or_else(|| usage("-rateafter wants a -fred rate"))
+    });
+    // `-bond10` reads the short rate beside its DGS10 file, for the excess-return row
+    let cash = bond10.then(|| {
+        fred.take()
+            .unwrap_or_else(|| usage("-bond10 wants a -fred DFF beside the DGS10 file"))
     });
     let source = match (yahoo, french, fred) {
         (Some(f), None, None) => Source::Yahoo(f),
@@ -261,7 +275,9 @@ fn parse_args(args: &[String]) -> Opts {
         long,
         rate,
         bond,
+        bond10,
         after_rate,
+        cash,
         splice,
         column,
     }
@@ -860,6 +876,10 @@ fn sector_mode(args: &[String]) -> bool {
     true
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one dispatch over the modes, read once, mirroring the Scala twin's main"
+)]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // a mode that reads its own arguments runs and is done
@@ -909,6 +929,10 @@ fn main() {
     }
     if o.bond {
         print_bond_rows(&o, &r, &window);
+        return;
+    }
+    if o.bond10 {
+        print_bond10_rows(&o, &dated, &window);
         return;
     }
     eprintln!(
@@ -1079,6 +1103,170 @@ fn print_bond_rows(o: &Opts, r: &[f64], window: &str) {
         record[0],
         qs.join("\t")
     );
+}
+
+/// `date -> (modified duration, the prior observation's date)` of the n-year par Treasury
+/// `read_treasury` rebuys at each observation, keyed by the date of the return it earns: the
+/// duration bought at the prior observation's yield.
+fn treasury_durations(text: &str, years: f64) -> std::collections::HashMap<String, (f64, String)> {
+    let obs: Vec<(String, f64)> = text
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(',').map(str::trim).collect();
+            let v: f64 = f.get(1)?.parse().ok()?;
+            Some((f[0].to_string(), v / 100.0))
+        })
+        .collect();
+    (1..obs.len())
+        .map(|i| {
+            let y = obs[i - 1].1;
+            let d = if y > 0.0 {
+                (1.0 - ms::exp_det(-2.0 * years * ms::ln_det(1.0 + y / 2.0))) / y
+            } else {
+                years
+            };
+            (obs[i].0.clone(), (d, obs[i - 1].0.clone()))
+        })
+        .collect()
+}
+
+/// `(first day number, running log accrual by day)` of FRED's daily DFF file: every calendar day
+/// accrues `ln(1 + rate / 365)` at the last rate published (percent a year).
+fn cash_curve(file: &str) -> (i64, Vec<f64>) {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    let obs: Vec<(i64, f64)> = text
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(',').map(str::trim).collect();
+            let v: f64 = f.get(1)?.parse().ok()?;
+            Some((days_from_civil(f[0]), v / 100.0))
+        })
+        .collect();
+    let Some(&(first, rate0)) = obs.first() else {
+        usage(&format!("{file}: no rates"))
+    };
+    let last = obs.last().map_or(first, |o| o.0);
+    let mut cum = Vec::new();
+    let (mut acc, mut rate, mut j) = (0.0f64, rate0, 0usize);
+    for day in first..=last {
+        if j < obs.len() && obs[j].0 == day {
+            rate = obs[j].1;
+            j += 1;
+        }
+        acc += ms::ln_det(1.0 + rate / 365.0);
+        cum.push(acc);
+    }
+    (first, cum)
+}
+
+/// The short rate's log accrual over the days after `from` through `to` (`cash_curve`).
+fn cash_accrual(curve: &(i64, Vec<f64>), from: &str, to: &str) -> f64 {
+    let at = |d: &str| -> f64 {
+        let k = days_from_civil(d) - curve.0;
+        match usize::try_from(k) {
+            Ok(i) => curve.1[i.min(curve.1.len() - 1)],
+            Err(_) => 0.0,
+        }
+    };
+    at(to) - at(from)
+}
+
+/// `-bond10`: the 10-year leg's three rows (`BOND10_BAND_ROWS`) on FRED's DGS10 read as a par bond
+/// -- each session's return, the duration it was bought at, and its log return over DFF's accrual
+/// across the same days -- the record by `bond10_readings` at the window's own sessions a year,
+/// its one-year-block resamples by `bond10_resamples`, their own joint band over the three rows.
+fn print_bond10_rows(o: &Opts, dated: &[(String, f64)], window: &str) {
+    let Source::Yahoo(file) = &o.source else {
+        usage("-bond10 reads a FRED DGSn file given as -yahoo")
+    };
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    let head: Vec<&str> = text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let years: f64 = match head.as_slice() {
+        ["observation_date", h] if h.starts_with("DGS") => h[3..]
+            .parse()
+            .unwrap_or_else(|_| usage(&format!("{file}: [{h}] is not a DGSn series"))),
+        _ => usage(&format!("{file}: -bond10 reads a FRED DGSn file")),
+    };
+    if !o.splice.is_empty() {
+        usage("-bond10 reads one DGSn file; a splice has no yields to take durations from");
+    }
+    let durs = treasury_durations(&text, years);
+    let curve = cash_curve(
+        o.cash
+            .as_deref()
+            .unwrap_or_else(|| usage("-bond10 wants a -fred DFF")),
+    );
+    let held: Vec<&(f64, String)> = dated
+        .iter()
+        .map(|(d, _)| {
+            durs.get(d)
+                .unwrap_or_else(|| usage(&format!("{file}: no duration for {d}")))
+        })
+        .collect();
+    let r: Vec<f64> = dated.iter().map(|(_, x)| *x).collect();
+    let dur: Vec<f64> = held.iter().map(|h| h.0).collect();
+    let ex: Vec<f64> = dated
+        .iter()
+        .zip(&held)
+        .map(|((d, x), h)| x - cash_accrual(&curve, &h.1, d))
+        .collect();
+    // sessions a year over the window, from the first return's purchase to the last return
+    let span =
+        (days_from_civil(&dated[dated.len() - 1].0) - days_from_civil(&held[0].1)) as f64 / 365.25;
+    let per_year = dated.len() as f64 / span;
+    let record = ms::bond10_readings(&r, &dur, &ex, per_year);
+    eprintln!(
+        "{}: {} returns {window}, bond10 vol per duration {:.4}, depth vs vol {:.4}, excess {:.4} \
+         pts/yr at {per_year:.2} sessions a year; {} resamples, seed {}",
+        o.series,
+        r.len(),
+        record[0],
+        record[1],
+        record[2],
+        o.resamples,
+        o.seed
+    );
+    let reads = ms::bond10_resamples(&r, &dur, &ex, per_year, o.resamples, o.seed);
+    if o.header {
+        let pcts: Vec<String> = ms::RECORD_BAND_PCTS
+            .iter()
+            .map(|p| format!("p{p}"))
+            .collect();
+        println!(
+            "set\trow\tseries\twindow\tn\tresamples\trecord\t{}\tjointC\tjointLo\tjointHi",
+            pcts.join("\t")
+        );
+    }
+    let ks: Vec<usize> = vec![0, 1, 2];
+    let of = if o.of == 0 { 3 } else { o.of };
+    let alpha = o.joint * 3.0 / of as f64;
+    let (c, edges) = ms::record_band_joint(&reads, &ks, alpha);
+    for (k, name) in ms::BOND10_BAND_ROWS.iter().enumerate() {
+        let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
+        let qs: Vec<String> = ms::record_band_quantiles(&col)
+            .iter()
+            .map(|v| format!("{v:.6}"))
+            .collect();
+        let (lo, hi) = edges[k];
+        println!(
+            "{}\t{}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
+            o.set,
+            name,
+            o.series,
+            r.len(),
+            o.resamples,
+            record[k],
+            qs.join("\t")
+        );
+    }
 }
 
 /// The first monthly block of one of Ken French's published CSVs (`10_Industry_Portfolios.CSV`,

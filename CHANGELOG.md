@@ -150,11 +150,39 @@ coupling. The d10 band is 1.1-2.2 (0.7-2.2); d5 stays 1.0-1.7. The coupling fixt
 re-measured from Yahoo Finance's adjusted closes (`joint-coupling-2026-10-03.tsv`), with the depth rows'
 window and blocks beside it. Every member of both sets passes all three rows on seeds 1-4.
 
+**A 10-year bond, and bonds that earn a term premium.** `-bond10 D` runs a second bond at duration
+D. It takes the bond's own state and every flow the bond takes, each scaled to its duration, with
+its noise on its own stream, so every other series is bit-identical with it on or off; `-emit` gains
+`bond10`. The verdict runs it at duration 8 and grades it against FRED's DGS10 read as a par bond,
+1962–2026, on three rows with their own joint band (`bond10-2026-10-05.tsv`):
+
+| row | record | band |
+|---|---|---|
+| `bond10 vol per duration` (each session's return over the duration it was bought at) | 1.03 | 0.88–1.20 |
+| `bond10 depth vs vol` | 0.54 | 0.13–1.44 |
+| `bond10 excess return pts/yr` (log return over the short rate) | 0.78 | −1.37 to 3.06 |
+
+Every bond used to earn the short rate alone: about a point a year less than a real 10-year over
+1962–2026, so it climbed out of its drawdowns too slowly for its volatility. `-termpremium` gives
+every bond the short rate plus the premium times its duration. At 0.10 a year of duration the leg's
+excess sits on the record; the record pins the premium only to about ±0.11, so the sets sample it as
+they sample the drift. At 0.10 the recipes read 1.11 / 1.19 per year of duration, 1.16 / 1.01 under
+water and +0.76 / +0.78 excess (S&P / Nasdaq), each row inside its band, and the long bond's
+growth-crash rally rises to +7.0 / +6.3 (record +7.0).
+
 **Upgrading**
 
-- **Sidecar schema 28 → 30.** `reportedRows` follows `fidelity`: each a `fidelity` row led by its
+- **Sidecar schema 28 → 31.** `reportedRows` follows `fidelity`: each a `fidelity` row led by its
   `window`, never in a verdict (`miss` says only where the record would fall); `[]` where the set
   reports nothing. The Nasdaq's `fidelity` list no longer holds the eight QQQ multi-year rows.
+  Schema 31: `columns` gains `bond10` where the leg runs, `channels.bond10` names its duration and
+  source, `verdictSeries` gains `bond10`, and `fidelity` gains the three `bond10` rows.
+- **Bonds earn their term premium.** The default and the 0.24.6 recipes carry `termPremium` 0.10, so
+  every emitted bond earns its duration times 0.10 a year over the short rate: 1.35 a year on the
+  13.5-year bond. A result that holds bonds moves.
+- **Two new dials in every world block**, `bond10` and `termPremium`. Every set file carries them, 0
+  in every frozen world, and every world digest moves (the default reads `517685b907e693d8`).
+  `termPremium` is the search's last range, 0–0.30; it is sampled, never priced.
 - **The basket's verdict.** No world is graded on a basket unless the run names a ruler:
   - The verdict world no longer turns a basket on, so a world without one simulates none.
   - The sets' verdicts drop the basket rows; the members are unchanged.
@@ -188,6 +216,11 @@ window and blocks beside it. Every member of both sets passes all three rows on 
 - A set member's `seededFrom` names the chain particle it was drawn from (run id, founder index),
   its `score` is the chain's log-likelihood of the record's return per vol under that member, not a
   search score, and its `worstRow` is a placeholder.
+- `record_bands -bond10 -yahoo DGS10.csv -fred DFF.csv` prints the three `bond10` rows (twin:
+  `recordBands.sc -bond10`).
+- Rust: `World::bond10`, `World::term_premium`, `VERDICT_BOND10`, `BOND10_BAND_ROWS`,
+  `bond10_readings` and `bond10_resamples`. Scala: `World.bond10`, and `World.ext: WorldExt` holds
+  `termPremium` (a JVM constructor takes at most 254 parameter slots, and `World` reached it).
 - `record_bands`: `-splice FILE -at DATE` continues a `-yahoo` series with a second file's returns
   dated after DATE, repeatable and applied in order; a `-yahoo` or `-splice` file may be a
   `dlog_adj_close` CSV, FRED's `observation_date,DGSn` yields (read as an n-year par bond rebought

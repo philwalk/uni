@@ -296,7 +296,7 @@ object MarketSim:
   // with a ruler omits it unless an `-emitf32` run's `-emitcols` names it.  A world without a
   // basket loses the basket rows, readings and `verdictSeries` entries the verdict used to supply.
   // `channels.macro` gained `warnings`, `falseAlarm` and `allClear` (`warningCounts`).
-  val EmitSchema: Int = 30
+  val EmitSchema: Int = 31
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -1150,6 +1150,9 @@ object MarketSim:
     boomLen: Double = 2.5,    // years from onset to the peak; the rise is spread evenly
 
     duration: Double,   // bond duration: sensitivity of its fair value to the rate
+    bond10: Double,     // THE 10-YEAR LEG: a second bond market at this duration (0 = off), the same
+                        // state, flows and noise scale as the bond's at `duration`, on its own stream;
+                        // emitted as `bond10`, graded against FRED's DGS10 read as a par bond
     easing: Double,     // CAP on policy accommodation under equity stress, in rate points
     unwind: Double,     // how fast that accommodation is withdrawn, per year
     floorhold: Double = 0.0, // THE FLOOR HOLDS (item 34): while the equity's drawdown from its
@@ -1521,7 +1524,17 @@ object MarketSim:
     sectorIdio: Double = 0.0,
     sectorDriftSd: Double = 0.0,
     sectorDriftHalf: Double = 0.0,
+    // THE JVM'S LIMIT: one parameter list holds at most 254 slots (a Double takes two), and this
+    // one is full, so dials added from 0.24.6 on live in `ext`, each off by default.  The Rust
+    // twin's `World` is flat; the world block and the flags name every dial the same in both.
+    ext: WorldExt = WorldExt(),
   )
+
+  /** The `World` dials past the JVM's parameter-list limit (see `World.ext`), each off by default.
+    * `termPremium`: THE TERM PREMIUM, points a year per year of duration -- every bond leg carries
+    * the short rate plus this times its duration.  Sampled with the sets and graded by the 10-year
+    * leg's log return over the short rate against FRED's DGS10 over DFF, 1962-2026. */
+  final case class WorldExt(termPremium: Double = 0.0)
 
   final case class Path(price: Array[Double], rate: Array[Double], fundamental: Array[Double],
                         liq: Array[Double],      // per-session slippage multiplier (equity market)
@@ -1529,6 +1542,8 @@ object MarketSim:
                                                  // the bond is charged its own market's slippage,
                                                  // not the equity book's
                         bond: Array[Double],     // flight-to-safety asset price (its own Market)
+                        bond10: Array[Double],   // the 10-year leg's price (its own Market at `World.bond10`;
+                                                 // empty when the leg is off)
                         inflPress: Array[Double],// inflation pressure, for regime classification
                         cpi: Array[Double],      // realized price level, deterministic from pressure
                         meanTrendShare: Double,  // BINDING diagnostic for the population knob
@@ -1543,6 +1558,7 @@ object MarketSim:
                                                  // BINDING diagnostic for that mechanism
                         meanBondStress: Double,  // BINDING diagnostic for the bond spiral
                         pctBondStress: Double,   // share of sessions bond stress index > 0.5
+                        bond10Duration: Double,  // the 10-year leg's duration, 0 when the leg is off
                         duration: Double,        // the world's bond duration, carried so the gate can
                                                  // judge bond volatility RELATIVE to it; a fixed
                                                  // absolute band can only ever fit one bond
@@ -1604,7 +1620,8 @@ object MarketSim:
     def head(years: Int): Path =
       val n = math.min(years * DaysPerYear, price.length)
       copy(price = price.take(n), rate = rate.take(n), fundamental = fundamental.take(n),
-           liq = liq.take(n), bliq = bliq.take(n), bond = bond.take(n), inflPress = inflPress.take(n),
+           liq = liq.take(n), bliq = bliq.take(n), bond = bond.take(n), bond10 = bond10.take(n),
+           inflPress = inflPress.take(n),
            cpi = cpi.take(n), sat = Array.emptyDoubleArray, logHi = Array.emptyDoubleArray,
            logLo = Array.emptyDoubleArray, logVolume = Array.emptyDoubleArray,
            divYield = Array.emptyDoubleArray, traded = Array.emptyDoubleArray,
@@ -1710,7 +1727,7 @@ object MarketSim:
     // no larger cycle passes the variance-ratio profile on every seed (0.12 and 0.15 each fail
     // it on one of three): the S&P's upper wing stays the disclosed miss it was.
     beliefLeak = 0.2, cycleSd = 0.1, cycleYears = 15.0,
-    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5, bond10 = 0.0, ext = WorldExt(termPremium = 0.10),
     easing = 0.052, unwind = 0.35, refuge = 0.115,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
@@ -1762,13 +1779,13 @@ object MarketSim:
     trendShare = 0.06, depth = 16.6, stress = 5.1, beta = 3.0, drift = 0.117, fundVol = 0.13,
     rateMean = 0.042, volPersist = 0.99, volOfVol = 0.011,
     jumpVar = 0.0, jumpRate = 0.0, valuePull = 0.013, recoveryDrag = 0.0, recoveryFloor = 1.0,
-    crowd = Crowd.Momentum, crowdImpact = 0.088, panic = 0.0, duration = 13.5,
+    crowd = Crowd.Momentum, crowdImpact = 0.088, panic = 0.0, duration = 13.5, bond10 = 0.0,
     easing = 0.045, unwind = 0.35, refuge = 0.08,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 3.35,
     margin = 0.006)
   private val PreV1901 = V0_19_2.copy(
     trendShare = 0.30, depth = 12.0, stress = 3.4, volOfVol = 0.028, valuePull = 0.015,
-    crowdImpact = 0.06, drift = 0.100, duration = 13.5, inflSize = 0.07,
+    crowdImpact = 0.06, drift = 0.100, duration = 13.5, bond10 = 0.0, inflSize = 0.07,
     discount = 4.0, margin = 0.0008)
   private val PreV1902 = V0_19_2.copy(depth = 16.3, stress = 5.4)
   /** 0.20.0's world, frozen for the same reason `V0_19_2` is: 0.21.0 moved the default off it, and
@@ -1777,7 +1794,7 @@ object MarketSim:
     trendShare = 0.07, depth = 16.1, stress = 5.6, beta = 3.0, drift = 0.123, fundVol = 0.13,
     rateMean = 0.042, volPersist = 0.99, volOfVol = 0.014,
     jumpVar = 0.0, jumpRate = 0.0, valuePull = 0.0145, recoveryDrag = 0.0, recoveryFloor = 1.0,
-    crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
+    crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5, bond10 = 0.0,
     easing = 0.046, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.0,
     margin = 0.006)
@@ -1790,7 +1807,7 @@ object MarketSim:
     recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
     disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5,
     disasterRecover = 0.5, disasterRecLen = 4.0,
-    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5, bond10 = 0.0,
     easing = 0.060, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
@@ -1801,7 +1818,7 @@ object MarketSim:
     rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
     jumpVar = 0.17, jumpRate = 0.0050, valuePull = 0.045,
     recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
-    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5, bond10 = 0.0,
     easing = 0.060, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
@@ -1812,7 +1829,7 @@ object MarketSim:
     rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
     jumpVar = 0.10, jumpRate = 0.0010, valuePull = 0.045,
     recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
-    crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
+    crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5, bond10 = 0.0,
     easing = 0.052, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
@@ -1829,7 +1846,7 @@ object MarketSim:
     disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5,
     disasterRecover = 0.5, disasterRecLen = 4.0,
     beliefShare = 0.95, beliefYears = 1.5, capYears = 1.5, capWindow = 6.0,
-    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5, bond10 = 0.0,
     easing = 0.052, unwind = 0.35, refuge = 0.115,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
@@ -1847,7 +1864,7 @@ object MarketSim:
     disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5,
     disasterRecover = 0.5, disasterRecLen = 4.0,
     beliefShare = 0.95, beliefYears = 1.5, capYears = 1.5, capWindow = 6.0,
-    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5, bond10 = 0.0,
     easing = 0.052, unwind = 0.35, refuge = 0.115,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
@@ -1862,7 +1879,7 @@ object MarketSim:
     valuePull = 0.056, recoveryDrag = 8.5, recoveryFloor = 0.1, haltLimit = 0.25,
     disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5, disasterRecover = 0.5,
     disasterRecLen = 4.0, beliefShare = 0.95, beliefYears = 1.5, capYears = 1.5,
-    capWindow = 6.0, crowd = Crowd.Momentum, crowdImpact = 0.03, panic = 0.0, duration = 13.5,
+    capWindow = 6.0, crowd = Crowd.Momentum, crowdImpact = 0.03, panic = 0.0, duration = 13.5, bond10 = 0.0,
     easing = 0.052, unwind = 0.35, refuge = 0.115, refugeDays = 1.0, satBeta = 0.0,
     satIdio = 0.0, rangeScale = 0.0, rangeDown = 0.0, volIdio = 0.0, divYield = 0.0,
     overnight = 0.0, basket = 0, basketBeta = 0.0, basketSector = 0.0, basketIdio = 0.0,
@@ -2194,14 +2211,16 @@ object MarketSim:
     * puts return per vol at its record on seeds 1-4 at 200 x 100, every other dial unchanged --
     * QQQ's 0.38 for the Nasdaq (the 0.24.5 recipe reads 0.30), CRSP 1954-2026's 0.69 for the S&P
     * (0.61).  The Nasdaq basket recipe takes the Nasdaq's drift under `0.24.5-nasdaq-basket`'s
-    * channel dials. */
+    * channel dials.  THE TERM PREMIUM at the record: 0.10 a year of duration puts the 10-year leg's
+    * log return over the short rate at DGS10-over-DFF's 0.78 a year, 1962-2026. */
   val Recipes0246: Vector[(String, World, String)] =
     def base(name: String): World =
       Recipes0244.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
-    val nq = base("0.24.5-nasdaq").copy(drift = 0.15119256)
+    val tp = WorldExt(termPremium = 0.10)
+    val nq = base("0.24.5-nasdaq").copy(drift = 0.15119256, ext = tp)
     Vector(("0.24.6-nasdaq", nq, "nasdaq"),
-           ("0.24.6-nasdaq-basket", base("0.24.5-nasdaq-basket").copy(drift = nq.drift), "nasdaq"),
-           ("0.24.6-sp500", base("0.24.5-sp500").copy(drift = 0.14747457), "sp500"))
+           ("0.24.6-nasdaq-basket", base("0.24.5-nasdaq-basket").copy(drift = nq.drift, ext = tp), "nasdaq"),
+           ("0.24.6-sp500", base("0.24.5-sp500").copy(drift = 0.14747457, ext = tp), "sp500"))
 
   val Recipes: Vector[(String, World, String)] =
     Recipes0231 ++ MacroRecipes ++ Recipes0241 ++ Recipes0242 ++ Recipes0243 ++ Recipes0244 ++
@@ -3877,6 +3896,73 @@ object MarketSim:
 
   /** One independent history's PRICE LOOP, with the channels' per-session inputs recorded for the
     * second pass.  Local mutable state only — nothing escapes this method. */
+  /** THE 10-YEAR LEG (`World.bond10`): a second bond market at the leg's duration on the bond's own
+    * state and flows -- carry and the rate move, the news leg and its skip, the slow repricing,
+    * the refuge bid and margin selling -- each at the leg's duration over `DurationRef`, its noise
+    * on its own stream, so every other series is bit-identical with it on or off.  Its own class so
+    * `priceLoop` stays under the JIT's huge-method limit; every method is a no-op when it is off. */
+  private final class Bond10Leg(w: World, seed: Long, tot: Int):
+    private val on     = w.bond10 > 0.0
+    private val k10    = w.bond10 / DurationRef
+    private val market = new Market(KValueBond, w.stress, 1.0)
+    private val rng    = new NumPyRNG(seed ^ 0xb01d10c7L)
+    private val prices = if on then new Array[Double](tot) else Array.emptyDoubleArray
+    private var fair   = 0.0
+    private var slow   = 0.0
+    private var news   = 0.0
+    private val tp10   = w.ext.termPremium / 100.0 * w.bond10
+
+    /** the news compensator's leg, at the sign the bond's `bk` carries */
+    def newsComp(bk: Double, comp: Double): Unit =
+      if on then
+        val bk10 = if bk < 0.0 then -w.newsBond * k10 else w.newsBond * k10
+        news = NewsBondDecay * news - bk10 * comp
+        market.logP -= bk10 * comp
+
+    /** the same news, the same skip draw, at the leg's duration */
+    def newsLeg(leg: Double): Unit =
+      if on then
+        val leg10 = leg * (w.bond10 / w.duration)
+        news += leg10
+        market.logP += leg10
+
+    def slowLeg(sm: Double, inflSign: Double): Unit =
+      if on then
+        val bm10 = -w.slowBeta * sm * k10 * inflSign
+        market.logP += bm10
+        slow += w.slowPerm * bm10
+
+    /** carry, the term premium's included, minus the leg's duration times the realised rate move */
+    def carry(rate: Double, rOld: Double, dt: Double): Unit =
+      if on then fair += (rate + tp10) * dt - w.bond10 * (rate - rOld)
+
+    def step(i: Int, eqStress: Double, eqStressForRefuge: Double): Unit =
+      if on then
+        val flow   = -w.margin * eqStress * market.stressIdx +
+                     w.refuge * k10 * eqStressForRefuge * math.max(0.0, 1.0 - market.stressIdx)
+        val fairV  = if w.newsBond > 0.0 then fair + slow + news else fair + slow
+        val noise  = SigmaNBond * k10 * rng.randn()
+        val _      = market.step(fairV, flow + noise)
+        prices(i) = Math.exp(market.logP)
+
+    /** the leg's prices after the burn-in; empty when it is off */
+    def path: Array[Double] = if on then prices.drop(BurnIn) else Array.emptyDoubleArray
+
+  /** The bond's session: the margin selling and the refuge bid against its fair value, plus its
+    * noise from the session's draw `z` -- out of `priceLoop` for the JIT's huge-method limit. */
+  private def bondSession(w: World, bdM: Market, eqStress: Double, eqStressForRefuge: Double,
+                          fair: Double, z: Double): Unit =
+    val flow  = -w.margin * eqStress * bdM.stressIdx +
+                w.refuge * (w.duration / DurationRef) * eqStressForRefuge * math.max(0.0, 1.0 - bdM.stressIdx)
+    val noise = SigmaNBond * (w.duration / DurationRef) * z
+    val _ = bdM.step(fair, flow + noise)
+
+  /** The trend crowd's target share: the two crowds' exponentiated performance, capped. */
+  private def allocTarget(beta: Double, perfT: Double, perfV: Double): Double =
+    val eT = Math.exp(math.min(50.0, beta * perfT))
+    val eV = Math.exp(math.min(50.0, beta * perfV))
+    eT / (eT + eV)
+
   def priceLoop(w: World, years: Int, seed: Long): Priced =
     // java.lang.Math throughout (`Math.exp`, `max`, `min`), NOT scala.math.  This method is past
     // what C2 will inline into -- it compiled with under 9 kB of callees inlined -- so scala.math's
@@ -3928,6 +4014,10 @@ object MarketSim:
     val eqM = new Market(w.valuePull, w.stress, 12.0 / w.depth, w.recoveryDrag, w.recoveryFloor,
                          w.haltLimit, w.volPull, w.stressAdapt)
     val bdM = new Market(KValueBond, w.stress, 1.0)
+    val b10 = new Bond10Leg(w, seed, tot)
+    // THE TERM PREMIUM the bond carries over the short rate, per year (exactly 0.0 when off, and
+    // `rate + 0.0` is `rate`)
+    val tpB = w.ext.termPremium / 100.0 * w.duration
     // THE AMPLIFIER STUDY's gain scale: the equity market's alone (the bond's impact IS its
     // reference).  Exact forms at 1 and 0.5; anything else goes through `expDet` on a log, which
     // the twins' parity run guards.
@@ -4212,6 +4302,7 @@ object MarketSim:
         if w.newsBond > 0.0 then
           newsB = NewsBondDecay * newsB - bk * comp
           bdM.logP -= bk * comp
+          b10.newsComp(bk, comp)
         if nrng.nextDouble() < pNews then
           logVbase -= perm * size
           eqM.logP -= size
@@ -4225,6 +4316,7 @@ object MarketSim:
               else bk * size
             newsB += leg
             bdM.logP += leg
+            b10.newsLeg(leg)
           newsJ = size
       // the channel's share of THIS session's conditional variance, for the implied-vol member;
       // 0 when the channel is off, so that member is unchanged.
@@ -4247,6 +4339,7 @@ object MarketSim:
         val bm = -w.slowBeta * sm * (w.duration / DurationRef) * inflSign
         bdM.logP += bm
         slowB += w.slowPerm * bm
+        b10.slowLeg(sm, inflSign)
         slowG = w.slowPhi * slowG - w.slowLev * slowK * zs
       inflPress += w.inflSpeed * (inflTarget - inflPress)
       // policy: chase rateMean + pressure MINUS accommodation, and accommodation is a CAPPED
@@ -4267,7 +4360,8 @@ object MarketSim:
       rate = max(0.0, rate + w.rateSpeed * ((w.rateMean + inflPress - acc) - rate) * dt
                               + 0.01 * (1.0 + 25.0 * inflPress) * sqdt * rng.randn())
       // bond fair value: carry minus duration times the realised rate move
-      fairB += rate * dt - w.duration * (rate - rOld)
+      fairB += (rate + tpB) * dt - w.duration * (rate - rOld)
+      b10.carry(rate, rOld, dt)
       // The discount markdown applies to the OBSERVED equity price directly — same-day, like the
       // bond's duration response — because equities reprice discount-rate news immediately.
       // Routing it through the slow value channel (the previous form) smeared rate news over ~40
@@ -4606,15 +4700,11 @@ object MarketSim:
       // calm-day correlation and the level is the whole crisis behaviour.  The EWMA is updated
       // AFTER this use, so today's equity move never reaches today's bond bid.
       val eqStressForRefuge = if w.refugeDays > 0.0 then settledStress else eqM.stressIdx
-      val bondFlow = -w.margin * eqM.stressIdx * bdM.stressIdx +
-                     w.refuge * (w.duration / DurationRef) * eqStressForRefuge *
-                       max(0.0, 1.0 - bdM.stressIdx)
       if w.refugeDays > 0.0 then settledStress += settleMu * (eqM.stressIdx - settledStress)
       // the news leg's fair (see `newsBond`); the off branch keeps the released expression
-      val bondFair  = if w.newsBond > 0.0 then fairB + slowB + newsB else fairB + slowB
-      val bondNoise = SigmaNBond * (w.duration / DurationRef) * rng.randn()
-      val retB = bdM.step(bondFair, bondFlow + bondNoise)
-      val _ = retB
+      bondSession(w, bdM, eqM.stressIdx, eqStressForRefuge,
+                  if w.newsBond > 0.0 then fairB + slowB + newsB else fairB + slowB, rng.randn())
+      b10.step(i, eqM.stressIdx, eqStressForRefuge)
 
       px(i) = Math.exp(eqM.logP - markdown)
       fv(i) = Math.exp(logVbase - markdown)
@@ -4644,9 +4734,7 @@ object MarketSim:
         case Crowd.Momentum => trendPos
         case _              => crowdE - 1.0
       perfT = 0.99 * perfT + 0.01 * (crowdPos * retE) * 100.0
-      val eT = Math.exp(min(50.0, w.beta * perfT))
-      val eV = Math.exp(min(50.0, w.beta * perfV))
-      val target = eT / (eT + eV)
+      val target = allocTarget(w.beta, perfT, perfV)
       val kNow = kAdapt * (1.0 + w.panic * eqM.stressIdx)   // redemptions fast, subscriptions slow
       wTrend += kNow * (target - wTrend) + kHome * (w.trendShare - wTrend)
       wTrend = max(0.02, min(0.95, wTrend))       // numerical guard; binding is REPORTED
@@ -4664,12 +4752,13 @@ object MarketSim:
       i += 1
 
     val path = Path(px.drop(BurnIn), rt.drop(BurnIn), fv.drop(BurnIn), lq.drop(BurnIn), bq.drop(BurnIn),
-         bp.drop(BurnIn), ip.drop(BurnIn), cp.drop(BurnIn),
+         bp.drop(BurnIn), b10.path,
+         ip.drop(BurnIn), cp.drop(BurnIn),
          wTrendSum / n, pinnedCnt.toDouble / n, satCnt.toDouble / n,
          eqM.clamps + bdM.clamps - clampsAtBurn,
          eqM.floorDays - eqFloorAtBurn, eqM.tailDays - eqTailAtBurn,
          eqM.haltDays - eqHaltAtBurn,
-         bondStressSum / n, bondStressHi.toDouble / n, w.duration, crowdFlowSum / n,
+         bondStressSum / n, bondStressHi.toDouble / n, w.bond10, w.duration, crowdFlowSum / n,
          disasterCount, boomCount, recessCount, bust.ceilDays,
          Array.emptyDoubleArray, Array.emptyDoubleArray, Array.emptyDoubleArray,
          Array.emptyDoubleArray)
@@ -6224,6 +6313,11 @@ object MarketSim:
                               trendShare: Double, yearsPerPath: Double,
                               trendPinned: Double, targetSat: Double,
                               bondVol: Double, bondGrowth: Double, bondInfl: Double,
+                              // THE 10-YEAR LEG's readings (`World.bond10`), NaN when the leg is off: its
+                              // annualised RMS volatility over the whole path, its return over the growth
+                              // and inflation crash episodes, read as the bond's are
+                              bond10Vol: Double, bond10Growth: Double, bond10Infl: Double,
+                              bond10Excess: Double,   // the leg's log return over the short rate, pts/yr
                               corrCalm: Double, corrInfl: Double,
                               meanBondStress: Double, pctBondStress: Double, crowdFlow: Double,
                               disPerCentury: Double,
@@ -6278,6 +6372,9 @@ object MarketSim:
                               // the running peak, equity leg then bond leg
                               ddEq5: Double, ddEq10: Double, ddEq20: Double,
                               ddBd5: Double, ddBd10: Double, ddBd20: Double,
+                              // the 10-year leg's share of sessions more than 10% under its peak (NaN
+                              // when off), and its duration (0 when off)
+                              ddB1010: Double, bond10: Double,
                               // None when no satellite leg / no range channel ran -- the gate then
                               // carries no such rows at all, which is what keeps a channels-off
                               // world's verdict byte-identical.
@@ -6309,6 +6406,12 @@ object MarketSim:
     def bondDepthVsVol: Double =
       val expected = math.max(0.0, BondD10Slope * (bondVol * 100.0) + BondD10Intercept)
       if expected <= 0.0 then Double.NaN else ddBd10 / expected
+
+    /** The 10-year leg's time under water relative to what its own volatility implies, the bond
+      * row's reading on the leg; NaN when the leg is off. */
+    def bond10DepthVsVol: Double =
+      val expected = math.max(0.0, BondD10Slope * (bond10Vol * 100.0) + BondD10Intercept)
+      if expected <= 0.0 then Double.NaN else ddB1010 / expected
 
     /** Time spent more than a rung below the running peak, RELATIVE to what a real equity fund of
       * this world's OWN volatility and return per unit volatility spends -- see `EquityD10Corr`.
@@ -6424,6 +6527,9 @@ object MarketSim:
     retAc1: Double, annRet: Double, divYield: Double,
     bondVol: Vector[Double],
     bondGrowth: Vector[Double], bondInfl: Vector[Double],   // the bond over each episode, by regime
+    // the 10-year leg's readings, NaN / empty when the leg is off
+    ddB10: (Double, Double, Double), bond10Vol: Double, bond10Growth: Vector[Double], bond10Infl: Vector[Double],
+    bond10Excess: Double,
     corrCalm: Double, corrInfl: Double,
     valDisp: Double, maxOver: Double, semiExcess: Double, upShare: Double, levCorr: Double,
     volTiming: Double, volExit: Vector[Double], bubbleCoupling: Double, runUp3y: Double,
@@ -6446,6 +6552,13 @@ object MarketSim:
         val infl = (ep.peak to ep.trough).map(sp.inflPress).sum / math.max(1, ep.trough - ep.peak + 1)
         (infl > InflRegimeEdge) == inflRegime
       }.map(ep => math.log(sp.bond(ep.trough) / sp.bond(ep.peak)) * 100.0)
+    // the 10-year leg over the same episodes, by the same regime
+    def b10InWindows(inflRegime: Boolean): Vector[Double] =
+      if sp.bond10.isEmpty then Vector.empty
+      else eps.filter { ep =>
+        val infl = (ep.peak to ep.trough).map(sp.inflPress).sum / math.max(1, ep.trough - ep.peak + 1)
+        (infl > InflRegimeEdge) == inflRegime
+      }.map(ep => math.log(sp.bond10(ep.trough) / sp.bond10(ep.peak)) * 100.0)
     def corrIn(inflRegime: Boolean): Double =
       // the regime's sessions in order, counted then filled, instead of a boxed index sequence
       val n = sp.price.length
@@ -6564,6 +6677,22 @@ object MarketSim:
         segs.map(seg => math.sqrt(MatD(seg).power(2).mean * DaysPerYear))
       },
       bondGrowth = bondInWindows(false), bondInfl = bondInWindows(true),
+      ddB10 = if sp.bond10.isEmpty then (Double.NaN, Double.NaN, Double.NaN) else depthShares(sp.bond10),
+      bond10Vol =
+        if sp.bond10.isEmpty then Double.NaN
+        else math.sqrt(MatD(dailyReturns(sp.bond10)).power(2).mean * DaysPerYear),
+      bond10Growth = b10InWindows(false), bond10Infl = b10InWindows(true),
+      // each session's log return over the rate it carried, the rate the session set
+      bond10Excess =
+        if sp.bond10.isEmpty then Double.NaN
+        else
+          val rb10 = dailyReturns(sp.bond10)
+          var se = 0.0
+          var k = 0
+          while k < rb10.length do
+            se += rb10(k) - sp.rate(k + 1) / DaysPerYear
+            k += 1
+          se / rb10.length * DaysPerYear * 100.0,
       corrCalm = corrIn(false), corrInfl = corrIn(true),
       // the path's own returns, through the same functions a record is read with
       valDisp = valDisp, maxOver = maxOver, semiExcess = semiExcessOf(r), upShare = upShareOf(r),
@@ -6643,6 +6772,9 @@ object MarketSim:
       targetSat = sims.map(_.targetSat).sum / sims.size,
       bondVol = med(per.flatMap(_.bondVol)),
       bondGrowth = med(per.flatMap(_.bondGrowth)), bondInfl = med(per.flatMap(_.bondInfl)),
+      bond10Vol = med(per.map(_.bond10Vol)),
+      bond10Excess = med(per.map(_.bond10Excess)),
+      bond10Growth = med(per.flatMap(_.bond10Growth)), bond10Infl = med(per.flatMap(_.bond10Infl)),
       corrCalm = med(per.map(_.corrCalm)), corrInfl = med(per.map(_.corrInfl)),
       meanBondStress = sims.map(_.meanBondStress).sum / sims.size,
       pctBondStress = sims.map(_.pctBondStress).sum / sims.size,
@@ -6668,9 +6800,11 @@ object MarketSim:
       levCorr = med(per.map(_.levCorr)),
       tailHedge = med(per.map(_.tailHedge)),
       duration = sims.head.duration,
+      bond10 = sims.head.bond10Duration,
       inflAnn = med(per.map(_.inflAnn)),
       ddEq5  = med(per.map(_.ddEq._1)), ddEq10 = med(per.map(_.ddEq._2)), ddEq20 = med(per.map(_.ddEq._3)),
-      ddBd5  = med(per.map(_.ddBd._1)), ddBd10 = med(per.map(_.ddBd._2)), ddBd20 = med(per.map(_.ddBd._3)))
+      ddBd5  = med(per.map(_.ddBd._1)), ddBd10 = med(per.map(_.ddBd._2)), ddBd20 = med(per.map(_.ddBd._3)),
+      ddB1010 = med(per.map(_.ddB10._2)))
 
   /** The gate answers three different questions and used to report one verdict.  Each class names
     * what a failure costs, and a report declares which classes it requires (`-gate`).
@@ -7373,6 +7507,9 @@ object MarketSim:
     // bond row's own record reading (`bondReadings`; `recordbands` fixture), the target
     // `bond depth vs vol` is graded against.
     bondWindow: String, bondYears: Int, bondDepth: Double,
+    // THE 10-YEAR LEG's record window: FRED's DGS10 as a par bond, the same for both sets
+    // (`bond10Readings`; `bond10-2026-10-05.tsv`)
+    bond10Window: String, bond10Years: Int,
     volBand: (Double, Double),                   // the two asset-specific FIDELITY bands
     yearVolBand: (Double, Double),               // the typical year's: one sd of the row's own
                                                  // single-history spread (0.11 at 72y, 0.18 at 27y)
@@ -7538,7 +7675,9 @@ object MarketSim:
                  sectorDriftHalf = d.sectorDriftHalf)
       else div
     val mac  = if w.macroPanel == 0 then sec.copy(macroPanel = d.macroPanel) else sec
-    mac.copy(macroNull = 0)
+    // the 10-year leg runs at `VerdictBond10` where the caller left it off
+    val b10  = if w.bond10 <= 0.0 then mac.copy(bond10 = VerdictBond10) else mac
+    b10.copy(macroNull = 0)
 
   /** One real drawdown-shape reference: a series over a window, and per threshold (thr, episodes,
     * per year, median depth %, median decline, median recovery, median underwater, median
@@ -7635,7 +7774,16 @@ object MarketSim:
       0.482175, (-1.654394, 1.136365)),
     RecordBand("vol-exit 3x interaction pts/yr", 1.07269,
       Vector(-3.623782, -1.999153, -1.387685, -0.99856, -0.706664, -0.456976, -0.227406, -0.007667, 0.207447, 0.434413, 0.666121, 0.889054, 1.120667, 1.352742, 1.59056, 1.859131, 2.1666, 2.528453, 2.971026, 3.523125, 4.424531, 6.282058, 11.043108),
-      0.482175, (-1.817868, 5.673636)))
+      0.482175, (-1.817868, 5.673636)),
+    RecordBand("bond10 vol per duration", 1.028623,
+      Vector(0.745022, 0.866291, 0.908784, 0.933807, 0.951129, 0.964725, 0.977189, 0.988839, 0.999548, 1.009831, 1.01917, 1.029164, 1.039033, 1.048724, 1.059101, 1.070319, 1.082067, 1.096044, 1.111658, 1.131763, 1.161695, 1.217523, 1.399679),
+      0.481525, (0.880103, 1.196692)),
+    RecordBand("bond10 depth vs vol", 0.538402,
+      Vector(0.014588, 0.098099, 0.186019, 0.248408, 0.29696, 0.33879, 0.379023, 0.417377, 0.451582, 0.486341, 0.52212, 0.558168, 0.596334, 0.63865, 0.682208, 0.734126, 0.788801, 0.853616, 0.933131, 1.037088, 1.206957, 1.564555, 2.793507),
+      0.481525, (0.125246, 1.441048)),
+    RecordBand("bond10 excess return pts/yr", 0.781738,
+      Vector(-3.88258, -1.623677, -0.91835, -0.533359, -0.277844, -0.066187, 0.110474, 0.262406, 0.415373, 0.554616, 0.682755, 0.824784, 0.953751, 1.091371, 1.232566, 1.383343, 1.539699, 1.720187, 1.908403, 2.177713, 2.577178, 3.320535, 5.53443),
+      0.481525, (-1.374034, 3.064007)))
 
   /** The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ
     * 1999-03-11..2026-08-20. */
@@ -7705,7 +7853,16 @@ object MarketSim:
       0.481025, (-2.680914, 13.010553)),
     RecordBand("vol-exit 3x interaction pts/yr", 23.198533,
       Vector(-8.567701, 0.482693, 5.56122, 8.647324, 10.843394, 12.664551, 14.385647, 15.919216, 17.409942, 18.857511, 20.242008, 21.775378, 23.300004, 24.840551, 26.482143, 28.367765, 30.404303, 32.693019, 35.271047, 38.660798, 43.819114, 54.492427, 82.660437),
-      0.481025, (2.17624, 50.404711)))
+      0.481025, (2.17624, 50.404711)),
+    RecordBand("bond10 vol per duration", 1.028623,
+      Vector(0.745022, 0.866291, 0.908784, 0.933807, 0.951129, 0.964725, 0.977189, 0.988839, 0.999548, 1.009831, 1.01917, 1.029164, 1.039033, 1.048724, 1.059101, 1.070319, 1.082067, 1.096044, 1.111658, 1.131763, 1.161695, 1.217523, 1.399679),
+      0.481525, (0.880103, 1.196692)),
+    RecordBand("bond10 depth vs vol", 0.538402,
+      Vector(0.014588, 0.098099, 0.186019, 0.248408, 0.29696, 0.33879, 0.379023, 0.417377, 0.451582, 0.486341, 0.52212, 0.558168, 0.596334, 0.63865, 0.682208, 0.734126, 0.788801, 0.853616, 0.933131, 1.037088, 1.206957, 1.564555, 2.793507),
+      0.481525, (0.125246, 1.441048)),
+    RecordBand("bond10 excess return pts/yr", 0.781738,
+      Vector(-3.88258, -1.623677, -0.91835, -0.533359, -0.277844, -0.066187, 0.110474, 0.262406, 0.415373, 0.554616, 0.682755, 0.824784, 0.953751, 1.091371, 1.232566, 1.383343, 1.539699, 1.720187, 1.908403, 2.177713, 2.577178, 3.320535, 5.53443),
+      0.481525, (-1.374034, 3.064007)))
 
   /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
     * rather than re-measured (except the two the 0.22 releases re-anchored -- `medDepth` and
@@ -7737,6 +7894,7 @@ object MarketSim:
     postRate = 4.224745, postRateSd = 0.15,
     postFloor = 15.195221, postFloorSd = 0.46,
     bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029058,
+    bond10Window = "DGS10 par bond, 1962-2026", bond10Years = 64,
     vol = 16.0,          volSd = 0.12,
     // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 12.48, where
     // calendar years read 12.87 (`yearvol-2026-09-15.tsv`, w1954); the S&P index's own daily
@@ -7841,6 +7999,7 @@ object MarketSim:
     postRate = 2.381665, postRateSd = 0.38,
     postFloor = 23.358002, postFloorSd = 0.65,
     bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029058,
+    bond10Window = "DGS10 par bond, 1962-2026", bond10Years = 64,
     vol = 26.90,         volSd = 0.18,
     // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 19.97, where calendar
     // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) -- the bottom of the 18.2-21.5 phase range.
@@ -8081,6 +8240,14 @@ object MarketSim:
     // band, and the loss weighs them 0.
     (VolExitRows(0), st => st.volExit(0), bandRecord(a, VolExitRows(0)), 0.0),
     (VolExitRows(1), st => st.volExit(1), bandRecord(a, VolExitRows(1)), 0.0),
+    // THE 10-YEAR LEG (the bond-fund consumer's request, 2026-10-05): its volatility and its time
+    // under water against FRED's DGS10 read as a par bond, each judged against the record's band;
+    // the loss weighs the volatility as the long bond's and the depth 0.
+    (Bond10BandRows(0), st => if st.bond10 > 0.0 then st.bond10Vol * 100.0 / st.bond10 else Double.NaN,
+     bandRecord(a, Bond10BandRows(0)), wgt(1.0, a.bondVolSd)),
+    (Bond10BandRows(1), st => st.bond10DepthVsVol, bandRecord(a, Bond10BandRows(1)), 0.0),
+    // the term premium's row: graded by its band, never priced, since the sets sample the premium
+    (Bond10BandRows(2), st => st.bond10Excess, bandRecord(a, Bond10BandRows(2)), 0.0),
     // The leverage effect, graded by the one statistic that survives close-only data:
     // corr(r_t, r^2_{t+1}) reads -0.09 on every CRSP era and negative on all 18 funds.  The
     // sharper Patton-Sheppard signed-half regression was measured and CANNOT anchor here --
@@ -8245,7 +8412,7 @@ object MarketSim:
     * a log ratio has no meaning across zero and its wrong-sign penalty grows as the reading nears it. */
   val AdditiveTargets: Set[String] =
     Set("vol-timing edge pts/yr", "vol-exit timing pts/yr", "vol-exit 3x interaction pts/yr",
-        "rate floor share %", "post-trough floor share %")
+        "rate floor share %", "post-trough floor share %", "bond10 excess return pts/yr")
 
   /** The admissible interval for a per-path fidelity ratio on a row WITHOUT a `RecordBand`, and the
     * admissible percentile band for an `ExtremeTargets` row.  Stated ONCE: the report, the sidecar
@@ -9405,6 +9572,19 @@ object MarketSim:
     * bond for years -- with TLT's own history at their 26th percentile. */
   val BondBandRows: Vector[String] = Vector("bond depth vs vol")
 
+  /** THE 10-YEAR LEG's banded rows (`bond10Readings`; `bond10-2026-10-05.tsv`): its annualised RMS
+    * volatility PER YEAR OF DURATION -- on the record each session's return over the par bond's
+    * duration at the prior yield, so the record's moving duration cancels session by session; on
+    * the model the leg's over its own -- and its time under water against what its volatility
+    * implies, the bond row's reading on the leg.  The record is FRED's DGS10 read as a par bond,
+    * 1962-2026, the same for both sets. */
+  val Bond10BandRows: Vector[String] =
+    Vector("bond10 vol per duration", "bond10 depth vs vol", "bond10 excess return pts/yr")
+
+  /** The duration the verdict runs the 10-year leg at when the caller leaves it off.  The vol row
+    * is per year of duration, so the choice does not move it; 8 is a 10-year Treasury's today. */
+  val VerdictBond10: Double = 8.0
+
 
   // ---- the sector rows -----------------------------------------------------------------------
 
@@ -9603,6 +9783,24 @@ object MarketSim:
     val d10 = depthShares(px)._2
     Vector(if expected <= 0.0 then Double.NaN else d10 / expected)
 
+  /** The 10-year leg's rows on one series of daily log returns, each session's duration and its
+    * log return over the short rate (`Bond10BandRows`): the annualised RMS of return over
+    * duration, in percent per year of duration; `bondReadings`' time under water on the returns;
+    * and the mean excess at `perYear` sessions a year, in points a year. */
+  def bond10Readings(r: Array[Double], dur: Array[Double], ex: Array[Double], perYear: Double): Vector[Double] =
+    var sq = 0.0
+    var se = 0.0
+    var i = 0
+    while i < r.length do
+      val x = r(i) / dur(i)
+      sq += x * x
+      i += 1
+    i = 0
+    while i < ex.length do
+      se += ex(i)
+      i += 1
+    Vector(math.sqrt(sq / r.length * DaysPerYear) * 100.0, bondReadings(r)(0), se / ex.length * perYear * 100.0)
+
   /** The banded rows whose record is the set's CLUSTER window (`Anchors.clusterYears`, the
     * century on the S&P); every other banded row's record is its EQUITY window -- the variance
     * ratio too, whose loss target is read over 25-year fund records while its band is the set's
@@ -9616,6 +9814,7 @@ object MarketSim:
   def recordBandYears(a: Anchors, name: String): Int =
     if RecordBandClusterRows.contains(name) then a.clusterYears
     else if RateBandRows.contains(name) || RateAfterRows.contains(name) then a.rateYears
+    else if Bond10BandRows.contains(name) then a.bond10Years
     else if BondBandRows.contains(name) then a.bondYears
     else if TimingRows.contains(name) then a.timingYears
     else a.equityYears
@@ -9759,6 +9958,15 @@ object MarketSim:
     * `bondReadings`. */
   def bondResamples(r: Array[Double], resamples: Int, seed: Long): Vector[Vector[Double]] =
     blockResamples(r, resamples, seed, bondReadings)
+
+  /** `recordResamples` on the 10-year leg's returns and durations together, read by
+    * `bond10Readings`: the session indices are resampled, so both series take the same blocks the
+    * other block resamples take. */
+  def bond10Resamples(r: Array[Double], dur: Array[Double], ex: Array[Double], perYear: Double,
+                      resamples: Int, seed: Long): Vector[Vector[Double]] =
+    val idx = Array.tabulate(r.length)(_.toDouble)
+    blockResamples(idx, resamples, seed,
+      x => bond10Readings(x.map(i => r(i.toInt)), x.map(i => dur(i.toInt)), x.map(i => ex(i.toInt)), perYear))
 
   /** Moving one-year-block resamples of one daily series, each the series' own length, read by
     * `read`: every block start is drawn first from one `NumPyRNG(seed)`, resample-major, so the
@@ -9979,7 +10187,7 @@ object MarketSim:
     * Enforced by `MarketSimContractSuite` against `CalibrateRanges`, not by this comment: the
     * 0.20.0 re-search proposed `duration = 11.1` and was refused by hand, and a rule that lives in
     * someone's memory of that refusal is one range row away from being lost. */
-  val IdentityParams: Vector[String] = Vector("duration", "divYield")
+  val IdentityParams: Vector[String] = Vector("duration", "bond10", "divYield")
 
   /** THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration
     * search and the reachability check alike.  A news rate's range runs 0-30 a year while the
@@ -10037,7 +10245,7 @@ object MarketSim:
     "volPull", "discountLag",
     "discountRef", "driftSd", "boomFade", "delevRate", "delevFrom", "delevSize", "delevLen",
     "recessReprice", "recessBase", "recessShape", "overshoot", "overshootRate", "recessRecMult",
-    "recessCredit", "recessInfl")
+    "recessCredit", "recessInfl", "termPremium")
 
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
@@ -10186,6 +10394,9 @@ object MarketSim:
     ("recessRecMult", 0.5, 2.00, (w, x) => w.copy(recessRecMult = x), _.recessRecMult),
     ("recessCredit", 0.0, 20.0, (w, x) => w.copy(recessCredit = x), _.recessCredit),
     ("recessInfl",   0.0,  2.00, (w, x) => w.copy(recessInfl = x), _.recessInfl),
+    // the record's 10-year excess return pins the premium only to about 0.11 a year of duration,
+    // so the sets sample it over the range that uncertainty spans
+    ("termPremium",  0.0,  0.30, (w, x) => w.copy(ext = w.ext.copy(termPremium = x)), _.ext.termPremium),
   )
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
@@ -10661,6 +10872,7 @@ object MarketSim:
     * section to drive; the list exists so a new fidelity target cannot land unclassified. */
   val BondTargets = Vector(
     "bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol",
+    "bond10 vol per duration", "bond10 depth vs vol", "bond10 excess return pts/yr",
     "tail hedge corr", "short rate %", "rate floor share %", "post-trough rate %",
     "post-trough floor share %")
 
@@ -10897,7 +11109,9 @@ object MarketSim:
     ("equity funds, 25y", 25, Vector("equity d5 vs real", "equity d10 vs real")),
     (a.bondWindow, a.bondYears,
      Vector("bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol",
-            "tail hedge corr")))
+            "tail hedge corr")),
+    (a.bond10Window, a.bond10Years,
+     Vector("bond10 vol per duration", "bond10 depth vs vol", "bond10 excess return pts/yr")))
 
   /** One fidelity row AS REPORTED.  A per-path target carries a ratio; an `ExtremeTargets` row
     * carries the anchor's percentile among single histories instead, and no ratio.  The two are
@@ -11886,6 +12100,7 @@ object MarketSim:
     def logged(name: String, v: Array[Double]): EmitColumn = EmitColumn(name, v.map(math.log))
     val base = Vector(p.price, p.bond, p.rate, p.cpi, p.liq, p.bliq, p.fundamental, p.inflPress)
     EmitColumns.tail.zip(base).map(EmitColumn(_, _))
+      ++ (if p.bond10.isEmpty then Vector() else Vector(EmitColumn("bond10", p.bond10)))
       ++ (if p.sat.isEmpty then Vector() else Vector(logged("logSat", p.sat)))
       ++ (if p.logHi.isEmpty then Vector() else Vector(EmitColumn("logHigh", p.logHi), EmitColumn("logLow", p.logLo)))
       ++ (if p.logVolume.isEmpty then Vector() else Vector(EmitColumn("logVolume", p.logVolume)))
@@ -12129,7 +12344,7 @@ object MarketSim:
       ("capYears", num(w.capYears)), ("capWindow", num(w.capWindow)),
       ("cycleSd", num(w.cycleSd)), ("cycleYears", num(w.cycleYears)),
       ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", num(w.crowdImpact)),
-      ("panic", num(w.panic)), ("duration", num(w.duration)),
+      ("panic", num(w.panic)), ("duration", num(w.duration)), ("bond10", num(w.bond10)), ("termPremium", num(w.ext.termPremium)),
       ("easing", num(w.easing)), ("unwind", num(w.unwind)), ("floorhold", num(w.floorhold)),
       ("refuge", num(w.refuge)),
       ("refugeDays", num(w.refugeDays)),
@@ -12319,6 +12534,7 @@ object MarketSim:
       s""""bars": { "rangeScale": ${ef(gateW.rangeScale)}, "rangeDown": ${ef(gateW.rangeDown)}, "source": ${source(w.rangeScale > 0.0)} }""",
       s""""volume": { "volIdio": ${ef(gateW.volIdio)}, "source": ${source(w.volIdio > 0.0)} }""",
       s""""open": { "overnight": ${ef(gateW.overnight)}, "source": ${source(w.overnight > 0.0)} }""",
+      s""""bond10": { "bond10": ${ef(gateW.bond10)}, "source": ${source(w.bond10 > 0.0)} }""",
       s""""dividends": { "divYield": ${ef(gateW.divYield)}, "source": ${source(w.divYield > 0.0)} }""",
       s""""basket": { "basket": ${gateW.basket}, "basketBeta": ${ef(gateW.basketBeta)}, "basketSector": ${ef(gateW.basketSector)}, """ +
         s""""basketIdio": ${ef(gateW.basketIdio)}, "basketGaps": ${ef(gateW.basketGaps)}, "basketDrift": ${ef(gateW.basketDrift)}, """ +
@@ -12388,6 +12604,7 @@ object MarketSim:
       // verdict.
       s"""    "anchors": ${jsonStr(a.name)},""",
       s"""    "gradedSeries": ${strList((Vector("price", "bond")
+        ++ (if p.bond10.isEmpty then Vector() else Vector("bond10"))
         ++ (if p.sat.isEmpty then Vector() else Vector("logSat"))
         ++ (if p.logHi.isEmpty then Vector() else Vector("logHigh", "logLow"))
         ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
@@ -12413,6 +12630,7 @@ object MarketSim:
       // carries the channel at those dials and `anchored` where the verdict supplied the anchor
       // set's.  `gradedSeries` keeps its meaning: the columns in THIS file the verdict graded.
       s"""    "verdictSeries": ${strList(Vector("price", "bond")
+        ++ (if gateSt.bond10 > 0.0 then Vector("bond10") else Vector())
         ++ (if gateSt.sat.isDefined then Vector("logSat") else Vector())
         ++ gateSt.bars.toVector.flatMap(b =>
              Vector("logHigh", "logLow") ++ (if b.volSd.isFinite then Vector("logVolume") else Vector()))
@@ -12826,6 +13044,8 @@ $body
     var crowdName = "momentum"; var crowdImpact = dw.crowdImpact; var panic = dw.panic
     var drift = dw.drift; var fundVol = dw.fundVol; var rateMean = dw.rateMean
     var duration = dw.duration
+    var bond10 = dw.bond10
+    var termPremium = dw.ext.termPremium
     var easing = dw.easing; var unwind = dw.unwind; var refuge = dw.refuge
     var refugeDays = dw.refugeDays
     var satBeta = dw.satBeta
@@ -12972,6 +13192,8 @@ $body
       case "-fundvol"    => fundVol = numOr("-fundvol", consumeNext)
       case "-ratemean"   => rateMean = numOr("-ratemean", consumeNext)
       case "-duration"   => duration = numOr("-duration", consumeNext)
+      case "-bond10"     => bond10 = numOr("-bond10", consumeNext)
+      case "-termpremium" => termPremium = numOr("-termpremium", consumeNext)
       case "-easing"     => easing = numOr("-easing", consumeNext)
       case "-unwind"     => unwind = numOr("-unwind", consumeNext)
       case "-floorhold"  => floorhold = numOr("-floorhold", consumeNext)
@@ -13108,7 +13330,7 @@ $body
     share("-recoveryfloor", recoveryFloor); share("-inflprob", inflProb)
     share("-inflspeed", inflSpeed)
     belowOne("-volpersist", volPersist); belowOne("-haltlimit", haltLimit)
-    positive("-depth", depth); positive("-duration", duration)
+    positive("-depth", depth); positive("-duration", duration); nonNeg("-bond10", bond10); nonNeg("-termpremium", termPremium)
     nonNeg("-stress", stress); nonNeg("-beta", beta); nonNeg("-volofvol", volOfVol)
     nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
     nonNeg("-newsrate", newsRate); nonNeg("-newssize", newsSize); nonNeg("-refugedays", refugeDays)
@@ -13284,7 +13506,7 @@ $body
                   beliefShare = beliefShare, beliefYears = beliefYears,
                   capYears = capYears, capWindow = capWindow,
                   crowd = crowd, crowdImpact = crowdImpact, panic = panic,
-                  duration = duration, easing = easing, unwind = unwind, refuge = refuge,
+                  duration = duration, bond10 = bond10, ext = WorldExt(termPremium = termPremium), easing = easing, unwind = unwind, refuge = refuge,
                   refugeDays = refugeDays,
                   inflProb = inflProb, inflSize = inflSize,
                   inflSpeed = inflSpeed, rateSpeed = rateSpeed, discount = discount, margin = margin,
@@ -13515,6 +13737,8 @@ $body
     println(f"  recovery shape         V ${st.vCount}%d   balanced ${st.midCount}%d   U ${st.uCount}%d")
     println(f"  bond refuge            vol ${st.bondVol * 100}%.1f%% (24y windows)   growth-crash ${pm(st.bondGrowth, 0, 1)}%s   infl-crash ${pm(st.bondInfl, 0, 1)}%s")
     println(f"    1962-2026 reference    growth-crash ${pm(BondLongRecord._1, 0, 1)}%s   infl-crash ${pm(BondLongRecord._2, 0, 1)}%s   (a 20-year Treasury from DGS20 over the market's 17 declines of 15%%+, 10 growth / 7 inflation; reported, not graded)")
+    if st.bond10 > 0.0 then
+      println(f"  10-year leg            duration ${st.bond10}%.1f   vol ${st.bond10Vol * 100}%.1f%% (${st.bond10Vol * 100 / st.bond10}%.3f per year of duration)   growth-crash ${pm(st.bond10Growth, 0, 1)}%s   infl-crash ${pm(st.bond10Infl, 0, 1)}%s   depth vs vol ${st.bond10DepthVsVol}%.3f   excess return ${pm(st.bond10Excess, 0, 2)}%s pts/yr")
     println(f"  stock-bond correlation calm ${pm(st.corrCalm, 0, 2)}%s   inflation regime ${pm(st.corrInfl, 0, 2)}%s")
     println(f"  realized inflation     ${st.inflAnn}%.2f%%/yr median (deterministic from regime pressure; no draws consumed)")
     // The channel readings the gate rows grade, printed so a channel FAIL can be sized; absent
