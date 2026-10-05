@@ -304,17 +304,17 @@ was searched under it. **The 0.24.6 sets** are the two to draw from now: `0.24.6
 `0.24.6-sp500.json`, 30 members each, member 0 the recipe itself (the 0.24.5 sets, which ran low on
 return per vol, stay as published). The members sample the long-run drift's uncertainty given the
 record: one history pins the drift only to its own sampling width, and a set whose members shared
-one drift would tell a consumer the long-run return is known exactly. The 30 members fill the 30
-equal-probability strata of the drift's posterior, one each -- a flat prior conditioned on the
-record's return per vol and on every other graded row, through the share of judged worlds at each
-drift that pass them. Member 0, the recipe, fills the stratum holding the record; members 1-29 fill
-the rest in increasing order of return per vol, each its source world with only the drift moved.
-Their return per vol runs 0.14-0.65 on the Nasdaq (QQQ 0.38) and 0.51-0.85 on the S&P (CRSP
-1954-2026 0.69). The S&P's low side is a lower bound: at return per vol 0.53, worlds bred there pass
-the membership test 11 times in 22, against 22% of the pool's members moved there, so the posterior
-weights that side too lightly. The return-per-vol gate is the record's own joint band (Nasdaq -0.18-0.97, S&P
-0.31-1.09), so it refuses only what the record rules out. A member's `score`, `worstRow` and
-`seededFrom` are its source world's search readings, at that world's drift. The membership test is
+one drift would tell a consumer the long-run return is known exactly. Members 1-29 are drawn from a
+Markov-chain sample over every searched dial under the membership rule and the record's
+return-per-vol likelihood -- a world's drift free over its prior range, the other dials moving with
+it -- seeded from the previous set, judged on seeds 1-4 and chosen one per quantile of the sample's
+drift. Their return per vol runs 0.17-0.82 on the Nasdaq (QQQ 0.38; drift 0.097-0.243) and
+0.52-0.83 on the S&P (CRSP 1954-2026 0.69; drift 0.113-0.167). Every member's `coverageWeight` is
+1/30: the set is an equal-weight sample with the recipe one member of it. The return-per-vol gate is the record's own joint band (Nasdaq -0.18-0.97, S&P
+0.31-1.09), so it refuses only what the record rules out. A member's `seededFrom` names the chain
+particle it was drawn from (run id, founder index), its `score` is the chain's log-likelihood of the
+record's return per vol under that member, not a search score, and its `worstRow` is a placeholder.
+The membership test is
 the verdict's own read on four fresh seeds at 200 paths × 100 years with every derived series and
 the macro panel graded: every class passes on all four, and no row misses on three or more of them
 unless the recipe misses it too, where 9 of the 150 members of `0.24.2-sp500.json` pass every class
@@ -329,13 +329,13 @@ members' source worlds were searched at that same read, 200 × 100 with every cl
 at fewer paths or under 100 years, or gating realism and mechanism alone, admits mostly members the
 test rejects (under 100 years the 250-session rung grades another era). The set-level reading is
 each row's median over members and seeds, its range across reads, beside the record: on the S&P set
-return per vol 0.68 (0.50-0.86; 0.69), the avoided share 53.5% (48.4-60.7; 64.7), kurtosis 24.5
-(21.8), equity vol 16.7% (15.7%), the median decline 0.76 years (0.66), the 3-year variance ratio
-1.22 (0.75), the wings 7.0 / 8.0 (7.6 / 6.7), the floor share 10.3% (14.6%), leverage corr -0.07,
-0.28 misses a read; on the Nasdaq set return per vol 0.39 (0.13-0.65; 0.38), the avoided share
-39.6% (27.8-51.8; the splice's 59.8), kurtosis 9.9 (9.6), equity vol 24.1% (26.9%), the bubble
-coupling +0.14 (+1.10, missed on three reads in five), the wings 6.5 / 7.2 (7.6 / 6.7), the floor
-share 29% (37%), 0.84 misses a read. To run one:
+return per vol 0.70 (0.51-0.84; 0.69), the avoided share 52.4% (43.8-61.1; 64.7), kurtosis 24.8
+(21.8), equity vol 16.7% (15.7%), the median decline 0.71 years (0.66), the 3-year variance ratio
+1.22 (0.75), the wings 6.6 / 7.6 (7.6 / 6.7), the floor share 10.2% (14.6%), leverage corr -0.07,
+0.17 misses a read; on the Nasdaq set return per vol 0.37 (0.16-0.86; 0.38), the avoided share
+39.3% (29.8-49.3; the splice's 59.8), kurtosis 9.8 (9.6), equity vol 24.3% (26.9%), the bubble
+coupling +0.14 (+1.10, missed on 82 reads in 120), the wings 6.5 / 6.7 (7.6 / 6.7), the floor
+share 31% (37%), 0.91 misses a read. To run one:
 
 ```
 market_sim.exe -worldset test-data/worlds/0.24.6-nasdaq.json -worldindex 3 -anchors nasdaq -paths 200 -years 40 -emitall -emit m3.tsv
@@ -639,7 +639,7 @@ The first passed at 0.000% in a world where the second read 10.9%.
 
 `-satbeta`/`-satidio` are anchored on the *coupling* — correlation, beta, volatility ratio, and
 the state-flatness that makes them hold in stress. Those four rows are graded against
-`joint-coupling-2026-10-03.tsv`, measured from Yahoo's public SPY and QQQ adjusted closes over
+`joint-coupling-2026-10-03.tsv`, measured from Yahoo Finance's SPY and QQQ adjusted closes over
 1999–2026. **Its marginals are graded too — as RATIOS to the primary leg**,
 not as levels: kurtosis, both clustering lags, the 5% and 10% depth shares, and the crash rate,
 each against what QQQ holds to SPY over their shared window. That is the same doctrine the depth
@@ -1007,6 +1007,10 @@ The bands are JOINT: a set's rows all fall inside theirs together on 90% of the 
 resamples, so a history drawn like the record misses no row nine times in ten. That puts each
 row's edges near its 0.6th and 99.4th percentiles (`jointLo`/`jointHi` in the fixture); twelve
 per-row 5th-95th bands held QQQ's resamples together only 42.7% of the time.
+
+Each record ends on the date its fixture states and stays there. Releases re-read only Ken
+French's library and FRED's public-domain series, never Yahoo Finance or the Moody's and Cboe
+series FRED redistributes, so the QQQ, NDX, ETF, credit-spread and VIX records keep their dates.
 
 A band per row replaces a ratio band of one width for all, which was wrong both ways: too narrow
 for a statistic one history barely pins (the downside excess, whose band spans zero, read MISS on
@@ -1688,7 +1692,7 @@ read off the window the rule was selected on. The Nasdaq consumer's rules were s
 from 1990, so the Nasdaq set grades its timing rows, its bubble coupling, its long-window
 multi-year rows and the variance-ratio profile's 250-session rung on the 1971-2026 splice: the
 Nasdaq Composite's daily returns through 1985-10-01 and the Nasdaq-100's after, both price indexes
-read from Yahoo's public ^IXIC and ^NDX series
+read from Yahoo Finance's ^IXIC and ^NDX histories
 (`record_bands -yahoo IXIC.csv -splice NDX.csv -at 1985-10-01`). The same rows read off the NDX
 from 1990, QQQ and CRSP's century are reported, not graded (`reportedRows`). The unconditional rows
 — volatility, tails, the up-day share — stay on QQQ 1999-2026: they set the world's
@@ -1807,7 +1811,7 @@ that premise is refused, since the row could not mean anything against it.
 
 `basket-ruler-smh8-qqq-2026-10-04.tsv` is an **example**, not a default: SMH's eight largest
 holdings as of 2026-10-02 (NVDA, TSM, AMD, AVGO, MU, INTC, AMAT, KLAC) against QQQ, 2012-01-04 to
-2026-08-31, from Yahoo's public adjusted closes. Its dials are `-solvebasket`'s on
+2026-08-31, from Yahoo Finance's adjusted closes. Its dials are `-solvebasket`'s on
 `0.24.6-nasdaq-basket`: beta 1.345, sector 0.8, idio 1.025, gaps 7.0. At 200 × 100:
 
 | level | rows | record | band | model |
