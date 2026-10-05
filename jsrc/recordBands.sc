@@ -22,18 +22,27 @@ object RecordBands {
   def eprintln(s: String = ""): Unit = System.err.print(s"$s\n")
 
   def usage(m: String = ""): Nothing = showUsage(m, "",
-    "(-yahoo FILE [-splice FILE -at YYYY-MM-DD] | -french FILE | -fred FILE) -from YYYY-MM-DD -to YYYY-MM-DD",
+    "(-yahoo FILE [-splice FILE -at YYYY-MM-DD]... [-column NAME] | -french FILE | -fred FILE) -from YYYY-MM-DD -to YYYY-MM-DD",
     "    -set NAME -series LABEL",
     "-rateafter -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]",
     "-basket -closes WIDE.csv -closesdate YYYY-MM-DD [-from D] [-to D] [-minsessions N] [-out RULER.tsv]",
     "",
-    "-yahoo FILE   a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo Finance's daily",
-    "              history, one row a session): the `dlog_adj_close` column; the first row is the",
-    "              anchor price, not a return, and is skipped",
+    "-yahoo FILE   a daily series, in one of three published layouts told apart by the file itself:",
+    "              a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo Finance's daily",
+    "              history, one row a session; the `dlog_adj_close` column, the first row the anchor",
+    "              price and skipped); FRED's `observation_date,DGSn` constant-maturity Treasury",
+    "              yield, read as an n-year par bond rebought every observation (the coupon accrues",
+    "              over the calendar days held, the price moves with the yield, semiannual",
+    "              compounding; `.` rows skipped); or Ken French's daily industry file",
+    "              (`10_Industry_Portfolios_Daily.CSV` as published), the value-weighted column",
+    "              -column NAME names, -99.99 rows skipped",
     "-splice FILE -at DATE",
-    "              a second such file continuing the -yahoo one: the -yahoo file's returns dated on or",
-    "              before DATE, then this file's dated after it (the Nasdaq splice: ^IXIC through",
-    "              1985-10-01, ^NDX after)",
+    "              a file continuing the series: the returns so far dated on or before DATE, then this",
+    "              file's dated after it, in any of the three layouts. Repeatable, applied in order",
+    "              (the Nasdaq splice: ^IXIC through 1985-10-01, ^NDX after; a record frozen at its",
+    "              licensed source's last date continues on a published proxy: TLT on DGS20, QQQ or",
+    "              the NDX on French's HiTec)",
+    "-column NAME  the industry column a French industry file in the chain is read from",
     "-french FILE  Ken French's F-F_Research_Data_Factors_daily: Mkt-RF + RF compounded into an index",
     "              WITHOUT a leading 1.0 over the window, then its log returns -- which drops the",
     "              window's first session (the persistence fixture's rule)",
@@ -96,12 +105,91 @@ object RecordBands {
       (f(0).trim, v)
     }
 
-  /** `readYahoo`'s returns, continued after `at` by a second file's when `splice` names one: the
-    * first file's returns dated on or before `at`, then the second's dated after it. */
-  def readYahooSpliced(file: String, splice: Option[(String, String)]): Vector[(String, Double)] =
-    splice match
-      case None             => readYahoo(file)
-      case Some((next, at)) => readYahoo(file).filter(_._1 <= at) ++ readYahoo(next).filter(_._1 > at)
+  /** `(date, log return)` of a daily series in whichever of the three layouts the file is in: a
+    * `-yahoo` CSV (`readYahoo`), FRED's `observation_date,DGSn` yields (`readTreasury`) or Ken
+    * French's daily industry file (`readIndustry`, the `-column` named). */
+  def readDaily(file: String, column: String): Vector[(String, Double)] =
+    val lines = file.asPath.lines.toVector
+    val head  = lines.headOption.getOrElse("").split(',').map(_.trim)
+    if head.contains("dlog_adj_close") then readYahoo(file)
+    else if head.length == 2 && head(0) == "observation_date" && head(1).startsWith("DGS") then
+      val years = head(1).drop(3).toDoubleOption.getOrElse(usage(s"$file: [${head(1)}] is not a DGSn series"))
+      readTreasury(lines, years)
+    else if lines.take(6).mkString(" ").toLowerCase.contains("industry portfolios") then
+      if column.isEmpty then usage(s"$file: an industry file needs -column NAME")
+      readIndustry(file, lines, column)
+    else usage(s"$file: not a dlog_adj_close CSV, a FRED DGSn series or a French industry file")
+
+  /** A daily series continued by each `-splice FILE -at DATE` in turn: the returns so far dated on
+    * or before the date, then that file's dated after it. */
+  def readDailyChain(file: String, splices: Vector[(String, String)], column: String): Vector[(String, Double)] =
+    splices.foldLeft(readDaily(file, column)) { case (sofar, (next, at)) =>
+      sofar.filter(_._1 <= at) ++ readDaily(next, column).filter(_._1 > at)
+    }
+
+  /** The `-splice FILE -at DATE` pairs of an argument list, in order. */
+  def splicesOf(args: Seq[String]): Vector[(String, String)] =
+    val (out, pending) = args.zipWithIndex.foldLeft((Vector.empty[(String, String)], Option.empty[String])) {
+      case ((acc, pend), ("-splice", i)) =>
+        if pend.isDefined then usage("-splice FILE wants its -at DATE before the next -splice")
+        (acc, args.lift(i + 1))
+      case ((acc, pend), ("-at", i)) =>
+        val f = pend.getOrElse(usage("-at DATE follows a -splice FILE"))
+        (acc :+ (f, args.lift(i + 1).getOrElse(usage("-at needs a date"))), None)
+      case (st, _) => st
+    }
+    if pending.isDefined then usage("-splice FILE -at DATE go together")
+    out
+
+  /** Days since 1970-01-01 of an ISO date (proleptic Gregorian), the Rust twin's arithmetic. */
+  def daysFromCivil(d: String): Long =
+    def p(a: Int, b: Int): Long = d.slice(a, b).toLongOption.getOrElse(usage(s"[$d] is not a YYYY-MM-DD date"))
+    val (y0, m, day) = (p(0, 4), p(5, 7), p(8, 10))
+    val y   = if m <= 2 then y0 - 1 else y0
+    val era = Math.floorDiv(y, 400L)
+    val yoe = y - era * 400
+    val mp  = (m + 9) % 12
+    val doy = (153 * mp + 2) / 5 + day - 1
+    val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    era * 146097 + doe - 719468
+
+  /** The price of a par bond of coupon `c` at yield `y` with `t` years left, semiannual, per unit
+    * face; `lnDet`/`expDet` so the twins agree to the bit. */
+  def parPrice(c: Double, y: Double, t: Double): Double =
+    if t <= 0.0 then 1.0
+    else
+      val v = MarketSim.expDet(-2.0 * t * MarketSim.lnDet(1.0 + y / 2.0))
+      if y > 0.0 then (c / y) * (1.0 - v) + v else 1.0 + c * t
+
+  /** `(date, log return)` of an n-year par Treasury rebought at every observation of a FRED
+    * `observation_date,DGSn` yield file: bought at par at the last yield, sold at the next
+    * observation at the new yield with the coupon accrued over the calendar days held. */
+  def readTreasury(lines: Vector[String], years: Double): Vector[(String, Double)] =
+    val obs = lines.drop(1).flatMap { l =>
+      val f = l.split(',').map(_.trim)
+      f.lift(1).flatMap(_.toDoubleOption).map(v => (f(0), v / 100.0))
+    }
+    (1 until obs.length).toVector.map { i =>
+      val dt       = (daysFromCivil(obs(i)._1) - daysFromCivil(obs(i - 1)._1)).toDouble / 365.25
+      val (y0, y1) = (obs(i - 1)._2, obs(i)._2)
+      (obs(i)._1, MarketSim.lnDet(parPrice(y0, y1, years - dt) + y0 * dt))
+    }
+
+  /** `(date, log return)` of one column of Ken French's daily industry file, the first block (the
+    * value-weighted returns, in percent); a -99.99 cell is a missing day and is skipped. */
+  def readIndustry(file: String, lines: Vector[String], column: String): Vector[(String, Double)] =
+    val rest   = lines.dropWhile(l => !l.contains("Value Weighted Returns -- Daily")).drop(1)
+    val header = rest.headOption.getOrElse(usage(s"$file: no daily value-weighted block")).split(',').map(_.trim)
+    val col    = header.indexOf(column)
+    if col < 0 then usage(s"$file: no column [$column]; the file has ${header.drop(1).mkString(" ")}")
+    rest.drop(1).map(_.split(',').map(_.trim))
+      .takeWhile(f => f(0).length == 8 && f(0).forall(_.isDigit))
+      .flatMap { f =>
+        f.lift(col).flatMap(_.toDoubleOption).filter(_ > -99.0).map { v =>
+          val d = f(0)
+          (s"${d.take(4)}-${d.slice(4, 6)}-${d.slice(6, 8)}", MarketSim.lnDet(1.0 + v / 100.0))
+        }
+      }
 
   /** `(month, level at the month's last session)` from dated daily log returns: the returns summed
     * from the first, the level `expDet` of the sum, so the twins read the same levels. */
@@ -286,11 +374,8 @@ object RecordBands {
         case (Some(file), None, None) => readFrenchMonthEnds(file, from, to)
         case (None, Some(file), None) => readShillerMonthly(file).filter((m, _) => m >= from.take(7) && m <= to.take(7))
         case (None, None, Some(file)) =>
-          val splice = (opt("-splice"), opt("-at")) match
-            case (Some(f), Some(at)) => Some((f, at))
-            case (None, None)        => None
-            case _                   => usage("-splice FILE -at DATE go together")
-          logMonthEnds(readYahooSpliced(file, splice).filter((d, _) => d >= from && d <= to))
+          logMonthEnds(readDailyChain(file, splicesOf(args.toSeq), opt("-column").getOrElse(""))
+            .filter((d, _) => d >= from && d <= to))
         case _ => usage("-timing wants exactly one of -french FILE, -yahoo FILE and -shiller FILE")
       if rows.length < 24 then usage("the window holds fewer than two years of months")
       val levels = rows.map(_._2).toArray
@@ -309,7 +394,7 @@ object RecordBands {
       printSectorRows(dir, num("-resamples", 20000L).toInt, num("-seed", 20260918L))
       return
     var yahoo = ""; var french = ""; var fred = ""; var from = ""; var to = ""
-    var splice = ""; var at = ""
+    var splice = Vector.empty[(String, String)]; var pending = ""; var column = ""
     var set = ""; var series = ""; var rows = Vector.empty[String]
     var resamples = 20000; var seed = 20260918L; var header = false
     var joint = 0.10; var of = 0; var coupling = false; var rate = false; var bond = false
@@ -318,8 +403,13 @@ object RecordBands {
       case "-yahoo"     => yahoo = consumeNext
       case "-french"    => french = consumeNext
       case "-fred"      => fred = consumeNext
-      case "-splice"    => splice = consumeNext
-      case "-at"        => at = consumeNext
+      case "-splice"    =>
+        if pending.nonEmpty then usage("-splice FILE wants its -at DATE before the next -splice")
+        pending = consumeNext
+      case "-at"        =>
+        if pending.isEmpty then usage("-at DATE follows a -splice FILE")
+        splice = splice :+ (pending, consumeNext); pending = ""
+      case "-column"    => column = consumeNext
       case "-from"      => from = consumeNext
       case "-to"        => to = consumeNext
       case "-set"       => set = consumeNext
@@ -348,8 +438,8 @@ object RecordBands {
         f
     if Vector(yahoo, french, fred).count(_.nonEmpty) != 1 then usage("give exactly one of -yahoo, -french and -fred")
     if rate != fred.nonEmpty then usage("-rate reads a -fred file, and a -fred file is read by -rate")
-    if splice.isEmpty != at.isEmpty || (splice.nonEmpty && yahoo.isEmpty) then
-      usage("-splice FILE -at DATE go together, after a -yahoo file")
+    if pending.nonEmpty then usage("-splice FILE -at DATE go together")
+    if (splice.nonEmpty || column.nonEmpty) && yahoo.isEmpty then usage("-splice and -column continue a -yahoo series")
     if from.isEmpty || to.isEmpty then usage("-from and -to are required")
     if set.isEmpty || series.isEmpty then usage("-set and -series are required")
     rows.find(r => !MarketSim.RecordBandRows.contains(r))
@@ -361,7 +451,7 @@ object RecordBands {
     val dated: Vector[(String, Double)] =
       if fred.nonEmpty then readFred(fred).filter((d, _) => inWindow(d))
       else if yahoo.nonEmpty then
-        readYahooSpliced(yahoo, Option.when(splice.nonEmpty)((splice, at))).filter((d, _) => inWindow(d))
+        readDailyChain(yahoo, splice, column).filter((d, _) => inWindow(d))
       else
         val days = readFrench(french).filter((d, _) => inWindow(d))
         val idx = days.scanLeft(1.0)((p, dx) => p * (1.0 + dx._2 / 100.0)).drop(1)

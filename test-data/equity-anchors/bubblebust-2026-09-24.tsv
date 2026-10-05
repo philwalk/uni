@@ -48,6 +48,9 @@
 #       -from 1990-01-03 -to 2026-09-18
 #   record_bands -coupling -set sp500 -series CRSP -french <data>/french/F-F_Research_Data_Factors_daily.csv
 #       -from 1926-07-01 -to 2026-06-30
+# To read past the Nasdaq record's last date on its published proxy, Ken French's daily HiTec industry:
+#   ... -splice <data>/NDX.csv -at 1985-10-01 -splice <data>/french/10_Industry_Portfolios_Daily.CSV
+#       -column HiTec -at 2026-09-18 -to <French's last day>
 set	row	series	window	n	record
 nasdaq	bubble coupling 3y	IXIC+NDX	1971-02-08..2026-09-18	14021	1.104340
 nasdaq	largest 3y run-up	IXIC+NDX	1971-02-08..2026-09-18	14021	1.753345

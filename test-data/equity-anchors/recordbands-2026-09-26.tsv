@@ -71,6 +71,10 @@
 #       -from 1999-03-11 -to 2026-08-20 -of 18
 #   record_bands -set sp500 -series DFF -fred <FRED DFF, full run> -rate -from 1954-07-01 -to 2026-06-30 -of 18
 #   record_bands -set nasdaq|sp500 -series TLT -yahoo <TLT.csv> -bond -from 2002-07-30 -to 2026-08-03 -of 18
+# The QQQ and TLT files end where they stand; to read past those dates each continues on its published
+# proxy, spliced after the last date (`-splice FILE -at DATE`): QQQ on Ken French's daily HiTec industry,
+# `-splice <french>/10_Industry_Portfolios_Daily.CSV -column HiTec -at 2026-08-20 -to <later>`; TLT on the
+# 20-year constant-maturity Treasury built from FRED's DGS20, `-splice <FRED DGS20> -at 2026-08-03 -to <later>`.
 #   record_bands -set sp500 -series CRSP -french <data>/french/F-F_Research_Data_Factors_daily.csv
 #       -from 1954-01-04 -to 2026-06-30 -rows <every row but the two clustering rows> -of 18
 #   record_bands -set sp500 -series CRSP -french <same> -from 1926-07-01 -to 2026-06-30

@@ -48,6 +48,9 @@
 #       -splice <data>/NDX.csv -at 1985-10-01 -from 1971-02-05 -to 2026-09-18
 #   record_bands -multiyear -long -set nasdaq -series NDX -yahoo <data>/NDX.csv
 #       -from 1990-01-03 -to 2026-09-18
+#   (past 2026-09-18 the Nasdaq series continue on Ken French's daily HiTec industry:
+#       -splice <data>/french/10_Industry_Portfolios_Daily.CSV -column HiTec -at 2026-09-18 -to <later>;
+#       QQQ likewise from 2026-08-20)
 #   record_bands -multiyear -set sp500 -series CRSP
 #       -french <data>/french/F-F_Research_Data_Factors_daily.csv -from 1954-01-04 -to 2026-06-30
 #   record_bands -multiyear -long -set sp500 -series CRSP

@@ -1008,9 +1008,16 @@ resamples, so a history drawn like the record misses no row nine times in ten. T
 row's edges near its 0.6th and 99.4th percentiles (`jointLo`/`jointHi` in the fixture); twelve
 per-row 5th-95th bands held QQQ's resamples together only 42.7% of the time.
 
-Each record ends on the date its fixture states and stays there. Releases re-read only Ken
-French's library and FRED's public-domain series, never Yahoo Finance or the Moody's and Cboe
-series FRED redistributes, so the QQQ, NDX, ETF, credit-spread and VIX records keep their dates.
+Each licensed record ends on the date its fixture states. Releases re-read only Ken French's
+library and FRED's public-domain series, never Yahoo Finance or the Moody's and Cboe series FRED
+redistributes. A record continues past its last date on a published proxy spliced after it
+(`record_bands -splice FILE -at DATE`, repeatable): TLT on the 20-year constant-maturity Treasury
+built from FRED's DGS20 yields (weekly correlation 0.975 over 2002–2026, `bond depth vs vol` 1.16
+against TLT's 1.03, inside TLT's own band), QQQ and the NDX on Ken French's daily HiTec industry
+(weekly correlation 0.977 with QQQ over 1999–2026, every QQQ record-band row inside QQQ's band;
+0.94 with the NDX since 1971). The proxies extend a record; they do not replace it, since the
+HiTec industry misses three of the splice's thirteen 20% declines and reads the bubble coupling at
+0.40 against 1.10.
 
 A band per row replaces a ratio band of one width for all, which was wrong both ways: too narrow
 for a statistic one history barely pins (the downside excess, whose band spans zero, read MISS on

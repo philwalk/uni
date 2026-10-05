@@ -186,7 +186,12 @@ window and blocks beside it. Every member of both sets passes all three rows on 
   its `score` is the chain's log-likelihood of the record's return per vol under that member, not a
   search score, and its `worstRow` is a placeholder.
 - `record_bands`: `-splice FILE -at DATE` continues a `-yahoo` series with a second file's returns
-  dated after DATE; `-timing` reads `-yahoo`; `-coupling` also prints `variance ratio 250d`.
+  dated after DATE, repeatable and applied in order; a `-yahoo` or `-splice` file may be a
+  `dlog_adj_close` CSV, FRED's `observation_date,DGSn` yields (read as an n-year par bond rebought
+  each observation) or Ken French's daily industry file with `-column NAME`, told apart by the
+  file. A licensed record frozen at its last date continues on a published proxy this way (TLT on
+  DGS20, QQQ and the NDX on French's HiTec); the fixture headers carry the commands. `-timing` reads
+  `-yahoo`; `-coupling` also prints `variance ratio 250d`.
 - New `SAT_REF_DRIFT` (`SatRefDrift`): the satellite depth rows' reference drifts.
 - `channels.macro` gains `warnings`, `falseAlarm` and `allClear` (schema 30 covers them); new
   `WARNING_MERGE` and `WARNING_HORIZON`.

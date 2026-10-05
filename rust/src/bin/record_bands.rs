@@ -30,7 +30,7 @@ use uni::market_sim::{self as ms};
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 const USAGE: &str =
-    "usage: record_bands (-yahoo FILE [-splice FILE -at YYYY-MM-DD] | -french FILE)
+    "usage: record_bands (-yahoo FILE [-splice FILE -at YYYY-MM-DD]... [-column NAME] | -french FILE)
                     -from YYYY-MM-DD -to YYYY-MM-DD
                     -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S]
                     [-joint A] [-of N] [-header] [-coupling | -multiyear [-long]]
@@ -69,13 +69,22 @@ const USAGE: &str =
                 momentum, trend and shape rows of `sectors-2026-09-30.tsv`, with 5-95
                 block-bootstrap bands where a row has one
 
-  -yahoo FILE   a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo Finance's daily
-                history, one row a session): the `dlog_adj_close` column; the first row is the
-                anchor price, not a return, and is skipped
+  -yahoo FILE   a daily series, in one of three published layouts told apart by the file itself:
+                a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo Finance's daily
+                history, one row a session; the `dlog_adj_close` column, the first row the anchor
+                price and skipped); FRED's `observation_date,DGSn` constant-maturity Treasury
+                yield, read as an n-year par bond rebought every observation (the coupon accrues
+                over the calendar days held, the price moves with the yield, semiannual
+                compounding; `.` rows skipped); or Ken French's daily industry file
+                (`10_Industry_Portfolios_Daily.CSV` as published), the value-weighted column
+                -column NAME names, -99.99 rows skipped
   -splice FILE -at DATE
-                a second such file continuing the -yahoo one: the -yahoo file's returns dated on or
-                before DATE, then this file's dated after it (the Nasdaq splice: ^IXIC through
-                1985-10-01, ^NDX after)
+                a file continuing the series: the returns so far dated on or before DATE, then this
+                file's dated after it, in any of the three layouts. Repeatable, applied in order
+                (the Nasdaq splice: ^IXIC through 1985-10-01, ^NDX after; a record frozen at its
+                licensed source's last date continues on a published proxy: TLT on DGS20, QQQ or
+                the NDX on French's HiTec)
+  -column NAME  the industry column a French industry file in the chain is read from
   -french FILE  Ken French's F-F_Research_Data_Factors_daily: Mkt-RF + RF compounded into an index
                 WITHOUT a leading 1.0 over the window, then its log returns -- which drops the
                 window's first session (the persistence fixture's rule)
@@ -129,9 +138,10 @@ struct Opts {
     bond: bool,
     /// `-rateafter`: the rate file read beside the equity source
     after_rate: Option<String>,
-    /// `-splice FILE -at DATE`: the file continuing a `-yahoo` source, and the last date read
-    /// from the first
-    splice: Option<(String, String)>,
+    /// `-splice FILE -at DATE`, in order: each file continues the series after its date
+    splice: Vec<(String, String)>,
+    /// `-column NAME`: the column a French industry file in the chain is read from
+    column: Option<String>,
 }
 
 /// A flag's numeric value, or the usage line.
@@ -139,6 +149,10 @@ fn num<T: std::str::FromStr>(v: &str, msg: &str) -> T {
     v.parse().unwrap_or_else(|_| usage(msg))
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one flag table: every option of the band modes, read once, in one place"
+)]
 fn parse_args(args: &[String]) -> Opts {
     let (mut yahoo, mut french, mut from, mut to) = (None, None, None, None);
     let (mut set, mut series, mut rows) = (String::new(), String::new(), Vec::new());
@@ -150,7 +164,9 @@ fn parse_args(args: &[String]) -> Opts {
     let mut rateafter = false;
     let mut fred: Option<String> = None;
     let (mut joint, mut of) = (0.10f64, 0usize);
-    let (mut splice, mut at): (Option<String>, Option<String>) = (None, None);
+    let mut splice: Vec<(String, String)> = Vec::new();
+    let mut pending: Option<String> = None;
+    let mut column: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut next = || {
@@ -162,8 +178,19 @@ fn parse_args(args: &[String]) -> Opts {
             "-yahoo" => yahoo = Some(next()),
             "-french" => french = Some(next()),
             "-fred" => fred = Some(next()),
-            "-splice" => splice = Some(next()),
-            "-at" => at = Some(next()),
+            "-splice" => {
+                if pending.is_some() {
+                    usage("-splice FILE wants its -at DATE before the next -splice");
+                }
+                pending = Some(next());
+            }
+            "-at" => {
+                let f = pending
+                    .take()
+                    .unwrap_or_else(|| usage("-at DATE follows a -splice FILE"));
+                splice.push((f, next()));
+            }
+            "-column" => column = Some(next()),
             "-from" => from = Some(next()),
             "-to" => to = Some(next()),
             "-set" => set = next(),
@@ -197,11 +224,12 @@ fn parse_args(args: &[String]) -> Opts {
     if rate != matches!(source, Source::Fred(_)) {
         usage("-rate reads a -fred file, and a -fred file is read by -rate");
     }
-    let splice = match (splice, at) {
-        (Some(f), Some(d)) if matches!(source, Source::Yahoo(_)) => Some((f, d)),
-        (None, None) => None,
-        _ => usage("-splice FILE -at DATE go together, after a -yahoo file"),
-    };
+    if pending.is_some() {
+        usage("-splice FILE -at DATE go together");
+    }
+    if (!splice.is_empty() || column.is_some()) && !matches!(source, Source::Yahoo(_)) {
+        usage("-splice and -column continue a -yahoo series");
+    }
     let (Some(from), Some(to)) = (from, to) else {
         usage("-from and -to are required")
     };
@@ -235,6 +263,7 @@ fn parse_args(args: &[String]) -> Opts {
         bond,
         after_rate,
         splice,
+        column,
     }
 }
 
@@ -261,21 +290,187 @@ fn read_yahoo(file: &str) -> Vec<(String, f64)> {
         .collect()
 }
 
-/// `read_yahoo`'s returns, continued after `at` by a second file's when `splice` names one: the
-/// first file's returns dated on or before `at`, then the second's dated after it.
-fn read_yahoo_spliced(file: &str, splice: Option<(&str, &str)>) -> Vec<(String, f64)> {
-    match splice {
-        None => read_yahoo(file),
-        Some((next, at)) => read_yahoo(file)
-            .into_iter()
-            .filter(|(d, _)| d.as_str() <= at)
-            .chain(
-                read_yahoo(next)
-                    .into_iter()
-                    .filter(|(d, _)| d.as_str() > at),
-            )
-            .collect(),
+/// `(date, log return)` of a daily series in whichever of the three layouts the file is in: a
+/// `-yahoo` CSV (`read_yahoo`), FRED's `observation_date,DGSn` yields (`read_treasury`) or Ken
+/// French's daily industry file (`read_industry`, the `-column` named).
+fn read_daily(file: &str, column: Option<&str>) -> Vec<(String, f64)> {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    let head: Vec<&str> = text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    if head.contains(&"dlog_adj_close") {
+        return read_yahoo(file);
     }
+    if head.len() == 2 && head[0] == "observation_date" && head[1].starts_with("DGS") {
+        let years: f64 = head[1][3..]
+            .parse()
+            .unwrap_or_else(|_| usage(&format!("{file}: [{}] is not a DGSn series", head[1])));
+        return read_treasury(&text, years);
+    }
+    if text[..text.len().min(400)]
+        .to_ascii_lowercase()
+        .contains("industry portfolios")
+    {
+        let col = column
+            .unwrap_or_else(|| usage(&format!("{file}: an industry file needs -column NAME")));
+        return read_industry(file, &text, col);
+    }
+    usage(&format!(
+        "{file}: not a dlog_adj_close CSV, a FRED DGSn series or a French industry file"
+    ))
+}
+
+/// A daily series continued by each `-splice FILE -at DATE` in turn: the returns so far dated on
+/// or before the date, then that file's dated after it.
+fn read_daily_chain(
+    file: &str,
+    splices: &[(String, String)],
+    column: Option<&str>,
+) -> Vec<(String, f64)> {
+    splices
+        .iter()
+        .fold(read_daily(file, column), |sofar, (next, at)| {
+            sofar
+                .into_iter()
+                .filter(|(d, _)| d.as_str() <= at.as_str())
+                .chain(
+                    read_daily(next, column)
+                        .into_iter()
+                        .filter(|(d, _)| d.as_str() > at.as_str()),
+                )
+                .collect()
+        })
+}
+
+/// The `-splice FILE -at DATE` pairs of an argument list, in order.
+fn splices_of(args: &[String]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut pending: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-splice" => {
+                if pending.is_some() {
+                    usage("-splice FILE wants its -at DATE before the next -splice");
+                }
+                pending = args.get(i + 1).cloned();
+                i += 1;
+            }
+            "-at" => {
+                let f = pending
+                    .take()
+                    .unwrap_or_else(|| usage("-at DATE follows a -splice FILE"));
+                out.push((
+                    f,
+                    args.get(i + 1)
+                        .cloned()
+                        .unwrap_or_else(|| usage("-at needs a date")),
+                ));
+                i += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if pending.is_some() {
+        usage("-splice FILE -at DATE go together");
+    }
+    out
+}
+
+/// Days since 1970-01-01 of an ISO date (proleptic Gregorian).
+fn days_from_civil(d: &str) -> i64 {
+    let p = |a: usize, b: usize| {
+        d.get(a..b)
+            .and_then(|x| x.parse::<i64>().ok())
+            .unwrap_or_else(|| usage(&format!("[{d}] is not a YYYY-MM-DD date")))
+    };
+    let (y, m, day) = (p(0, 4), p(5, 7), p(8, 10));
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// The price of a par bond of coupon `c` at yield `y` with `t` years left, semiannual, per unit
+/// face; `ln_det`/`exp_det` so the twins agree to the bit.
+fn par_price(c: f64, y: f64, t: f64) -> f64 {
+    if t <= 0.0 {
+        return 1.0;
+    }
+    let v = ms::exp_det(-2.0 * t * ms::ln_det(1.0 + y / 2.0));
+    if y > 0.0 {
+        (c / y) * (1.0 - v) + v
+    } else {
+        1.0 + c * t
+    }
+}
+
+/// `(date, log return)` of an n-year par Treasury rebought at every observation of a FRED
+/// `observation_date,DGSn` yield file: bought at par at the last yield, sold at the next
+/// observation at the new yield with the coupon accrued over the calendar days held.
+fn read_treasury(text: &str, years: f64) -> Vec<(String, f64)> {
+    let obs: Vec<(String, f64)> = text
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(',').map(str::trim).collect();
+            let v: f64 = f.get(1)?.parse().ok()?;
+            Some((f[0].to_string(), v / 100.0))
+        })
+        .collect();
+    (1..obs.len())
+        .map(|i| {
+            let dt = (days_from_civil(&obs[i].0) - days_from_civil(&obs[i - 1].0)) as f64 / 365.25;
+            let (y0, y1) = (obs[i - 1].1, obs[i].1);
+            (
+                obs[i].0.clone(),
+                ms::ln_det(par_price(y0, y1, years - dt) + y0 * dt),
+            )
+        })
+        .collect()
+}
+
+/// `(date, log return)` of one column of Ken French's daily industry file, the first block (the
+/// value-weighted returns, in percent); a -99.99 cell is a missing day and is skipped.
+fn read_industry(file: &str, text: &str, column: &str) -> Vec<(String, f64)> {
+    let mut lines = text
+        .lines()
+        .skip_while(|l| !l.contains("Value Weighted Returns -- Daily"));
+    lines.next();
+    let header: Vec<&str> = lines
+        .next()
+        .unwrap_or_else(|| usage(&format!("{file}: no daily value-weighted block")))
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let col = header.iter().position(|h| *h == column).unwrap_or_else(|| {
+        usage(&format!(
+            "{file}: no column [{column}]; the file has {}",
+            header[1..].join(" ")
+        ))
+    });
+    lines
+        .map(|l| l.split(',').map(str::trim).collect::<Vec<&str>>())
+        .take_while(|f| f[0].len() == 8 && f[0].bytes().all(|b| b.is_ascii_digit()))
+        .filter_map(|f| {
+            let v: f64 = f.get(col)?.parse().ok()?;
+            (v > -99.0).then(|| {
+                let d = f[0];
+                (
+                    format!("{}-{}-{}", &d[0..4], &d[4..6], &d[6..8]),
+                    ms::ln_det(1.0 + v / 100.0),
+                )
+            })
+        })
+        .collect()
 }
 
 /// `(date, Mkt-RF + RF in percent)` for every dated row of Ken French's daily factor file.
@@ -333,13 +528,10 @@ fn returns_in_window(o: &Opts) -> Vec<(String, f64)> {
             .into_iter()
             .filter(|(d, _)| in_window(d))
             .collect(),
-        Source::Yahoo(f) => read_yahoo_spliced(
-            f,
-            o.splice.as_ref().map(|(s, at)| (s.as_str(), at.as_str())),
-        )
-        .into_iter()
-        .filter(|(d, _)| in_window(d))
-        .collect(),
+        Source::Yahoo(f) => read_daily_chain(f, &o.splice, o.column.as_deref())
+            .into_iter()
+            .filter(|(d, _)| in_window(d))
+            .collect(),
         Source::French(f) => {
             let days: Vec<(String, f64)> = read_french(f)
                 .into_iter()
@@ -429,7 +621,7 @@ fn log_month_ends(days: &[(String, f64)]) -> Vec<(String, f64)> {
 
 /// THE TIMING ROWS (`-timing`): the four rows of `timing_of_monthly` on month-end levels, from
 /// `-french FILE` (CRSP's daily factors, the ruler), `-yahoo FILE` (its log returns, continued by
-/// `-splice FILE -at DATE`) or `-shiller FILE` (monthly AVERAGES, for the comparison the fixture's
+/// each `-splice FILE -at DATE`) or `-shiller FILE` (monthly AVERAGES, for the comparison the fixture's
 /// header states), over `-from`..`-to` (YYYY-MM-DD or YYYY-MM), for the set named.
 fn timing_mode(args: &[String]) -> bool {
     if !args.iter().any(|a| a == "-timing") {
@@ -451,18 +643,11 @@ fn timing_mode(args: &[String]) -> bool {
             .filter(|(m, _)| m.as_str() >= &from[..from.len().min(7)] && m.as_str() <= &to[..7])
             .collect(),
         (None, None, Some(file)) => {
-            let splice = match (opt("-splice"), opt("-at")) {
-                (Some(f), Some(at)) => Some((f, at)),
-                (None, None) => None,
-                _ => usage("-splice FILE -at DATE go together"),
-            };
-            let days: Vec<(String, f64)> = read_yahoo_spliced(
-                &file,
-                splice.as_ref().map(|(f, at)| (f.as_str(), at.as_str())),
-            )
-            .into_iter()
-            .filter(|(d, _)| d.as_str() >= from.as_str() && d.as_str() <= to.as_str())
-            .collect();
+            let days: Vec<(String, f64)> =
+                read_daily_chain(&file, &splices_of(args), opt("-column").as_deref())
+                    .into_iter()
+                    .filter(|(d, _)| d.as_str() >= from.as_str() && d.as_str() <= to.as_str())
+                    .collect();
             log_month_ends(&days)
         }
         _ => usage("-timing wants exactly one of -french FILE, -yahoo FILE and -shiller FILE"),
