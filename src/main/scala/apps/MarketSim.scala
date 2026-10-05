@@ -2278,6 +2278,12 @@ object MarketSim:
     * draw, so a path whose regimes never reach it is bit-identical to the uncapped model. */
   val InflCap     = 0.12
   val DurationRef = 13.5
+
+  /** The bond crash rows' long reference, REPORTED beside the graded TLT-era targets: the growth and
+    * inflation medians of a 20-year Treasury's scaled return over the market's 17 declines of 15%+
+    * since 1962 (`crash-response-1962-2026-10-05.tsv`, whose rows `BondLongRecordSuite` re-derives
+    * these from). Seven inflation episodes read a fifth of 2022's loss; the graded target stays 2022. */
+  val BondLongRecord: (Double, Double) = (9.07, -6.3)
   /** Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the
     * paths are longer.  Every other statistic is measured over the whole path.
     *
@@ -13496,6 +13502,7 @@ $body
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")
     println(f"  recovery shape         V ${st.vCount}%d   balanced ${st.midCount}%d   U ${st.uCount}%d")
     println(f"  bond refuge            vol ${st.bondVol * 100}%.1f%% (24y windows)   growth-crash ${pm(st.bondGrowth, 0, 1)}%s   infl-crash ${pm(st.bondInfl, 0, 1)}%s")
+    println(f"    1962-2026 reference    growth-crash ${pm(BondLongRecord._1, 0, 1)}%s   infl-crash ${pm(BondLongRecord._2, 0, 1)}%s   (a 20-year Treasury from DGS20 over the market's 17 declines of 15%%+, 10 growth / 7 inflation; reported, not graded)")
     println(f"  stock-bond correlation calm ${pm(st.corrCalm, 0, 2)}%s   inflation regime ${pm(st.corrInfl, 0, 2)}%s")
     println(f"  realized inflation     ${st.inflAnn}%.2f%%/yr median (deterministic from regime pressure; no draws consumed)")
     // The channel readings the gate rows grade, printed so a channel FAIL can be sized; absent

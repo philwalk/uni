@@ -1534,6 +1534,12 @@ and `test-data/bond-anchors/crash-response-2026-09-25.tsv` — which the test su
 shipped targets from, so the account above is checkable rather than asserted. The bond rows are
 read at the model bond's 13.5-year duration: each TLT episode is scaled by 13.5 over the fund's
 empirical duration on that span, the footing `bond vol % (24y)` is on (+7.0 growth, −27.9 inflation).
+The report prints a longer reference under them, reported and never graded: over the market's 17
+declines of 15% or more since 1962, a 20-year Treasury built from FRED's DGS20 yields read +9.1 on
+the ten growth episodes and −6.3 on the seven inflation ones (inflation when CPI rose over the
+decline and stood at 4% or more at the trough; `crash-response-1962-2026-10-05.tsv`). The 1960s–80s
+inflation episodes cost the bond 3–16 points where 2022 cost 29, so the graded target stays the 2022
+episode the model's own regime names, and a reader sees what a longer record would have said.
 
 **An anchor with no recorded convention is the failure mode.** Every one of the three had a window
 named and no statement of what statistic it was, and that is exactly what let a 20%-threshold median

@@ -22,6 +22,9 @@
 #
 # regime: growth or inflation, by whether the decline is the 2022 inflation shock -- the model
 #   splits on its own `inflPress` and this is the record's only inflation-regime drawdown.
+#
+# The same reading over the market's 17 declines since 1962, on a 20-year Treasury from FRED's
+# DGS20, is crash-response-1962-2026-10-05.tsv: REPORTED beside these rows, never graded.
 peak	trough	equityPct	bondPct	duration	regime
 2002-08-22	2002-10-09	-18.9	6.6	12.8	growth
 2007-10-09	2009-03-09	-55.2	22.4	14.2	growth

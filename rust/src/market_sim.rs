@@ -375,6 +375,12 @@ const K_VALUE_BOND: f64 = 0.7;
 /// and the default world is unchanged.
 const SIGMA_N_BOND: f64 = 0.002;
 const DURATION_REF: f64 = 13.5;
+
+/// The bond crash rows' long reference, REPORTED beside the graded TLT-era targets: the growth and
+/// inflation medians of a 20-year Treasury's scaled return over the market's 17 declines of 15%+
+/// since 1962 (`crash-response-1962-2026-10-05.tsv`, whose rows `bond_crash_tests` re-derives
+/// these from). Seven inflation episodes read a fifth of 2022's loss; the graded target stays 2022.
+const BOND_LONG_RECORD: (f64, f64) = (9.07, -6.3);
 /// How fast policy reaches the accommodation the stress level calls for, per year: ~2 months to
 /// the cap, which is what an easing cycle takes. Frozen, not a World field: the uncertain
 /// quantities are HOW FAR policy can go (`easing`) and HOW LONG it stays (`unwind`), not how
@@ -23448,6 +23454,11 @@ pub fn main() {
         jfs(st.bond_infl, 1)
     );
     println!(
+        "    1962-2026 reference    growth-crash {}   infl-crash {}   (a 20-year Treasury from DGS20 over the market's 17 declines of 15%+, 10 growth / 7 inflation; reported, not graded)",
+        jfs(BOND_LONG_RECORD.0, 1),
+        jfs(BOND_LONG_RECORD.1, 1)
+    );
+    println!(
         "  stock-bond correlation calm {}   inflation regime {}",
         jfs(st.corr_calm, 2),
         jfs(st.corr_infl, 2)
@@ -27178,6 +27189,67 @@ mod bond_crash_tests {
             "only {} episodes; the medians below that are not worth the name",
             rows.len()
         );
+    }
+
+    const LONG_FIXTURE: &str = "../test-data/bond-anchors/crash-response-1962-2026-10-05.tsv";
+
+    /// The 1962 reference's rows: `(equityPct, bondPct, duration, cpiPeak, cpiTrough, regime)`.
+    fn long_rows() -> Option<Vec<(Row, f64, f64)>> {
+        let text = std::fs::read_to_string(LONG_FIXTURE).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| !l.starts_with('#') && !l.starts_with("peak\t") && !l.trim().is_empty())
+                .map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    (
+                        Row {
+                            equity_pct: f[2].parse().expect("equityPct"),
+                            bond_pct: f[3].parse().expect("bondPct"),
+                            duration: f[4].parse().expect("duration"),
+                            regime: f[7].to_string(),
+                        },
+                        f[5].parse().expect("cpiPeak"),
+                        f[6].parse().expect("cpiTrough"),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn the_long_reference_is_the_1962_fixtures_medians_under_its_stated_rule() {
+        let Some(long) = long_rows() else { return };
+        let rows: Vec<Row> = long
+            .iter()
+            .map(|(r, _, _)| Row {
+                equity_pct: r.equity_pct,
+                bond_pct: r.bond_pct,
+                duration: r.duration,
+                regime: r.regime.clone(),
+            })
+            .collect();
+        assert!(
+            (BOND_LONG_RECORD.0 - median_of(&rows, "growth")).abs() < 0.05,
+            "the reported growth reference is not the 1962 fixture's median ({:.2})",
+            median_of(&rows, "growth")
+        );
+        assert!(
+            (BOND_LONG_RECORD.1 - median_of(&rows, "inflation")).abs() < 0.05,
+            "the reported inflation reference is not the 1962 fixture's median ({:.2})",
+            median_of(&rows, "inflation")
+        );
+        assert_eq!(rows.len(), 17, "17 declines of 15%+ since 1962");
+        assert_eq!(rows.iter().filter(|r| r.regime == "inflation").count(), 7);
+        for (r, cpi_peak, cpi_trough) in &long {
+            assert!(r.equity_pct <= -15.0);
+            let inflation = cpi_trough > cpi_peak && *cpi_trough >= 4.0;
+            assert_eq!(
+                r.regime == "inflation",
+                inflation,
+                "the regime column must follow the stated rule (CPI rose over the decline and read \
+                 4%+ at the trough): peak CPI {cpi_peak}, trough CPI {cpi_trough}"
+            );
+        }
     }
 }
 

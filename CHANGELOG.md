@@ -205,6 +205,11 @@ window and blocks beside it. Every member of both sets passes all three rows on 
   the third decimal at most (`bond depth vs vol` 1.029058, the Nasdaq vol-timing record 1.395705),
   and no member of either set changes band membership. Every row of `recordbands-2026-09-26.tsv`
   now regenerates from published sources.
+- The bond crash rows gain a reported, ungraded 1962–2026 reference printed under them: a 20-year
+  Treasury from FRED's DGS20 over the market's 17 declines of 15%+ reads +9.1 on the ten growth
+  episodes and −6.3 on the seven inflation ones (CPI rose over the decline and stood at 4%+ at the
+  trough), against the graded TLT-era +7.0 / −27.9 (`crash-response-1962-2026-10-05.tsv`,
+  `BondLongRecord` / `BOND_LONG_RECORD`). The graded targets do not move.
 - API, the basket:
   - `Anchors` loses `basket_corr`, `basket_beta`, `basket_vol_ratio` and `basket_name_vol_band`, and
     gains `basket_ruler`.
