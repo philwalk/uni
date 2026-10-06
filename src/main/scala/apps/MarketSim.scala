@@ -12009,20 +12009,36 @@ object MarketSim:
   final case class Verdict(paths: Int, years: Int, world: World, st: WorldStats,
                            rows: Vector[FidelityRow], reported: Vector[ReportedRow], level: Path)
 
-  /** The verdict of world `w` on `(paths, years)`.  `report` is the caller's own ensemble with its
-    * statistics and its (paths, years), taken as the verdict's sample when it is the same one --
-    * same size and horizon, and `w` already its own verdict world -- rather than simulated twice. */
+  /** The verdict of world `w` on `(paths, years)`.  `report` is an ensemble with its statistics,
+    * its (paths, years) and the world it was simulated at, taken as the verdict's sample when it is
+    * the same one -- same size and horizon, at the verdict world itself -- rather than simulated
+    * twice. */
   def verdictOf(a: Anchors, w: World, spec: (Int, Int), seed: Long,
-                report: Option[(Vector[Path], WorldStats, (Int, Int))]): Verdict =
+                report: Option[(Vector[Path], WorldStats, (Int, Int), World)]): Verdict =
     val (paths, years) = spec
     val vw = verdictWorld(a, w)
     val (sims, st) = report match
-      case Some((s, st, at)) if at == spec && vw == w => (s, st)
+      case Some((s, st, at, ran)) if at == spec && vw == ran => (s, st)
       case _ =>
         val s = simPaths(vw, paths, years, seed)
         (s, measureFor(a, s, years))
     Verdict(paths, years, vw, st, fidelityRows(a, st, Some(sims), years, paths, seed, w),
             reportedRecordRows(a, Some(sims), years, paths, seed, w), sims.head)
+
+  /** The world a report ensemble of `reportAt` runs at: `w`, or `w` carrying the verdict's 10-year
+    * leg where the leg is all that separates `w` from its verdict world and the verdict reads the
+    * same `(paths, years)`.  The leg draws its own stream and leaves every other series
+    * bit-identical, so one ensemble serves the verdict and, the leg dropped (`dropBond10`), the
+    * report -- where two would double a read's memory. */
+  def reportWorld(a: Anchors, w: World, reportAt: (Int, Int), verdictAt: (Int, Int)): World =
+    val vw      = verdictWorld(a, w)
+    val withLeg = w.copy(bond10 = vw.bond10)
+    if reportAt == verdictAt && withLeg == vw then withLeg else w
+
+  /** Each path as its world without the 10-year leg simulates it: the leg's own series is all it
+    * adds. */
+  def dropBond10(sims: Vector[Path]): Vector[Path] =
+    sims.map(_.copy(bond10 = Array.empty[Double], bond10Duration = 0.0))
 
   /** The verdict's warnings at export time: what the emitted paths cannot support. */
   def warnVerdict(a: Anchors, v: Verdict): Unit =
@@ -13634,10 +13650,6 @@ $body
           System.exit(2)
       return
 
-    eprintln(s"simulating $paths paths x $years years")
-    val sims = simPaths(w, paths, years, seed)
-    val st = measureFor(anchors, sims, years)
-
     // The verdict is a property of the WORLD, so it is measured on an ensemble large enough for
     // the conditional mechanism statistics to exist AND at the horizon the bands were calibrated
     // at.  Judging the world by the one path being written made every short export raise all four
@@ -13646,10 +13658,20 @@ $body
     // every sidecar render these same rows, so the extreme rows' own-horizon ensemble -- the
     // expensive part -- runs once per invocation, not once per emitted path.
     val (verdictPaths, verdictYears) = verdictSpec(emit.nonEmpty, emitGate, paths, years)
+    val runW = reportWorld(anchors, w, (paths, years), (verdictPaths, verdictYears))
+    eprintln(s"simulating $paths paths x $years years")
+    val runSims = simPaths(runW, paths, years, seed)
+    val runSt = measureFor(anchors, runSims, years)
     // THE VERDICT WORLD: every derived series and the macro panel graded, at the anchor set's
-    // dials where the caller left them off (`verdictWorld`); its own ensemble whenever it is not
-    // the report's world, since the report and the emitted paths stay the caller's
-    val verdict = verdictOf(anchors, w, (verdictPaths, verdictYears), seed, Some((sims, st, (paths, years))))
+    // dials where the caller left them off (`verdictWorld`); its own ensemble whenever the report
+    // ensemble is not at it, since the report and the emitted paths stay the caller's
+    val verdict = verdictOf(anchors, w, (verdictPaths, verdictYears), seed,
+                            Some((runSims, runSt, (paths, years), runW)))
+    val (sims, st) =
+      if runW == w then (runSims, runSt)
+      else
+        val dropped = dropBond10(runSims)
+        (dropped, measureFor(anchors, dropped, years))
     val verdictSt = verdict.st
     val verdictBanded = bandedOf(verdict.rows)
 

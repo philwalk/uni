@@ -20590,19 +20590,25 @@ pub struct Verdict {
     pub level: Path,
 }
 
-/// The verdict of world `w` on `(paths, years)`. `report` is the caller's own ensemble with its
-/// statistics and its (paths, years), taken as the verdict's sample when it is the same one --
-/// same size and horizon, and `w` already its own verdict world -- rather than simulated twice.
+/// A report ensemble: its paths, their statistics, their (paths, years) and the world they were
+/// simulated at.
+pub type ReportEnsemble<'a> = (&'a [Path], WorldStats, (usize, usize), &'a World);
+
+/// The verdict of world `w` on `(paths, years)`. `report` is taken as the verdict's sample when it
+/// is the same one -- same size and horizon, at the verdict world itself -- rather than simulated
+/// twice.
 pub fn verdict_of(
     a: Anchors,
     w: &World,
     (paths, years): (usize, usize),
     seed: u64,
-    report: Option<(&[Path], WorldStats, (usize, usize))>,
+    report: Option<ReportEnsemble<'_>>,
 ) -> Verdict {
     let vw = verdict_world(a, w);
     let (own, st): (Cow<'_, [Path]>, WorldStats) = match report {
-        Some((sims, st, at)) if at == (paths, years) && vw == *w => (Cow::Borrowed(sims), st),
+        Some((sims, st, at, ran)) if at == (paths, years) && vw == *ran => {
+            (Cow::Borrowed(sims), st)
+        }
         _ => {
             let sims = sim_paths(&vw, paths, years, seed);
             let st = measure_for(a, &sims, years);
@@ -20618,6 +20624,39 @@ pub fn verdict_of(
         rows: fidelity_rows(a, &st, Some(sims), years, paths, seed, w),
         reported: reported_record_rows(a, Some(sims), years, paths, seed, w),
         level: sims[0].clone(),
+    }
+}
+
+/// The world a report ensemble of `report_at` runs at: `w`, or `w` carrying the verdict's 10-year
+/// leg where the leg is all that separates `w` from its verdict world and the verdict reads the
+/// same `(paths, years)`. The leg draws its own stream and leaves every other series bit-identical,
+/// so one ensemble serves the verdict and, the leg dropped (`drop_bond10`), the report -- where two
+/// would double a read's memory.
+#[must_use]
+pub fn report_world(
+    a: Anchors,
+    w: &World,
+    report_at: (usize, usize),
+    verdict_at: (usize, usize),
+) -> World {
+    let vw = verdict_world(a, w);
+    let with_leg = World {
+        bond10: vw.bond10,
+        ..*w
+    };
+    if report_at == verdict_at && with_leg == vw {
+        with_leg
+    } else {
+        *w
+    }
+}
+
+/// Each path as its world without the 10-year leg simulates it: the leg's own series is all it
+/// adds.
+pub fn drop_bond10(sims: &mut [Path]) {
+    for p in sims {
+        p.bond10 = Vec::new();
+        p.bond10_duration = 0.0;
     }
 }
 
@@ -23640,10 +23679,6 @@ pub fn main() {
         return;
     }
 
-    eprintln!("simulating {paths} paths x {years} years");
-    let sims = sim_paths(&w, paths, years, seed);
-    let st = measure_for(anchors, &sims, years);
-
     // The verdict is a property of the WORLD, so it is measured on an ensemble large enough for
     // the conditional mechanism statistics to exist AND at the horizon the bands were calibrated
     // at. Judging the world by the one path being written made every short export raise all four
@@ -23652,16 +23687,26 @@ pub fn main() {
     // every sidecar render these same rows, so the extreme rows' own-horizon ensemble — the
     // expensive part — runs once per invocation, not once per emitted path.
     let (verdict_paths, verdict_years) = verdict_spec(!emit.is_empty(), emit_gate, paths, years);
+    let run_w = report_world(anchors, &w, (paths, years), (verdict_paths, verdict_years));
+    eprintln!("simulating {paths} paths x {years} years");
+    let mut sims = sim_paths(&run_w, paths, years, seed);
+    let run_st = measure_for(anchors, &sims, years);
     // THE VERDICT WORLD: every derived series and the macro panel graded, at the anchor set's
-    // dials where the caller left them off (`verdict_world`); its own ensemble whenever it is not
-    // the report's world, since the report and the emitted paths stay the caller's
+    // dials where the caller left them off (`verdict_world`); its own ensemble whenever the report
+    // ensemble is not at it, since the report and the emitted paths stay the caller's
     let verdict = verdict_of(
         anchors,
         &w,
         (verdict_paths, verdict_years),
         seed,
-        Some((&sims, st, (paths, years))),
+        Some((&sims, run_st, (paths, years), &run_w)),
     );
+    let st = if run_w == w {
+        run_st
+    } else {
+        drop_bond10(&mut sims);
+        measure_for(anchors, &sims, years)
+    };
     let verdict_st = verdict.st;
     let verdict_banded = banded_of(&verdict.rows);
 
@@ -27528,6 +27573,42 @@ mod bond10_tests {
         let rb = daily_returns(&on.bond);
         let r10 = daily_returns(&on.bond10);
         assert!(pearson(&rb, &r10) > 0.8, "the leg moves with the bond");
+    }
+
+    /// ONE ENSEMBLE SERVES THE REPORT AND THE VERDICT where the 10-year leg is all that separates
+    /// them: the recipe's report runs with the verdict's leg on, and with the leg dropped its paths
+    /// and statistics are the recipe's own to the bit.
+    #[test]
+    fn the_report_carries_the_verdicts_leg_and_drops_it_to_the_bit() {
+        let (w, set) = named_world("0.24.6-sp500").expect("recipe");
+        let a = anchors_named(set.expect("an anchor set"));
+        let at = (3, 20);
+        let run_w = report_world(a, &w, at, at);
+        assert_eq!(
+            run_w.bond10, VERDICT_BOND10,
+            "the report carries the verdict's leg"
+        );
+        assert!(
+            verdict_world(a, &w) == run_w,
+            "the leg is all that separates the two"
+        );
+        assert!(
+            report_world(a, &w, at, (3, 30)) == w,
+            "another horizon is the verdict's own ensemble"
+        );
+        let off = sim_paths(&w, at.0, at.1, DEFAULT_SEED);
+        let mut on = sim_paths(&run_w, at.0, at.1, DEFAULT_SEED);
+        assert!(on.iter().all(|p| !p.bond10.is_empty()));
+        drop_bond10(&mut on);
+        assert_eq!(
+            format!("{on:?}"),
+            format!("{off:?}"),
+            "every series, to the bit"
+        );
+        assert_eq!(
+            format!("{:?}", measure_for(a, &on, at.1)),
+            format!("{:?}", measure_for(a, &off, at.1))
+        );
     }
 
     /// THE TERM PREMIUM moves only the bonds, each by its duration: a premium of 0.2 a year of

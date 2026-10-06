@@ -24,6 +24,31 @@ class Bond10Suite extends FunSuite:
     assert(v4 > 0.0 && math.abs(v8 / v4 - 2.0) < 0.3, s"vol at 8 $v8 against 4 $v4")
   }
 
+  /** Every field to the bit: arrays by their elements, doubles by their bits. */
+  private def bits(x: Any): Any = x match
+    case a: Array[Double] => a.toVector.map(java.lang.Double.doubleToLongBits)
+    case a: Array[?]      => a.toVector.map(bits)
+    case d: Double        => java.lang.Double.doubleToLongBits(d)
+    case v: Iterable[?]   => v.map(bits).toVector
+    case p: Product       => p.productIterator.map(bits).toVector
+    case o                => o
+
+  test("the report carries the verdict's leg and drops it to the bit") {
+    val (w, set) = MarketSim.namedWorld("0.24.6-sp500").getOrElse(fail("recipe"))
+    val a        = MarketSim.anchorsNamed(set.getOrElse(fail("an anchor set")))
+    val at       = (3, 20)
+    val runW     = MarketSim.reportWorld(a, w, at, at)
+    assertEquals(runW.bond10, MarketSim.VerdictBond10, "the report carries the verdict's leg")
+    assert(MarketSim.verdictWorld(a, w) == runW, "the leg is all that separates the two")
+    assert(MarketSim.reportWorld(a, w, at, (3, 30)) == w, "another horizon is the verdict's own ensemble")
+    val off = MarketSim.simPaths(w, at._1, at._2, MarketSim.DefaultSeed)
+    val on  = MarketSim.simPaths(runW, at._1, at._2, MarketSim.DefaultSeed)
+    assert(on.forall(_.bond10.nonEmpty))
+    val dropped = MarketSim.dropBond10(on)
+    assertEquals(bits(dropped), bits(off), "every series, to the bit")
+    assertEquals(bits(MarketSim.measureFor(a, dropped, at._2)), bits(MarketSim.measureFor(a, off, at._2)))
+  }
+
   test("the term premium moves only the bonds, each by its duration") {
     val w   = MarketSim.namedWorld("0.24.6-sp500").map(_._1).getOrElse(fail("recipe")).copy(bond10 = 8.0)
     val off = MarketSim.simulate(w.copy(ext = w.ext.copy(termPremium = 0.0)), 10, MarketSim.DefaultSeed)
