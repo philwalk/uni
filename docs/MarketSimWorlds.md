@@ -1535,14 +1535,17 @@ apply it to any target whose statistic is a max or a min.
 Both corrections are backed by committed measurements — `test-data/equity-anchors/episodes-2026-08-29.tsv`
 and `test-data/bond-anchors/crash-response-2026-09-25.tsv` — which the test suites re-derive the
 shipped targets from, so the account above is checkable rather than asserted. The bond rows are
-read at the model bond's 13.5-year duration: each TLT episode is scaled by 13.5 over the fund's
-empirical duration on that span, the footing `bond vol % (24y)` is on (+7.0 growth, −27.9 inflation).
-The report prints a longer reference under them, reported and never graded: over the market's 17
-declines of 15% or more since 1962, a 20-year Treasury built from FRED's DGS20 yields read +9.1 on
-the ten growth episodes and −6.3 on the seven inflation ones (inflation when CPI rose over the
-decline and stood at 4% or more at the trough; `crash-response-1962-2026-10-05.tsv`). The 1960s–80s
-inflation episodes cost the bond 3–16 points where 2022 cost 29, so the graded target stays the 2022
-episode the model's own regime names, and a reader sees what a longer record would have said.
+read at the model bond's 13.5-year duration: each episode is scaled by 13.5 over the bond's
+empirical duration on that span, the footing `bond vol % (24y)` is on. They are graded on a longer
+record: a 20-year Treasury built from FRED's DGS20 yields over the set's index's declines of 15% or
+more since 1962 reads +9.5 on the market's ten growth episodes and −6.3 on its seven inflation ones
+(`crash-response-1962-2026-10-05.tsv`; HiTec's declines for the Nasdaq set,
+`crash-response-1962-hitec-2026-10-06.tsv`), inflation when CPI rose over the decline and stood at 4%
+or more at the trough, the rule the model reads on its own CPI. They are single-history rows: the
+record must fall inside the joint band of the world's 64-year histories that hold declines of both
+regimes. TLT's +7.0 / −27.9 is reported beside them. Its inflation figure is the 2022 episode alone,
+and grading it held the model's inflation regime high enough to push the 10-year bond's volatility
+per year of duration past its record: one episode standing in for a statistic, the failure above.
 
 **An anchor with no recorded convention is the failure mode.** Every one of the three had a window
 named and no statement of what statistic it was, and that is exactly what let a 20%-threshold median

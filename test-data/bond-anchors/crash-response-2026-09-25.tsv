@@ -1,16 +1,13 @@
 # What a long Treasury DID across the equity drawdowns of the last 24 years, on the model bond's
 # footing: for every equity peak-to-trough decline of 15% or worse, the bond's LOG return over the
 # same span, in percent, and the fund's empirical duration over that span. The model's bond is a
-# 13.5-year bond (`DURATION_REF`), so each episode is graded as bondPct x 13.5 / duration, and the
-# targets `bond growth-crash` and `bond infl-crash` are the MEDIANS of those scaled returns by
-# regime -- the duration-relative footing `bond vol % (24y)` is already on. An unscaled TLT number
-# grades a 13.5-year bond against a 17-year fund's move. `BondCrashSuite` / `bond_crash_tests`
-# re-derive both targets from the rows below.
-#
-# THE SAMPLE IS SIX EPISODES and that is the honest limit of this anchor -- the growth median is a
-# median of five, and the inflation target is the one 2022 episode. `-noise` prices that in: over
-# 24-year histories the model produces growth-crash readings from about +2% to +28%, so one record
-# barely pins it, and the target's weight is small for that reason rather than by choice.
+# 13.5-year bond (`DURATION_REF`), so each episode is read as bondPct x 13.5 / duration -- an
+# unscaled TLT number reads a 13.5-year bond against a 17-year fund's move -- and the regime medians
+# are +7.0 growth (five episodes) and -27.9 inflation (the one 2022 episode).  REPORTED beside the
+# graded `bond growth-crash` and `bond infl-crash` rows, never graded: six episodes, one of them
+# inflation, are too few to grade.  The graded records are the same reading since 1962
+# (crash-response-1962-2026-10-05.tsv, crash-response-1962-hitec-2026-10-06.tsv).
+# `BondCrashSuite` / `bond_crash_tests` re-derive both medians from the rows below.
 #
 # Equity SPY, bond TLT, daily Yahoo adjusted closes over their overlap, 2002-07-30..2026-08-03.
 #
@@ -20,11 +17,8 @@
 #   bondPct, so it is the like-for-like scale; the fund's published effective duration moved
 #   between 15 and 19 over these years (14.89 on 2026-08-22, ishares-2026-08-22.tsv).
 #
-# regime: growth or inflation, by whether the decline is the 2022 inflation shock -- the model
-#   splits on its own `inflPress` and this is the record's only inflation-regime drawdown.
-#
-# The same reading over the market's 17 declines since 1962, on a 20-year Treasury from FRED's
-# DGS20, is crash-response-1962-2026-10-05.tsv: REPORTED beside these rows, never graded.
+# regime: inflation when CPI year over year ROSE over the decline and stood at 4% or more at the
+#   trough, else growth (the graded records' rule): 2022 is the era's one inflation episode.
 peak	trough	equityPct	bondPct	duration	regime
 2002-08-22	2002-10-09	-18.9	6.6	12.8	growth
 2007-10-09	2009-03-09	-55.2	22.4	14.2	growth

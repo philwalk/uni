@@ -1,12 +1,12 @@
-# What a long Treasury DID across the equity declines since 1962, on the model bond's footing, as a
-# REPORTED reference beside the graded TLT-era targets (crash-response-2026-09-25.tsv): for every
+# What a long Treasury DID across the equity declines since 1962, on the model bond's footing: the
+# record the S&P set's `bond growth-crash` and `bond infl-crash` rows are graded against.  For every
 # CRSP value-weighted market decline of 15% or worse from 1962-01-03 to 2026-06-30, the bond's LOG
 # return over the same peak-to-trough span, in percent, and its empirical duration over that span.
-# Each episode is read as bondPct x 13.5 / duration, and the regime medians are +9.1 growth (10
-# episodes) and -6.3 inflation (7); `BondLongRecordSuite` / `bond_crash_tests` re-derive both from
-# the rows below and the report prints them under the graded rows.  NOT GRADED: the graded targets
-# stay the TLT era's (+7.0 / -27.9), where the bond is the fund a consumer holds and the 2022 shock
-# is the inflation regime the model's own `inflPress` names.
+# Each episode is read as bondPct x 13.5 / duration, and the regime medians, by the model's own
+# median (the upper-middle element), are +9.53 growth (10 episodes) and -6.28 inflation (7);
+# `BondCrashSuite` / `bond_crash_tests` re-derive both from the rows below.  The TLT era's reading
+# (crash-response-2026-09-25.tsv: +7.0 / -27.9 over six declines, one of them inflation) is reported
+# beside the graded rows; the Nasdaq set's record is crash-response-1962-hitec-2026-10-06.tsv.
 #
 # Sources, published: the market is Ken French's F-F_Research_Data_Factors_daily (Mkt-RF + RF
 # compounded); the bond is a 20-year par Treasury rebought daily from FRED's DGS20 constant-maturity
@@ -20,10 +20,9 @@
 #   span holds fewer than four weeks (1980).
 # cpiPeak / cpiTrough: CPI year over year at the peak and the trough, percent.
 # regime: inflation when CPI year over year ROSE over the decline and stood at 4% or more at the
-#   trough, else growth.  The rule is the record side's stand-in for the model's `inflPress`
-#   regime; under it 1981-82 (CPI 10.8 -> 6.0) is a growth episode, the disinflation rally of +37.5
-#   scaled.  The 1960s-80s inflation episodes cost the bond 3-16 points, 2022 alone 29, so an
-#   inflation median over seven episodes is a fifth of the TLT era's one.
+#   trough, else growth -- the rule the model reads on its own CPI.  Under it 1981-82 (CPI 10.8 ->
+#   6.0) is a growth episode, the disinflation rally of +37.5 scaled.  The 1960s-80s inflation
+#   episodes cost the bond 3-16 points, 2022 alone 29.
 peak	trough	equityPct	bondPct	duration	cpiPeak	cpiTrough	regime
 1962-03-15	1962-06-26	-26.4	1.8	13.8	1.11	1.24	growth
 1966-02-09	1966-10-07	-20.3	0.3	12.7	2.56	3.79	growth

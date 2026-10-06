@@ -2298,11 +2298,11 @@ object MarketSim:
   val InflCap     = 0.12
   val DurationRef = 13.5
 
-  /** The bond crash rows' long reference, REPORTED beside the graded TLT-era targets: the growth and
-    * inflation medians of a 20-year Treasury's scaled return over the market's 17 declines of 15%+
-    * since 1962 (`crash-response-1962-2026-10-05.tsv`, whose rows `BondLongRecordSuite` re-derives
-    * these from). Seven inflation episodes read a fifth of 2022's loss; the graded target stays 2022. */
-  val BondLongRecord: (Double, Double) = (9.07, -6.3)
+  /** The bond crash rows' TLT-era reading, REPORTED beside the graded rows: the growth and inflation
+    * medians of TLT's scaled return over SPY's six declines of 15%+, 2002-2026
+    * (`crash-response-2026-09-25.tsv`, whose rows `BondCrashSuite` re-derives these from).  Its one
+    * inflation episode is 2022, too few to grade; the graded records are `Anchors.bondCrash`. */
+  val BondTltRecord: (Double, Double) = (7.0, -27.9)
   /** Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the
     * paths are longer.  Every other statistic is measured over the whole path.
     *
@@ -2445,11 +2445,15 @@ object MarketSim:
     * twins cannot differ in its last bit. */
   val NewsBondDecay = 0.9945139356168285
 
-  /** THE INFLATION REGIME's edge: inflation pressure above it is an inflation regime.  The bond
-    * rows split the crashes on it (`bondGrowth` / `bondInfl`), the calm mask is its complement, and
-    * the news bond leg reverses across it (`newsBond`): in an inflation regime bad equity news is
-    * rate news, and the bond falls with the stock. */
+  /** THE INFLATION REGIME's edge: inflation pressure above it is an inflation regime.  The calm
+    * mask is its complement, and the news bond leg reverses across it (`newsBond`): in an inflation
+    * regime bad equity news is rate news, and the bond falls with the stock. */
   val InflRegimeEdge = 0.005
+
+  /** THE CRASH REGIME RULE, the bond crash records' own (`crash-response-1962-*.tsv`): a decline is
+    * an inflation episode when CPI year over year ROSE from its peak to its trough and stood at this
+    * many percent or more at the trough, else a growth episode (`crashIsInflation`). */
+  val CrashCpiFloor = 4.0
 
   /** THE CREDIT-TRIGGERED VOL REGIME's constants (see `creditRegime`).  The credit growth gap
     * (`borrow - levSlow`) has a stationary sd of 0.104 on the Nasdaq recipes (measured over 45
@@ -4928,6 +4932,29 @@ object MarketSim:
         if j < px.length then { pkI = j; pk = px(j); i = j + 1 } else i = px.length
     out.toVector
 
+  /** THE CRASH REGIME RULE on one decline (`CrashCpiFloor`): whether CPI year over year, over
+    * `DaysPerYear` sessions, rose from the peak to the trough and stood at the floor or more at the
+    * trough.  None for a peak in the series' first year, which has no year-over-year reading. */
+  def crashIsInflation(cpi: Array[Double], ep: Episode): Option[Boolean] =
+    def yoy(k: Int): Option[Double] =
+      if k < DaysPerYear then None else Some((cpi(k) / cpi(k - DaysPerYear) - 1.0) * 100.0)
+    for atPeak <- yoy(ep.peak); atTrough <- yoy(ep.trough)
+    yield atTrough > atPeak && atTrough >= CrashCpiFloor
+
+  /** `series`' log move over each decline in `eps` of one regime (`crashIsInflation` on `cpi`), in
+    * percent; empty for an empty series.  A decline with no regime reading is in neither. */
+  def crashMoves(series: Array[Double], cpi: Array[Double], eps: Vector[Episode],
+                 inflRegime: Boolean): Vector[Double] =
+    if series.isEmpty then Vector.empty
+    else eps.filter(ep => crashIsInflation(cpi, ep).contains(inflRegime))
+            .map(ep => math.log(series(ep.trough) / series(ep.peak)) * 100.0)
+
+  /** One path's `BondCrashRows`: the median of its bond's moves over its growth declines and over
+    * its inflation declines, NaN for a regime it has none of -- `measure` on that path alone. */
+  def bondCrashOf(p: Path): Vector[Double] =
+    val eps = episodes(p.price, 15.0)
+    Vector(pctile(crashMoves(p.bond, p.cpi, eps, false), 0.5), pctile(crashMoves(p.bond, p.cpi, eps, true), 0.5))
+
   /** Share of sessions spent more than 5%, 10% and 20% below the running peak — the DEPTH
     * DISTRIBUTION, which volatility, maximum drawdown and underwater fraction between them do not
     * pin.  Two series can agree on all three of those and still differ here: one drifts far below
@@ -6547,18 +6574,6 @@ object MarketSim:
   private def pathRead(sp: Path, years: Int): PathRead =
     val r   = dailyReturns(sp.price)
     val eps = episodes(sp.price, 15.0)   // once per path (was recomputed 3x)
-    def bondInWindows(inflRegime: Boolean): Vector[Double] =
-      eps.filter { ep =>
-        val infl = (ep.peak to ep.trough).map(sp.inflPress).sum / math.max(1, ep.trough - ep.peak + 1)
-        (infl > InflRegimeEdge) == inflRegime
-      }.map(ep => math.log(sp.bond(ep.trough) / sp.bond(ep.peak)) * 100.0)
-    // the 10-year leg over the same episodes, by the same regime
-    def b10InWindows(inflRegime: Boolean): Vector[Double] =
-      if sp.bond10.isEmpty then Vector.empty
-      else eps.filter { ep =>
-        val infl = (ep.peak to ep.trough).map(sp.inflPress).sum / math.max(1, ep.trough - ep.peak + 1)
-        (infl > InflRegimeEdge) == inflRegime
-      }.map(ep => math.log(sp.bond10(ep.trough) / sp.bond10(ep.peak)) * 100.0)
     def corrIn(inflRegime: Boolean): Double =
       // the regime's sessions in order, counted then filled, instead of a boxed index sequence
       val n = sp.price.length
@@ -6676,12 +6691,12 @@ object MarketSim:
         val segs = if nw < 1 then Vector(rb) else (0 until nw).toVector.map(k => rb.slice(k * w, (k + 1) * w))
         segs.map(seg => math.sqrt(MatD(seg).power(2).mean * DaysPerYear))
       },
-      bondGrowth = bondInWindows(false), bondInfl = bondInWindows(true),
+      bondGrowth = crashMoves(sp.bond, sp.cpi, eps, false), bondInfl = crashMoves(sp.bond, sp.cpi, eps, true),
       ddB10 = if sp.bond10.isEmpty then (Double.NaN, Double.NaN, Double.NaN) else depthShares(sp.bond10),
       bond10Vol =
         if sp.bond10.isEmpty then Double.NaN
         else math.sqrt(MatD(dailyReturns(sp.bond10)).power(2).mean * DaysPerYear),
-      bond10Growth = b10InWindows(false), bond10Infl = b10InWindows(true),
+      bond10Growth = crashMoves(sp.bond10, sp.cpi, eps, false), bond10Infl = crashMoves(sp.bond10, sp.cpi, eps, true),
       // each session's log return over the rate it carried, the rate the session set
       bond10Excess =
         if sp.bond10.isEmpty then Double.NaN
@@ -7510,6 +7525,12 @@ object MarketSim:
     // THE 10-YEAR LEG's record window: FRED's DGS10 as a par bond, the same for both sets
     // (`bond10Readings`; `bond10-2026-10-05.tsv`)
     bond10Window: String, bond10Years: Int,
+    // THE BOND CRASH ROWS' record window and records (`BondCrashRows`, growth then inflation): a
+    // 20-year Treasury from FRED's DGS20 over the set's index's declines of 15%+ since 1962 -- the
+    // market's for the S&P (`crash-response-1962-2026-10-05.tsv`), Ken French's HiTec for the
+    // Nasdaq (`crash-response-1962-hitec-2026-10-06.tsv`) -- read on the world's histories of
+    // `bondCrashYears`
+    bondCrashWindow: String, bondCrashYears: Int, bondCrash: (Double, Double),
     volBand: (Double, Double),                   // the two asset-specific FIDELITY bands
     yearVolBand: (Double, Double),               // the typical year's: one sd of the row's own
                                                  // single-history spread (0.11 at 72y, 0.18 at 27y)
@@ -7549,6 +7570,8 @@ object MarketSim:
     // spreads above.  A spread passed inline to `wgt` weights both sets' rows with one world's
     // reading; the variance ratio's 0.35 did, where the two worlds read 0.28 and 0.24.
     valDispSd: Double, vr60Sd: Double, d5Sd: Double, d10Sd: Double, d20Sd: Double,
+    // the bond crash rows' spreads: single 64-year histories of the set's 0.24.6 recipe over the
+    // record's magnitude (`-noise`, 200 paths, 2026-10-06)
     bondVolSd: Double, bondGrowthSd: Double, bondInflSd: Double, bondDepthSd: Double,
     // Drawdown-SHAPE references for `-ddshape`, the first the primary the ratios read against;
     // `ddshape-2026-09-02.tsv`, on the model's own episode definition and median.
@@ -7895,6 +7918,8 @@ object MarketSim:
     postFloor = 15.195221, postFloorSd = 0.46,
     bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029058,
     bond10Window = "DGS10 par bond, 1962-2026", bond10Years = 64,
+    bondCrashWindow = "DGS20 over the market's declines, 1962-2026", bondCrashYears = 64,
+    bondCrash = (9.533898, -6.282178),
     vol = 16.0,          volSd = 0.12,
     // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 12.48, where
     // calendar years read 12.87 (`yearvol-2026-09-15.tsv`, w1954); the S&P index's own daily
@@ -7932,7 +7957,7 @@ object MarketSim:
     tailHedge = -0.273, tailHedgeSd = 0.37,
     wingUp = 7.6, wingUpSd = 0.60, wingDown = 6.7, wingDownSd = 0.61,
     valDispSd = 0.23, vr60Sd = 0.32, d5Sd = 0.18, d10Sd = 0.47, d20Sd = 2.27,
-    bondVolSd = 0.43, bondGrowthSd = 1.49, bondInflSd = 1.90, bondDepthSd = 0.36,
+    bondVolSd = 0.43, bondGrowthSd = 0.75, bondInflSd = 4.93, bondDepthSd = 0.36,
     ddRefs = DdRefsSp500,
     recordBands = RecordBandsSp500,
     divYield = 2.95, divYieldBand = (1.1, 5.8),
@@ -8000,6 +8025,8 @@ object MarketSim:
     postFloor = 23.358002, postFloorSd = 0.65,
     bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029058,
     bond10Window = "DGS10 par bond, 1962-2026", bond10Years = 64,
+    bondCrashWindow = "DGS20 over HiTec's declines, 1962-2026", bondCrashYears = 64,
+    bondCrash = (3.762295, -3.328767),
     vol = 26.90,         volSd = 0.18,
     // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 19.97, where calendar
     // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) -- the bottom of the 18.2-21.5 phase range.
@@ -8030,7 +8057,7 @@ object MarketSim:
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
     valDispSd = 0.34, vr60Sd = 0.24, d5Sd = 0.14, d10Sd = 0.25, d20Sd = 0.42,
-    bondVolSd = 0.44, bondGrowthSd = 1.78, bondInflSd = 2.30, bondDepthSd = 0.51,
+    bondVolSd = 0.44, bondGrowthSd = 1.89, bondInflSd = 15.74, bondDepthSd = 0.51,
     ddRefs = DdRefsNasdaq,
     recordBands = RecordBandsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
@@ -8109,6 +8136,16 @@ object MarketSim:
   val TimingDeclinePct: Double = 20.0
   /** the share of record-like worlds the timing rows may jointly miss */
   val TimingAlpha: Double = 0.05
+
+  /** THE BOND CRASH ROWS (`bondCrashOf`): the median of the bond's log move, in percent at
+    * `DurationRef`, over the equity's declines of 15% or more in each regime of the record's rule
+    * (`crashIsInflation`), growth then inflation.  Graded like the timing rows, by where the record
+    * (`Anchors.bondCrash`, 1962-2026) falls among the world's single histories of its length that,
+    * like the record, hold declines of both regimes: a decline is one draw, and a block resample of
+    * the record keeps none whole. */
+  val BondCrashRows: Vector[String] = Vector("bond growth-crash", "bond infl-crash")
+  /** the share of record-like worlds the bond crash rows may jointly miss */
+  val BondCrashAlpha: Double = 0.05
 
   /** One fidelity row of `fitTargets`: name, reading, target, weight. */
   type FitTarget = (String, WorldStats => Double, Double, Double)
@@ -8302,22 +8339,13 @@ object MarketSim:
     // The "(24y)" is load-bearing, not decoration: this row is measured on a different horizon
     // from every other, and the label is the only part that travels when the number is quoted.
     ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  wgt(1.0, a.bondVolSd)),
-    // A MEDIAN across episodes, measured the way `measure` measures it -- SPY drawdowns of 15%+,
-    // TLT's log return over the same peak-to-trough span -- ON THE MODEL BOND'S DURATION: each
-    // episode's TLT return times `DurationRef` over the fund's empirical duration on that span
-    // (against the 20-year yield), the footing `bond vol % (24y)` is graded on.  The five growth
-    // episodes read +7.0 / +21.3 / +3.6 / +10.2 / +0.6 (unscaled +6.6 / +22.4 / +4.4 / +13.3 / +0.8
-    // at 12.8-17.6 years).  Six episodes is the honest limit here and `-noise` prices it in.
-    // `test-data/bond-anchors/crash-response-2026-09-25.tsv`; `BondCrashSuite` re-derives both rows.
-    ("bond growth-crash",  st => st.bondGrowth,                              7.0,  wgt(1.0, a.bondGrowthSd)),
-    // The judgment stays at 1.5 -- inflation-crash behaviour is why the bond refuge exists --
-    // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
-    // 95 of 200 24-year histories produce a reading at all.  The old 1.5 was the largest
-    // weight in the loss on the least measurable target in the set.
-    // The ONE inflation-regime drawdown the record has: TLT -34.7% over SPY's
-    // 2022-01-03..2022-10-12, at an empirical duration of 16.8 years, which is -27.9% at
-    // `DurationRef`.  A median of one is that one, so the anchor is the episode.
-    ("bond infl-crash",    st => st.bondInfl,                              -27.9,  wgt(1.5, a.bondInflSd)),
+    // THE BOND CRASH ROWS (`BondCrashRows`), single-history graded like the timing rows: the bond's
+    // median move over a history's growth declines and over its inflation declines, by the record's
+    // CPI rule, against the 1962-2026 record (`Anchors.bondCrash`).  The judgment stays 1.5 on the
+    // inflation row -- inflation-crash behaviour is why the bond refuge exists -- and the spreads,
+    // single 64-year histories of the set's recipe, set the weight.
+    (BondCrashRows(0), st => st.bondGrowth, a.bondCrash._1, wgt(1.0, a.bondGrowthSd)),
+    (BondCrashRows(1), st => st.bondInfl,   a.bondCrash._2, wgt(1.5, a.bondInflSd)),
     // Does the refuge hold exactly where it is needed -- stock-bond correlation on calm sessions
     // with the equity return below its own calm q10, against the pair's own record
     // (tailcorr-2026-08-31.tsv).  Calm-conditioned on BOTH sides by construction: the TLT window
@@ -8398,11 +8426,14 @@ object MarketSim:
     * pooling and a minimum does not; that is the whole distinction.  `MarketSimContractSuite`
     * requires every name here to be a fidelity target. */
   val ExtremeTargets: Set[String] =
-    Set("worst crash %", "bubble coupling 3y") ++ MultiYearRows ++ MultiYearLongRows ++ TimingRows
+    Set("worst crash %", "bubble coupling 3y") ++ MultiYearRows ++ MultiYearLongRows ++ TimingRows ++
+      BondCrashRows
 
-  /** Whether a row is a multi-year row, of either window. */
+  /** Whether a row is graded among the world's single histories with a joint band: a multi-year row
+    * of either window, a timing row, or a bond crash row. */
   def isMultiYear(name: String): Boolean =
-    MultiYearRows.contains(name) || MultiYearLongRows.contains(name) || TimingRows.contains(name)
+    MultiYearRows.contains(name) || MultiYearLongRows.contains(name) || TimingRows.contains(name) ||
+      BondCrashRows.contains(name)
 
   /** The `ExtremeTargets` rows whose statFn reads an extreme over the pooled ensemble, sorted: a
     * multi-year row's reads a median of paths, a level a report may print. */
@@ -8412,7 +8443,7 @@ object MarketSim:
     * a log ratio has no meaning across zero and its wrong-sign penalty grows as the reading nears it. */
   val AdditiveTargets: Set[String] =
     Set("vol-timing edge pts/yr", "vol-exit timing pts/yr", "vol-exit 3x interaction pts/yr",
-        "rate floor share %", "post-trough floor share %", "bond10 excess return pts/yr")
+        "rate floor share %", "post-trough floor share %", "bond10 excess return pts/yr") ++ BondCrashRows
 
   /** The admissible interval for a per-path fidelity ratio on a row WITHOUT a `RecordBand`, and the
     * admissible percentile band for an `ExtremeTargets` row.  Stated ONCE: the report, the sidecar
@@ -9817,6 +9848,7 @@ object MarketSim:
     else if Bond10BandRows.contains(name) then a.bond10Years
     else if BondBandRows.contains(name) then a.bondYears
     else if TimingRows.contains(name) then a.timingYears
+    else if BondCrashRows.contains(name) then a.bondCrashYears
     else a.equityYears
 
   /** The percentiles a `RecordBand` carries: every 5th, and the 1st and 99th so a reading past the
@@ -11107,9 +11139,9 @@ object MarketSim:
     // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is what
     // each residual ratio in the fit was measured from.
     ("equity funds, 25y", 25, Vector("equity d5 vs real", "equity d10 vs real")),
-    (a.bondWindow, a.bondYears,
-     Vector("bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol",
-            "tail hedge corr")),
+    (a.bondWindow, a.bondYears, Vector("bond vol % (24y)", "bond depth vs vol", "tail hedge corr")),
+    // The bond crash rows' record: a 20-year Treasury over the set's index's declines since 1962.
+    (a.bondCrashWindow, a.bondCrashYears, BondCrashRows),
     (a.bond10Window, a.bond10Years,
      Vector("bond10 vol per duration", "bond10 depth vs vol", "bond10 excess return pts/yr")))
 
@@ -11300,6 +11332,20 @@ object MarketSim:
       val (_, edges) = recordBandJoint(reads, Vector(0, 1, 2, 3), TimingAlpha)
       TimingRows.zip(edges).toMap
 
+  /** The bond crash rows' single histories at `yrs`, when it is their record's length: every path's
+    * readings in `BondCrashRows`' order (`bondCrashOf`). */
+  private[apps] def bondCrashHistories(a: Anchors, sims: Vector[Path], yrs: Int): Option[Vector[Vector[Double]]] =
+    if yrs == a.bondCrashYears then Some(parMap(sims)(bondCrashOf)) else None
+
+  /** THE BOND CRASH ROWS' JOINT BAND: each row's edges among histories `reads`, every one holding
+    * declines of both regimes, at the ranks a record-like history stays inside on both at once with
+    * probability 1 - `BondCrashAlpha`; empty under `ExtremeMinHistories` of them. */
+  private[apps] def bondCrashBands(reads: Vector[Vector[Double]]): Map[String, (Double, Double)] =
+    if reads.length < ExtremeMinHistories then Map.empty
+    else
+      val (_, edges) = recordBandJoint(reads, Vector(0, 1), BondCrashAlpha)
+      BondCrashRows.zip(edges).toMap
+
   def extremeReadingsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Vector[Double]] =
     extremeReadingsAndBands(a, sims, yrs)._1
 
@@ -11314,6 +11360,10 @@ object MarketSim:
       names.zipWithIndex.map((nm, k) => nm -> reads.map(_(k)).filter(x => !x.isNaN))
     val timingReads = timingHistories(a, sims, yrs)
     val timing = timingReads.toVector.flatMap(reads => TimingRows.zipWithIndex.map((nm, k) => nm -> reads.map(_(k)).filter(x => !x.isNaN)))
+    // the histories that, like the record, hold declines of both regimes: the band, the median and
+    // the count all read these
+    val crashReads = bondCrashHistories(a, sims, yrs).map(_.filter(_.forall(_.isFinite)))
+    val crash = crashReads.toVector.flatMap(reads => BondCrashRows.zipWithIndex.map((nm, k) => nm -> reads.map(_(k))))
     def pooled(nm: String): Boolean = ExtremeTargets.contains(nm) && !isMultiYear(nm)
     val others = anchorGroups(a)
       .filter((_, gy, names) => gy == yrs && names.exists(pooled))
@@ -11324,7 +11374,9 @@ object MarketSim:
         val vals   = if direct.forall(_.isDefined) then direct.flatten else full.map(get)
         nm -> vals.filter(x => !x.isNaN)
       })
-    ((multiYear ++ timing ++ others).toMap, multiYearBands(histories) ++ timingReads.map(timingBands).getOrElse(Map.empty))
+    ((multiYear ++ timing ++ crash ++ others).toMap,
+     multiYearBands(histories) ++ timingReads.map(timingBands).getOrElse(Map.empty) ++
+       crashReads.map(bondCrashBands).getOrElse(Map.empty))
 
   /** The median of `extremeReadingsFrom`, for an ensemble the caller already holds. */
   def extremeScoreStatsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Double] =
@@ -13758,7 +13810,7 @@ $body
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")
     println(f"  recovery shape         V ${st.vCount}%d   balanced ${st.midCount}%d   U ${st.uCount}%d")
     println(f"  bond refuge            vol ${st.bondVol * 100}%.1f%% (24y windows)   growth-crash ${pm(st.bondGrowth, 0, 1)}%s   infl-crash ${pm(st.bondInfl, 0, 1)}%s")
-    println(f"    1962-2026 reference    growth-crash ${pm(BondLongRecord._1, 0, 1)}%s   infl-crash ${pm(BondLongRecord._2, 0, 1)}%s   (a 20-year Treasury from DGS20 over the market's 17 declines of 15%%+, 10 growth / 7 inflation; reported, not graded)")
+    println(f"    TLT 2002-2026          growth-crash ${pm(BondTltRecord._1, 0, 1)}%s   infl-crash ${pm(BondTltRecord._2, 0, 1)}%s   (SPY's 6 declines of 15%%+, 5 growth / 1 inflation; reported, not graded)")
     if st.bond10 > 0.0 then
       println(f"  10-year leg            duration ${st.bond10}%.1f   vol ${st.bond10Vol * 100}%.1f%% (${st.bond10Vol * 100 / st.bond10}%.3f per year of duration)   growth-crash ${pm(st.bond10Growth, 0, 1)}%s   infl-crash ${pm(st.bond10Infl, 0, 1)}%s   depth vs vol ${st.bond10DepthVsVol}%.3f   excess return ${pm(st.bond10Excess, 0, 2)}%s pts/yr")
     println(f"  stock-bond correlation calm ${pm(st.corrCalm, 0, 2)}%s   inflation regime ${pm(st.corrInfl, 0, 2)}%s")

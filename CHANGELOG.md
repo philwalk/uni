@@ -166,9 +166,22 @@ Every bond used to earn the short rate alone: about a point a year less than a r
 1962–2026, so it climbed out of its drawdowns too slowly for its volatility. `-termpremium` gives
 every bond the short rate plus the premium times its duration. At 0.10 a year of duration the leg's
 excess sits on the record; the record pins the premium only to about ±0.11, so the sets sample it as
-they sample the drift. At 0.10 the recipes read 1.11 / 1.19 per year of duration, 1.16 / 1.01 under
-water and +0.76 / +0.78 excess (S&P / Nasdaq), each row inside its band, and the long bond's
-growth-crash rally rises to +7.0 / +6.3 (record +7.0).
+they sample the drift. At 0.10 the recipes read 1.11 / 1.20 per year of duration, 1.16 / 1.01 under
+water and +0.76 / +0.78 excess (S&P / Nasdaq) on seed 1; the Nasdaq recipe's 1.20 sits at its
+band's top edge and crosses it on three seeds of four.
+
+**The bond crash rows on the record since 1962.** `bond growth-crash` and `bond infl-crash` are
+graded against a 20-year Treasury from FRED's DGS20 over the set's index's declines of 15%+ since
+1962: the market's for the S&P (+9.5 on ten growth episodes, −6.3 on seven inflation ones;
+`crash-response-1962-2026-10-05.tsv`), Ken French's HiTec's for the Nasdaq (+3.8 on sixteen, −3.3
+on six; `crash-response-1962-hitec-2026-10-06.tsv`). They are single-history rows: the record must
+fall inside the joint band of the world's 64-year histories that, like it, hold declines of both
+regimes. A decline is an inflation episode when CPI year over year rose over it and stood at 4% or
+more at its trough, the records' rule, which the model reads on its own CPI. The TLT era's
++7.0 / −27.9 is reported beside them: its one inflation episode, 2022, held the inflation regime
+high enough to push the 10-year bond's volatility per year of duration past its record. Both
+recipes place the records inside the band on seeds 1–4: the S&P at the 56th–65th (growth) and
+85th–92nd (inflation) percentiles, the Nasdaq at the 14th–22nd and 81st–87th.
 
 **Upgrading**
 
@@ -180,6 +193,11 @@ growth-crash rally rises to +7.0 / +6.3 (record +7.0).
 - **Bonds earn their term premium.** The default and the 0.24.6 recipes carry `termPremium` 0.10, so
   every emitted bond earns its duration times 0.10 a year over the short rate: 1.35 a year on the
   13.5-year bond. A result that holds bonds moves.
+- **The bond crash rows are single-history rows.** Their sidecar `fidelity` entries carry the
+  record's `percentile`, `historyBand` and `horizonYears` 64 in place of a ratio, and the loss prices
+  them linearly (`ADDITIVE_TARGETS`). `bondGrowth` / `bondInfl`, and the 10-year leg's, classify a
+  decline by the records' CPI rule, not by its mean inflation pressure, so every world's readings
+  move.
 - **Two new dials in every world block**, `bond10` and `termPremium`. Every set file carries them, 0
   in every frozen world, and every world digest moves (the default reads `517685b907e693d8`).
   `termPremium` is the search's last range, 0–0.30; it is sampled, never priced.
@@ -221,6 +239,10 @@ growth-crash rally rises to +7.0 / +6.3 (record +7.0).
 - Rust: `World::bond10`, `World::term_premium`, `VERDICT_BOND10`, `BOND10_BAND_ROWS`,
   `bond10_readings` and `bond10_resamples`. Scala: `World.bond10`, and `World.ext: WorldExt` holds
   `termPremium` (a JVM constructor takes at most 254 parameter slots, and `World` reached it).
+- API, the bond crash rows: `Anchors` gains `bond_crash_window`, `bond_crash_years` and
+  `bond_crash` (Scala `bondCrashWindow`, `bondCrashYears`, `bondCrash`); new `BOND_CRASH_ROWS`,
+  `BOND_CRASH_ALPHA` and the reported `BOND_TLT_RECORD` (Scala `BondCrashRows`, `BondCrashAlpha`,
+  `BondTltRecord`, and `crashIsInflation` / `bondCrashOf`, the rule and one history's reading).
 - `record_bands`: `-splice FILE -at DATE` continues a `-yahoo` series with a second file's returns
   dated after DATE, repeatable and applied in order; a `-yahoo` or `-splice` file may be a
   `dlog_adj_close` CSV, FRED's `observation_date,DGSn` yields (read as an n-year par bond rebought
@@ -241,11 +263,6 @@ growth-crash rally rises to +7.0 / +6.3 (record +7.0).
   the third decimal at most (`bond depth vs vol` 1.029058, the Nasdaq vol-timing record 1.395705),
   and no member of either set changes band membership. Every row of `recordbands-2026-09-26.tsv`
   now regenerates from published sources.
-- The bond crash rows gain a reported, ungraded 1962–2026 reference printed under them: a 20-year
-  Treasury from FRED's DGS20 over the market's 17 declines of 15%+ reads +9.1 on the ten growth
-  episodes and −6.3 on the seven inflation ones (CPI rose over the decline and stood at 4%+ at the
-  trough), against the graded TLT-era +7.0 / −27.9 (`crash-response-1962-2026-10-05.tsv`,
-  `BondLongRecord` / `BOND_LONG_RECORD`). The graded targets do not move.
 - API, the basket:
   - `Anchors` loses `basket_corr`, `basket_beta`, `basket_vol_ratio` and `basket_name_vol_band`, and
     gains `basket_ruler`.

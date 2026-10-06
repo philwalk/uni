@@ -376,11 +376,11 @@ const K_VALUE_BOND: f64 = 0.7;
 const SIGMA_N_BOND: f64 = 0.002;
 const DURATION_REF: f64 = 13.5;
 
-/// The bond crash rows' long reference, REPORTED beside the graded TLT-era targets: the growth and
-/// inflation medians of a 20-year Treasury's scaled return over the market's 17 declines of 15%+
-/// since 1962 (`crash-response-1962-2026-10-05.tsv`, whose rows `bond_crash_tests` re-derives
-/// these from). Seven inflation episodes read a fifth of 2022's loss; the graded target stays 2022.
-const BOND_LONG_RECORD: (f64, f64) = (9.07, -6.3);
+/// The bond crash rows' TLT-era reading, REPORTED beside the graded rows: the growth and inflation
+/// medians of TLT's scaled return over SPY's six declines of 15%+, 2002-2026
+/// (`crash-response-2026-09-25.tsv`, whose rows `bond_crash_tests` re-derives these from). Its one
+/// inflation episode is 2022, too few to grade; the graded records are `Anchors::bond_crash`.
+const BOND_TLT_RECORD: (f64, f64) = (7.0, -27.9);
 /// How fast policy reaches the accommodation the stress level calls for, per year: ~2 months to
 /// the cap, which is what an easing cycle takes. Frozen, not a World field: the uncertain
 /// quantities are HOW FAR policy can go (`easing`) and HOW LONG it stays (`unwind`), not how
@@ -593,11 +593,15 @@ pub fn news_size_within_budget(news_rate: f64, news_size: f64) -> f64 {
 /// differ in its last bit.
 const NEWS_BOND_DECAY: f64 = 0.9945139356168285;
 
-/// THE INFLATION REGIME's edge: inflation pressure above it is an inflation regime. The bond rows
-/// split the crashes on it (`bond_growth` / `bond_infl`), the calm mask is its complement, and the
-/// news bond leg reverses across it (`news_bond`): in an inflation regime bad equity news is rate
-/// news, and the bond falls with the stock.
+/// THE INFLATION REGIME's edge: inflation pressure above it is an inflation regime. The calm mask
+/// is its complement, and the news bond leg reverses across it (`news_bond`): in an inflation
+/// regime bad equity news is rate news, and the bond falls with the stock.
 const INFL_REGIME_EDGE: f64 = 0.005;
+
+/// THE CRASH REGIME RULE, the bond crash records' own (`crash-response-1962-*.tsv`): a decline is
+/// an inflation episode when CPI year over year ROSE from its peak to its trough and stood at this
+/// many percent or more at the trough, else a growth episode (`crash_is_inflation`).
+const CRASH_CPI_FLOOR: f64 = 4.0;
 
 /// THE CREDIT-TRIGGERED VOL REGIME's constants (see `credit_regime`). The credit growth gap
 /// (`borrow - lev_slow`) has a stationary sd of 0.104 on the Nasdaq recipes (measured over 45
@@ -7146,6 +7150,40 @@ fn episodes(px: &[f64], min_dec_pct: f64) -> Vec<Episode> {
     out
 }
 
+/// THE CRASH REGIME RULE on one decline (`CRASH_CPI_FLOOR`): whether CPI year over year, over
+/// `DAYS_PER_YEAR` sessions, rose from the peak to the trough and stood at the floor or more at the
+/// trough. `None` for a peak in the series' first year, which has no year-over-year reading.
+fn crash_is_inflation(cpi: &[f64], ep: &Episode) -> Option<bool> {
+    let yoy = |k: usize| -> Option<f64> {
+        k.checked_sub(DAYS_PER_YEAR)
+            .map(|j| (cpi[k] / cpi[j] - 1.0) * 100.0)
+    };
+    let (at_peak, at_trough) = (yoy(ep.peak)?, yoy(ep.trough)?);
+    Some(at_trough > at_peak && at_trough >= CRASH_CPI_FLOOR)
+}
+
+/// `series`' log move over each decline in `eps` of one regime (`crash_is_inflation` on `cpi`), in
+/// percent; empty for an empty series. A decline with no regime reading is in neither.
+fn crash_moves(series: &[f64], cpi: &[f64], eps: &[Episode], infl_regime: bool) -> Vec<f64> {
+    if series.is_empty() {
+        return Vec::new();
+    }
+    eps.iter()
+        .filter(|ep| crash_is_inflation(cpi, ep) == Some(infl_regime))
+        .map(|ep| (series[ep.trough] / series[ep.peak]).ln() * 100.0)
+        .collect()
+}
+
+/// One path's `BOND_CRASH_ROWS`: the median of its bond's moves over its growth declines and over
+/// its inflation declines, NaN for a regime it has none of -- `measure` on that path alone.
+fn bond_crash_of(p: &Path) -> [f64; 2] {
+    let eps = episodes(&p.price, 15.0);
+    [
+        med(&crash_moves(&p.bond, &p.cpi, &eps, false)),
+        med(&crash_moves(&p.bond, &p.cpi, &eps, true)),
+    ]
+}
+
 /// Share of sessions spent more than 5%, 10% and 20% below the running peak — the DEPTH
 /// DISTRIBUTION, which volatility, maximum drawdown and underwater fraction between them do
 /// not pin. Two series can agree on all three of those and still differ here: one drifts far
@@ -8307,6 +8345,16 @@ pub const TIMING_DECLINE_PCT: f64 = 20.0;
 /// the share of record-like worlds the timing rows may jointly miss
 pub const TIMING_ALPHA: f64 = 0.05;
 
+/// THE BOND CRASH ROWS (`bond_crash_of`): the median of the bond's log move, in percent at
+/// `DURATION_REF`, over the equity's declines of 15% or more in each regime of the record's rule
+/// (`crash_is_inflation`), growth then inflation. Graded like the timing rows, by where the
+/// record (`Anchors::bond_crash`, 1962-2026) falls among the world's single histories of its length
+/// that, like the record, hold declines of both regimes: a decline is one draw, and a block
+/// resample of the record keeps none whole.
+pub const BOND_CRASH_ROWS: [&str; 2] = ["bond growth-crash", "bond infl-crash"];
+/// the share of record-like worlds the bond crash rows may jointly miss
+pub const BOND_CRASH_ALPHA: f64 = 0.05;
+
 #[must_use]
 pub fn timing_of_monthly(x: &[f64]) -> [f64; 4] {
     let n = x.len();
@@ -8905,6 +8953,8 @@ pub fn record_band_years(a: Anchors, name: &str) -> usize {
         a.bond_years
     } else if TIMING_ROWS.contains(&name) {
         a.timing_years
+    } else if BOND_CRASH_ROWS.contains(&name) {
+        a.bond_crash_years
     } else {
         a.equity_years
     }
@@ -11861,30 +11911,6 @@ fn path_read(s: &Path, years: usize) -> PathRead {
     let post = rate_after_readings(&s.price, &s.rate);
     // once per path (was recomputed 3x)
     let eps = episodes(&s.price, 15.0);
-    let bond_in_windows = |infl_regime: bool| -> Vec<f64> {
-        eps.iter()
-            .filter(|ep| {
-                let sum: f64 = scala_sum((ep.peak..=ep.trough).map(|k| s.infl_press[k]));
-                let infl = sum / 1.max(ep.trough - ep.peak + 1) as f64;
-                (infl > INFL_REGIME_EDGE) == infl_regime
-            })
-            .map(|ep| (s.bond[ep.trough] / s.bond[ep.peak]).ln() * 100.0)
-            .collect()
-    };
-    // the 10-year leg over the same episodes, by the same regime
-    let b10_in_windows = |infl_regime: bool| -> Vec<f64> {
-        if s.bond10.is_empty() {
-            return Vec::new();
-        }
-        eps.iter()
-            .filter(|ep| {
-                let sum: f64 = scala_sum((ep.peak..=ep.trough).map(|k| s.infl_press[k]));
-                let infl = sum / 1.max(ep.trough - ep.peak + 1) as f64;
-                (infl > INFL_REGIME_EDGE) == infl_regime
-            })
-            .map(|ep| (s.bond10[ep.trough] / s.bond10[ep.peak]).ln() * 100.0)
-            .collect()
-    };
     let corr_in = |infl_regime: bool| -> f64 {
         let idx: Vec<usize> = (1..s.price.len())
             .filter(|&i| (s.infl_press[i] > INFL_REGIME_EDGE) == infl_regime)
@@ -11911,8 +11937,8 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         } else {
             (MatD::apply(&rb10).power(2).mean() * dpy).sqrt()
         },
-        bond10_growth: b10_in_windows(false),
-        bond10_infl: b10_in_windows(true),
+        bond10_growth: crash_moves(&s.bond10, &s.cpi, &eps, false),
+        bond10_infl: crash_moves(&s.bond10, &s.cpi, &eps, true),
         // each session's log return over the rate it carried, the rate the session set
         bond10_excess: if rb10.is_empty() {
             f64::NAN
@@ -11962,8 +11988,8 @@ fn path_read(s: &Path, years: usize) -> PathRead {
                 .map(|seg| (MatD::apply(&seg).power(2).mean() * dpy).sqrt())
                 .collect()
         },
-        bond_growth: bond_in_windows(false),
-        bond_infl: bond_in_windows(true),
+        bond_growth: crash_moves(&s.bond, &s.cpi, &eps, false),
+        bond_infl: crash_moves(&s.bond, &s.cpi, &eps, true),
         corr_calm: corr_in(false),
         corr_infl: corr_in(true),
         val_disp: {
@@ -13445,6 +13471,14 @@ pub struct Anchors {
     /// (`bond10_readings`; `bond10-2026-10-05.tsv`)
     pub bond10_window: &'static str,
     pub bond10_years: usize,
+    /// THE BOND CRASH ROWS' record window and records (`BOND_CRASH_ROWS`, growth then inflation):
+    /// a 20-year Treasury from FRED's DGS20 over the set's index's declines of 15%+ since 1962 --
+    /// the market's for the S&P (`crash-response-1962-2026-10-05.tsv`), Ken French's HiTec for the
+    /// Nasdaq (`crash-response-1962-hitec-2026-10-06.tsv`) -- read on the world's histories of
+    /// `bond_crash_years`
+    pub bond_crash_window: &'static str,
+    pub bond_crash_years: usize,
+    pub bond_crash: [f64; 2],
     pub short_rate: f64,
     pub short_rate_sd: f64,
     pub rate_floor: f64,
@@ -13518,6 +13552,8 @@ pub struct Anchors {
     pub d10_sd: f64,
     pub d20_sd: f64,
     pub bond_vol_sd: f64,
+    /// the bond crash rows' spreads, single 64-year histories of the set's 0.24.6 recipe over
+    /// the record's magnitude (`-noise`, 200 paths, 2026-10-06)
     pub bond_growth_sd: f64,
     pub bond_infl_sd: f64,
     pub bond_depth_sd: f64,
@@ -14458,6 +14494,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     bond_depth: 1.029058,
     bond10_window: "DGS10 par bond, 1962-2026",
     bond10_years: 64,
+    bond_crash_window: "DGS20 over the market's declines, 1962-2026",
+    bond_crash_years: 64,
+    bond_crash: [9.533898, -6.282178],
     short_rate: 4.595174,
     short_rate_sd: 0.09,
     rate_floor: 14.565588,
@@ -14527,8 +14566,8 @@ const SP500_ANCHORS: Anchors = Anchors {
     d10_sd: 0.47,
     d20_sd: 2.27,
     bond_vol_sd: 0.43,
-    bond_growth_sd: 1.49,
-    bond_infl_sd: 1.90,
+    bond_growth_sd: 0.75,
+    bond_infl_sd: 4.93,
     bond_depth_sd: 0.36,
     dd_refs: &DD_REFS_SP500,
     record_bands: &RECORD_BANDS_SP500,
@@ -14615,6 +14654,9 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bond_depth: 1.029058,
     bond10_window: "DGS10 par bond, 1962-2026",
     bond10_years: 64,
+    bond_crash_window: "DGS20 over HiTec's declines, 1962-2026",
+    bond_crash_years: 64,
+    bond_crash: [3.762295, -3.328767],
     short_rate: 2.136466,
     short_rate_sd: 1.05,
     rate_floor: 37.313224,
@@ -14676,8 +14718,8 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     d10_sd: 0.25,
     d20_sd: 0.42,
     bond_vol_sd: 0.44,
-    bond_growth_sd: 1.78,
-    bond_infl_sd: 2.30,
+    bond_growth_sd: 1.89,
+    bond_infl_sd: 15.74,
     bond_depth_sd: 0.51,
     dd_refs: &DD_REFS_NASDAQ,
     record_bands: &RECORD_BANDS_NASDAQ,
@@ -15055,31 +15097,21 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             13.0,
             wgt(1.0, a.bond_vol_sd),
         ),
-        // A MEDIAN across episodes, measured the way `measure` measures it — SPY drawdowns of
-        // 15%+, TLT's log return over the same peak-to-trough span — ON THE MODEL BOND'S DURATION:
-        // each episode's TLT return times `DURATION_REF` over the fund's empirical duration on
-        // that span (against the 20-year yield), the footing `bond vol % (24y)` is graded on. The
-        // five growth episodes read +7.0 / +21.3 / +3.6 / +10.2 / +0.6 (unscaled +6.6 / +22.4 /
-        // +4.4 / +13.3 / +0.8 at 12.8-17.6 years). Six episodes is the honest limit and `-noise`
-        // prices it in. `test-data/bond-anchors/crash-response-2026-09-25.tsv`; `bond_crash_tests`
-        // re-derives both.
+        // THE BOND CRASH ROWS (`BOND_CRASH_ROWS`), single-history graded like the timing rows: the
+        // bond's median move over a history's growth declines and over its inflation declines, by
+        // the record's CPI rule, against the 1962-2026 record (`Anchors::bond_crash`). The judgment
+        // stays 1.5 on the inflation row -- inflation-crash behaviour is why the bond refuge
+        // exists -- and the spreads, single 64-year histories of the set's recipe, set the weight.
         (
-            "bond growth-crash",
+            BOND_CRASH_ROWS[0],
             (|st| st.bond_growth) as StatFn,
-            7.0,
+            a.bond_crash[0],
             wgt(1.0, a.bond_growth_sd),
         ),
-        // The judgment stays at 1.5 — inflation-crash behaviour is why the bond refuge exists —
-        // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
-        // 95 of 200 24-year histories produce a reading at all. The old 1.5 was the largest
-        // weight in the loss on the least measurable target in the set.
-        // The ONE inflation-regime drawdown the record has: TLT -34.7% over SPY's
-        // 2022-01-03..2022-10-12, at an empirical duration of 16.8 years, which is -27.9% at
-        // `DURATION_REF`. A median of one is that one, so the anchor is the episode.
         (
-            "bond infl-crash",
+            BOND_CRASH_ROWS[1],
             (|st| st.bond_infl) as StatFn,
-            -27.9,
+            a.bond_crash[1],
             wgt(1.5, a.bond_infl_sd),
         ),
         // Does the refuge hold exactly where it is needed — stock-bond correlation on calm
@@ -15288,14 +15320,17 @@ const EXTREME_TARGETS: &[&str] = &[
     "sma10 false-exit return %",
     "sma10 exits per year",
     "market sign12 trend %/mo",
+    "bond growth-crash",
+    "bond infl-crash",
 ];
 
 /// Whether a row is graded among the world's single histories with a joint band: a multi-year
-/// row of either window, or a timing row.
+/// row of either window, a timing row, or a bond crash row.
 pub fn is_multi_year(name: &str) -> bool {
     MULTI_YEAR_ROWS.contains(&name)
         || MULTI_YEAR_LONG_ROWS.contains(&name)
         || TIMING_ROWS.contains(&name)
+        || BOND_CRASH_ROWS.contains(&name)
 }
 
 /// The `EXTREME_TARGETS` rows whose `StatFn` reads an extreme over the pooled ensemble, sorted: a
@@ -15685,6 +15720,27 @@ fn timing_bands(reads: &[[f64; 4]]) -> std::collections::HashMap<&'static str, (
     out
 }
 
+/// The bond crash rows' single histories at `yrs`, when it is their record's length: every path's
+/// readings in `BOND_CRASH_ROWS`' order (`bond_crash_of`).
+fn bond_crash_histories(a: Anchors, sims: &[Path], yrs: usize) -> Option<Vec<[f64; 2]>> {
+    (yrs == a.bond_crash_years).then(|| sims.par_iter().map(bond_crash_of).collect())
+}
+
+/// THE BOND CRASH ROWS' JOINT BAND: each row's edges among histories `reads`, every one holding
+/// declines of both regimes, at the ranks a record-like history stays inside on both at once with
+/// probability 1 - `BOND_CRASH_ALPHA`; empty under `EXTREME_MIN_HISTORIES` of them.
+fn bond_crash_bands(reads: &[[f64; 2]]) -> std::collections::HashMap<&'static str, (f64, f64)> {
+    let mut out = std::collections::HashMap::new();
+    if reads.len() < EXTREME_MIN_HISTORIES {
+        return out;
+    }
+    let (_, edges) = record_band_joint(reads, &[0, 1], BOND_CRASH_ALPHA);
+    for (nm, e) in BOND_CRASH_ROWS.iter().copied().zip(edges) {
+        out.insert(nm, e);
+    }
+    out
+}
+
 pub fn extreme_readings_from(
     a: Anchors,
     sims: &[Path],
@@ -15720,6 +15776,18 @@ fn extreme_readings_and_bands(
                 nm,
                 reads.iter().map(|x| x[k]).filter(|x| !x.is_nan()).collect(),
             );
+        }
+    }
+    if let Some(reads) = bond_crash_histories(a, sims, yrs) {
+        // the histories that, like the record, hold declines of both regimes: the band, the
+        // median and the count all read these
+        let both: Vec<[f64; 2]> = reads
+            .into_iter()
+            .filter(|x| x.iter().all(|v| v.is_finite()))
+            .collect();
+        bands.extend(bond_crash_bands(&both));
+        for (k, nm) in BOND_CRASH_ROWS.iter().copied().enumerate() {
+            out.insert(nm, both.iter().map(|x| x[k]).collect());
         }
     }
     for (names, reads) in histories {
@@ -16125,7 +16193,9 @@ fn scala_sign(x: f64) -> f64 {
 /// of sessions): the loss prices them as the linear |model - target| over |target|, the log
 /// ratio's small-deviation limit, since a log ratio has no meaning across zero and grows without
 /// bound as a reading nears it.
-pub const ADDITIVE_TARGETS: [&str; 6] = [
+pub const ADDITIVE_TARGETS: [&str; 8] = [
+    "bond growth-crash",
+    "bond infl-crash",
     "bond10 excess return pts/yr",
     "vol-timing edge pts/yr",
     "vol-exit timing pts/yr",
@@ -19170,11 +19240,7 @@ fn anchor_groups(a: Anchors) -> Vec<(&'static str, usize, Vec<&'static str>)> {
 }
 
 /// `anchor_groups` before the set's own fit targets filter it.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one table: every fidelity target's record window, one row a group"
-)]
-fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 11] {
+fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 12] {
     [
         (
             a.equity_window,
@@ -19275,14 +19341,10 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
         (
             a.bond_window,
             a.bond_years,
-            &[
-                "bond vol % (24y)",
-                "bond growth-crash",
-                "bond infl-crash",
-                "bond depth vs vol",
-                "tail hedge corr",
-            ],
+            &["bond vol % (24y)", "bond depth vs vol", "tail hedge corr"],
         ),
+        // The bond crash rows' record: a 20-year Treasury over the set's index's declines since 1962.
+        (a.bond_crash_window, a.bond_crash_years, &BOND_CRASH_ROWS),
         (
             a.bond10_window,
             a.bond10_years,
@@ -23909,9 +23971,9 @@ pub fn main() {
         jfs(st.bond_infl, 1)
     );
     println!(
-        "    1962-2026 reference    growth-crash {}   infl-crash {}   (a 20-year Treasury from DGS20 over the market's 17 declines of 15%+, 10 growth / 7 inflation; reported, not graded)",
-        jfs(BOND_LONG_RECORD.0, 1),
-        jfs(BOND_LONG_RECORD.1, 1)
+        "    TLT 2002-2026          growth-crash {}   infl-crash {}   (SPY's 6 declines of 15%+, 5 growth / 1 inflation; reported, not graded)",
+        jfs(BOND_TLT_RECORD.0, 1),
+        jfs(BOND_TLT_RECORD.1, 1)
     );
     if st.bond10 > 0.0 {
         println!(
@@ -25479,6 +25541,8 @@ mod contract_tests {
             a.equity_years
         } else if TIMING_ROWS.contains(&r.name) {
             a.timing_years
+        } else if BOND_CRASH_ROWS.contains(&r.name) {
+            a.bond_crash_years
         } else {
             a.bubble_years
         };
@@ -27683,45 +27747,29 @@ mod bond_crash_tests {
         )
     }
 
-    /// The regime's median of the episodes' bond returns at the model bond's duration: each
-    /// episode's TLT return scaled by `DURATION_REF` over the fund's duration on that span.
+    /// The regime's median of the episodes' bond returns at the model bond's duration, by the
+    /// model's own median (`med`): each episode's return scaled by `DURATION_REF` over the bond's
+    /// duration on that span.
     fn median_of(rows: &[Row], regime: &str) -> f64 {
-        let mut v: Vec<f64> = rows
+        let v: Vec<f64> = rows
             .iter()
             .filter(|r| r.regime == regime)
             .map(|r| r.bond_pct * DURATION_REF / r.duration)
             .collect();
-        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        if v.is_empty() {
-            f64::NAN
-        } else if v.len() % 2 == 1 {
-            v[v.len() / 2]
-        } else {
-            (v[v.len() / 2 - 1] + v[v.len() / 2]) / 2.0
-        }
-    }
-
-    fn target(name: &str) -> f64 {
-        fit_targets(SP500_ANCHORS)
-            .into_iter()
-            .find(|(n, _, _, _)| *n == name)
-            .map(|(_, _, t, _)| t)
-            .unwrap_or_else(|| panic!("no target [{name}]"))
+        med(&v)
     }
 
     #[test]
-    fn both_bond_crash_targets_are_the_records_medians() {
+    fn the_reported_tlt_reading_is_its_fixtures_medians() {
         let Some(rows) = rows() else { return };
         assert!(
-            (target("bond growth-crash") - median_of(&rows, "growth")).abs() < 0.05,
-            "the growth-crash target no longer matches the record's median across its growth-shock \
-             drawdowns ({:.1}%)",
+            (BOND_TLT_RECORD.0 - median_of(&rows, "growth")).abs() < 0.05,
+            "the reported TLT growth reading is not its fixture's median ({:.2})",
             median_of(&rows, "growth")
         );
         assert!(
-            (target("bond infl-crash") - median_of(&rows, "inflation")).abs() < 0.05,
-            "the inflation-crash target no longer matches the record's inflation-regime drawdown \
-             ({:.1}%)",
+            (BOND_TLT_RECORD.1 - median_of(&rows, "inflation")).abs() < 0.05,
+            "the reported TLT inflation reading is not its fixture's median ({:.2})",
             median_of(&rows, "inflation")
         );
     }
@@ -27762,8 +27810,8 @@ mod bond_crash_tests {
         assert_eq!(
             rows.iter().filter(|r| r.regime == "inflation").count(),
             1,
-            "the record's inflation-regime drawdown count has changed; the -27.9% target is a \
-             median of one, so a second episode changes the target"
+            "the TLT era's inflation-regime drawdown count has changed; its reported -27.9% is \
+             a median of one, so a second episode changes it"
         );
         assert!(
             rows.len() >= 5,
@@ -27772,11 +27820,9 @@ mod bond_crash_tests {
         );
     }
 
-    const LONG_FIXTURE: &str = "../test-data/bond-anchors/crash-response-1962-2026-10-05.tsv";
-
-    /// The 1962 reference's rows: `(equityPct, bondPct, duration, cpiPeak, cpiTrough, regime)`.
-    fn long_rows() -> Option<Vec<(Row, f64, f64)>> {
-        let text = std::fs::read_to_string(LONG_FIXTURE).ok()?;
+    /// One 1962-2026 record's rows: `(row, cpiPeak, cpiTrough)`.
+    fn long_rows(fixture: &str) -> Option<Vec<(Row, f64, f64)>> {
+        let text = std::fs::read_to_string(fixture).ok()?;
         Some(
             text.lines()
                 .filter(|l| !l.starts_with('#') && !l.starts_with("peak\t") && !l.trim().is_empty())
@@ -27797,39 +27843,112 @@ mod bond_crash_tests {
         )
     }
 
+    /// THE GRADED RECORDS are each set's 1962 fixture's medians under its stated rule: the
+    /// market's declines for the S&P, HiTec's for the Nasdaq.
     #[test]
-    fn the_long_reference_is_the_1962_fixtures_medians_under_its_stated_rule() {
-        let Some(long) = long_rows() else { return };
-        let rows: Vec<Row> = long
-            .iter()
-            .map(|(r, _, _)| Row {
-                equity_pct: r.equity_pct,
-                bond_pct: r.bond_pct,
-                duration: r.duration,
-                regime: r.regime.clone(),
+    fn each_sets_crash_record_is_its_1962_fixtures_medians_under_its_stated_rule() {
+        for (a, fixture, declines, inflation) in [
+            (
+                SP500_ANCHORS,
+                "../test-data/bond-anchors/crash-response-1962-2026-10-05.tsv",
+                17,
+                7,
+            ),
+            (
+                NASDAQ_ANCHORS,
+                "../test-data/bond-anchors/crash-response-1962-hitec-2026-10-06.tsv",
+                22,
+                6,
+            ),
+        ] {
+            let Some(long) = long_rows(fixture) else {
+                continue;
+            };
+            let rows: Vec<Row> = long
+                .iter()
+                .map(|(r, _, _)| Row {
+                    equity_pct: r.equity_pct,
+                    bond_pct: r.bond_pct,
+                    duration: r.duration,
+                    regime: r.regime.clone(),
+                })
+                .collect();
+            for (k, regime) in ["growth", "inflation"].into_iter().enumerate() {
+                assert!(
+                    (a.bond_crash[k] - median_of(&rows, regime)).abs() < 1e-5,
+                    "{}'s {regime} record {} is not its fixture's median ({:.6})",
+                    a.name,
+                    a.bond_crash[k],
+                    median_of(&rows, regime)
+                );
+            }
+            assert_eq!(
+                rows.len(),
+                declines,
+                "{fixture}: declines of 15%+ since 1962"
+            );
+            assert_eq!(
+                rows.iter().filter(|r| r.regime == "inflation").count(),
+                inflation
+            );
+            for (r, cpi_peak, cpi_trough) in &long {
+                assert!(r.equity_pct <= -15.0);
+                let infl = cpi_trough > cpi_peak && *cpi_trough >= CRASH_CPI_FLOOR;
+                assert_eq!(
+                    r.regime == "inflation",
+                    infl,
+                    "the regime column must follow the stated rule (CPI rose over the decline and \
+                     read 4%+ at the trough): peak CPI {cpi_peak}, trough CPI {cpi_trough}"
+                );
+            }
+        }
+    }
+
+    /// THE MODEL READS THE RECORD'S RULE on its own CPI: year over year at the peak and the trough,
+    /// a rise into 4%+ is inflation, a rise short of 4% or a fall is growth, and a peak in the
+    /// series' first year has no reading.
+    #[test]
+    fn the_crash_regime_is_the_records_rule_on_the_paths_cpi() {
+        let n = 3 * DAYS_PER_YEAR;
+        // 2% a year for two years, then 6%
+        let cpi: Vec<f64> = (0..n)
+            .map(|k| {
+                let y = k as f64 / DAYS_PER_YEAR as f64;
+                if y < 2.0 {
+                    (0.02 * y).exp()
+                } else {
+                    (0.04 + 0.06 * (y - 2.0)).exp()
+                }
             })
             .collect();
-        assert!(
-            (BOND_LONG_RECORD.0 - median_of(&rows, "growth")).abs() < 0.05,
-            "the reported growth reference is not the 1962 fixture's median ({:.2})",
-            median_of(&rows, "growth")
+        let ep = |peak, trough| Episode {
+            peak,
+            trough,
+            recovered: -1,
+            depth_pct: -20.0,
+        };
+        let y = DAYS_PER_YEAR;
+        assert_eq!(crash_is_inflation(&cpi, &ep(y + 10, n - 1)), Some(true));
+        assert_eq!(
+            crash_is_inflation(&cpi, &ep(y + 10, 2 * y - 1)),
+            Some(false)
         );
-        assert!(
-            (BOND_LONG_RECORD.1 - median_of(&rows, "inflation")).abs() < 0.05,
-            "the reported inflation reference is not the 1962 fixture's median ({:.2})",
-            median_of(&rows, "inflation")
-        );
-        assert_eq!(rows.len(), 17, "17 declines of 15%+ since 1962");
-        assert_eq!(rows.iter().filter(|r| r.regime == "inflation").count(), 7);
-        for (r, cpi_peak, cpi_trough) in &long {
-            assert!(r.equity_pct <= -15.0);
-            let inflation = cpi_trough > cpi_peak && *cpi_trough >= 4.0;
-            assert_eq!(
-                r.regime == "inflation",
-                inflation,
-                "the regime column must follow the stated rule (CPI rose over the decline and read \
-                 4%+ at the trough): peak CPI {cpi_peak}, trough CPI {cpi_trough}"
-            );
+        assert_eq!(crash_is_inflation(&cpi, &ep(n - 1, n - 1)), Some(false));
+        assert_eq!(crash_is_inflation(&cpi, &ep(10, n - 1)), None);
+    }
+
+    /// A HISTORY'S READING is `measure` on that history alone, bit for bit: what a sampler reads
+    /// as `measure(&[p.head(h)], h)` and what the graded rows' histories hold.
+    #[test]
+    fn a_historys_crash_reading_is_measure_on_it_alone() {
+        let (w, _) = named_world("0.24.6-sp500").expect("recipe");
+        let h = SP500_ANCHORS.bond_crash_years;
+        for p in sim_paths(&w, 3, 80, DEFAULT_SEED) {
+            let p = p.head(h);
+            let st = measure(std::slice::from_ref(&p), h);
+            let got = bond_crash_of(&p);
+            assert_eq!(got[0].to_bits(), st.bond_growth.to_bits());
+            assert_eq!(got[1].to_bits(), st.bond_infl.to_bits());
         }
     }
 }
@@ -32284,24 +32403,43 @@ mod credit_regime_tests {
         );
     }
 
+    /// THE SLOW LEG REVERSED deepens the bond's fall over inflation declines and leaves its rally
+    /// over growth declines: read PAIRED, both runs' bond over the declines of the run without it
+    /// (each classified by the record's rule on that run's CPI), since the reversal moves the bond
+    /// by a point or two per decline (-1.6 here, growth -0.1) against medians tens of points deep.
     #[test]
     fn the_slow_bond_leg_reversed_deepens_the_bonds_inflation_crashes() {
-        let base = read(&recipe());
-        let on = read(&World {
-            slow_bond_infl: 1.0,
-            ..recipe()
-        });
+        let off = sim_paths(&recipe(), 40, 60, 20_260_918);
+        let on = sim_paths(
+            &World {
+                slow_bond_infl: 1.0,
+                ..recipe()
+            },
+            40,
+            60,
+            20_260_918,
+        );
+        let (mut infl, mut growth) = (Vec::new(), Vec::new());
+        for (a, b) in off.iter().zip(&on) {
+            for ep in episodes(&a.price, 15.0) {
+                let mv = |s: &[f64]| (s[ep.trough] / s[ep.peak]).ln() * 100.0;
+                match crash_is_inflation(&a.cpi, &ep) {
+                    Some(true) => infl.push(mv(&b.bond) - mv(&a.bond)),
+                    Some(false) => growth.push(mv(&b.bond) - mv(&a.bond)),
+                    None => {}
+                }
+            }
+        }
+        let mean = |v: &[f64]| scala_sum(v.iter().copied()) / v.len() as f64;
         assert!(
-            on.bond_infl < base.bond_infl - 0.3,
-            "inflation-crash bond {:.2} -> {:.2}",
-            base.bond_infl,
-            on.bond_infl
+            mean(&infl) < -0.8,
+            "inflation declines: the bond moves {:.2} points with the leg reversed",
+            mean(&infl)
         );
         assert!(
-            (on.bond_growth - base.bond_growth).abs() < 0.5,
-            "growth-crash rally {:.2} -> {:.2}",
-            base.bond_growth,
-            on.bond_growth
+            mean(&growth).abs() < 0.5,
+            "growth declines: the bond moves {:.2} points with the leg reversed",
+            mean(&growth)
         );
     }
 }

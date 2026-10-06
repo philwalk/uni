@@ -38,11 +38,21 @@ class CreditRegimeSuite extends FunSuite:
     assert(on.vol > base.vol + 0.003, f"equity vol ${base.vol}%.4f -> ${on.vol}%.4f")
   }
 
+  /** Read PAIRED, both runs' bond over the declines of the run without the reversal (each
+    * classified by the record's rule on that run's CPI), since the reversal moves the bond by a
+    * point or two per decline (-1.6 here, growth -0.1) against medians tens of points deep. */
   test("the slow bond leg, reversed, deepens the bond's inflation crashes") {
-    val base = read(recipe)
-    val on   = read(recipe.copy(slowBondInfl = 1.0))
-    assert(on.bondInfl < base.bondInfl - 0.3,
-      f"inflation-crash bond ${base.bondInfl}%.2f -> ${on.bondInfl}%.2f")
-    assert(math.abs(on.bondGrowth - base.bondGrowth) < 0.5,
-      f"growth-crash rally ${base.bondGrowth}%.2f -> ${on.bondGrowth}%.2f")
+    val off = MarketSim.simPaths(recipe, 40, 60, 20260918L)
+    val on  = MarketSim.simPaths(recipe.copy(slowBondInfl = 1.0), 40, 60, 20260918L)
+    val moves = off.zip(on).flatMap { (a, b) =>
+      MarketSim.episodes(a.price, 15.0).flatMap { ep =>
+        def mv(s: Array[Double]) = math.log(s(ep.trough) / s(ep.peak)) * 100.0
+        MarketSim.crashIsInflation(a.cpi, ep).map(infl => (infl, mv(b.bond) - mv(a.bond)))
+      }
+    }
+    def mean(v: Vector[Double]) = v.sum / v.length
+    val infl   = mean(moves.collect { case (true, d) => d })
+    val growth = mean(moves.collect { case (false, d) => d })
+    assert(infl < -0.8, f"inflation declines: the bond moves $infl%.2f points with the leg reversed")
+    assert(math.abs(growth) < 0.5, f"growth declines: the bond moves $growth%.2f points with the leg reversed")
   }

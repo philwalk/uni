@@ -327,7 +327,11 @@ class MarketSimContractSuite extends FunSuite:
         assert(r.pctile.isDefined, s"[${r.name}] must carry a percentile in the ratio's place")
         if MarketSim.isMultiYear(r.name) then
           assertEquals(r.aggregation, "single-history")
-          val window = if MarketSim.MultiYearRows.contains(r.name) then a.equityYears else a.bubbleYears
+          val window =
+            if MarketSim.MultiYearRows.contains(r.name) then a.equityYears
+            else if MarketSim.TimingRows.contains(r.name) then a.timingYears
+            else if MarketSim.BondCrashRows.contains(r.name) then a.bondCrashYears
+            else a.bubbleYears
           assertEquals(r.horizonYears, window, s"[${r.name}]'s own window")
           val (lo, hi) = r.historyBand.getOrElse(fail(s"[${r.name}] must carry its joint band"))
           assertEquals(r.miss, !(r.real >= lo && r.real <= hi), s"[${r.name}]")

@@ -4,14 +4,13 @@ import munit.FunSuite
 import uni.*
 
 /**
- * The two bond crash-response targets are MEDIANS across drawdown episodes at the model bond's
- * duration: each episode's TLT log return scaled by `DurationRef` over the fund's empirical
- * duration on that span. Through 0.21.0 both shipped as single unscaled episodes (`+20.0` is 2008
- * alone, the largest of five; `-25.0` a rounding of the one inflation-regime drawdown). This
- * re-derives both from the checked-in episodes so the targets and the statistic they are compared
- * against cannot drift apart again.
+ * The bond crash rows' TLT-era reading (`crash-response-2026-09-25.tsv`) is REPORTED beside the
+ * graded rows: the medians of each episode's TLT log return scaled by `DurationRef` over the fund's
+ * empirical duration on that span.  This re-derives `MarketSim.BondTltRecord` from the checked-in
+ * episodes, and checks the model reads the records' regime rule on its own CPI and that a history's
+ * reading is `measure` on that history alone.
  *
- * The Rust twin carries the same checks in `bond_crash_tests`, against the same file.
+ * The Rust twin carries the same checks in `bond_crash_tests`, against the same files.
  */
 class BondCrashSuite extends FunSuite:
 
@@ -34,29 +33,19 @@ class BondCrashSuite extends FunSuite:
           Row(f(0), f(1), f(2).toDouble, f(3).toDouble, f(4).toDouble, f(5))
         }
 
-  def median(xs: Vector[Double]): Double =
-    val s = xs.sorted
-    if s.isEmpty then Double.NaN
-    else if s.size % 2 == 1 then s(s.size / 2)
-    else (s(s.size / 2 - 1) + s(s.size / 2)) / 2.0
+  /** The regime's median of the scaled returns, by the model's own median. */
+  def medianOf(regime: String): Double = MarketSim.pctile(rows.filter(_.regime == regime).map(_.scaled), 0.5)
 
-  def medianOf(regime: String): Double = median(rows.filter(_.regime == regime).map(_.scaled))
-
-  test("both bond crash targets are the record's medians at the model bond's duration") {
+  test("the reported TLT reading is its fixture's medians") {
     if rows.nonEmpty then
-      val a = MarketSim.fitTargets(MarketSim.SP500Anchors)
-      def target(n: String) = a.find(_._1 == n).map(_._3).getOrElse(fail(s"no target [$n]"))
-      assertEqualsDouble(target("bond growth-crash"), medianOf("growth"), 0.05,
-        f"the growth-crash target no longer matches the record's median across its growth-shock " +
-        f"drawdowns (${medianOf("growth")}%.1f%%)")
-      assertEqualsDouble(target("bond infl-crash"), medianOf("inflation"), 0.05,
-        f"the inflation-crash target no longer matches the record's inflation-regime drawdown " +
-        f"(${medianOf("inflation")}%.1f%%)")
+      val (growth, inflation) = MarketSim.BondTltRecord
+      assertEqualsDouble(growth, medianOf("growth"), 0.05, f"growth median ${medianOf("growth")}%.2f")
+      assertEqualsDouble(inflation, medianOf("inflation"), 0.05, f"inflation median ${medianOf("inflation")}%.2f")
   }
 
   test("the pre-0.22.0 targets were the extremes, which is why they moved") {
-    // Kept as a test so the claim in `fitTargets` is checkable rather than asserted: +20.0 is the
-    // MAXIMUM of the unscaled growth episodes, not their median.
+    // Kept as a test so the account of the old targets stays checkable: +20.0 was the MAXIMUM of the
+    // unscaled growth episodes, not their median.
     if rows.nonEmpty then
       val growth = rows.filter(_.regime == "growth").map(_.bondPct)
       assertEqualsDouble(growth.max, 22.4, 0.05,
@@ -76,7 +65,33 @@ class BondCrashSuite extends FunSuite:
         "an episode's TLT duration is outside the fund's 10-20 year range; the scaling to " +
         "DurationRef rests on it")
       assert(rows.count(_.regime == "inflation") == 1,
-        "the record's inflation-regime drawdown count has changed; the -27.9% target is a median " +
-        "of one and that is stated in the fixture, so a second episode changes the target")
+        "the TLT era's inflation-regime drawdown count has changed; its reported -27.9% is a " +
+        "median of one, so a second episode changes it")
       assert(rows.size >= 5, s"only ${rows.size} episodes; the medians below that are not worth the name")
+  }
+
+  test("the crash regime is the records' rule on the path's CPI") {
+    val y = MarketSim.DaysPerYear
+    val n = 3 * y
+    // 2% a year for two years, then 6%
+    val cpi = Array.tabulate(n) { k =>
+      val t = k.toDouble / y
+      if t < 2.0 then math.exp(0.02 * t) else math.exp(0.04 + 0.06 * (t - 2.0))
+    }
+    def ep(peak: Int, trough: Int) = MarketSim.Episode(peak, trough, -1, -20.0)
+    assertEquals(MarketSim.crashIsInflation(cpi, ep(y + 10, n - 1)), Some(true))
+    assertEquals(MarketSim.crashIsInflation(cpi, ep(y + 10, 2 * y - 1)), Some(false))
+    assertEquals(MarketSim.crashIsInflation(cpi, ep(n - 1, n - 1)), Some(false))
+    assertEquals(MarketSim.crashIsInflation(cpi, ep(10, n - 1)), None)
+  }
+
+  test("a history's crash reading is measure on it alone, bit for bit") {
+    val w = MarketSim.namedWorld("0.24.6-sp500").map(_._1).getOrElse(fail("recipe"))
+    val h = MarketSim.SP500Anchors.bondCrashYears
+    for p0 <- MarketSim.simPaths(w, 3, 80, MarketSim.DefaultSeed) do
+      val p   = p0.head(h)
+      val st  = MarketSim.measure(Vector(p), h)
+      val got = MarketSim.bondCrashOf(p)
+      assertEquals(java.lang.Double.doubleToRawLongBits(got(0)), java.lang.Double.doubleToRawLongBits(st.bondGrowth))
+      assertEquals(java.lang.Double.doubleToRawLongBits(got(1)), java.lang.Double.doubleToRawLongBits(st.bondInfl))
   }
