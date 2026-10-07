@@ -26,6 +26,27 @@ class PathNeedsSuite extends FunSuite:
       assert(none.vol.isNaN && none.multiYear(0).isNaN && none.bondVol.isNaN)
   }
 
+  test("every banded row is read on each path alone") {
+    for (recipe, set) <- Vector(("0.24.6-sp500", "sp500"), ("0.24.6-nasdaq", "nasdaq")) do
+      val a  = MarketSim.anchorsNamed(set)
+      val vw = MarketSim.verdictWorld(a, MarketSim.namedWorld(recipe).map(_._1).getOrElse(fail("recipe")))
+      val (paths, years, seed) = (5, 100, 7L)
+      val main = MarketSim.simPaths(vw, paths, years, seed)
+      val st   = MarketSim.measure(main, years)
+      val hr   = MarketSim.horizonReadings(a, st, Some(main), years, paths, seed, vw, extremeToo = false)
+      val banded = MarketSim.fitTargets(a).filter((n, _, _, _) => a.recordBands.exists(_.name == n))
+      assertEquals(hr.bandedByPath.size, banded.size, s"$set: every banded row")
+      for (name, get, _, _) <- banded do
+        val h  = MarketSim.recordBandYears(a, name)
+        val xs = hr.bandedByPath(name)
+        assertEquals(xs.size, paths, s"$set $name: one per path")
+        for (x, k) <- xs.zipWithIndex do
+          val alone = get(MarketSim.measure(Vector(main(k).head(h)), h))
+          assert(same(x, alone), s"$set $name path $k: $x alone $alone")
+        val finite = xs.count(_.isFinite)
+        assert(finite * 2 > paths, s"$set $name: $finite of $paths paths read")
+  }
+
   test("the extreme readings come one per path in path order") {
     val w    = MarketSim.namedWorld("0.24.4-nasdaq").map(_._1).getOrElse(fail("recipe"))
     val a    = MarketSim.anchorsNamed("nasdaq")

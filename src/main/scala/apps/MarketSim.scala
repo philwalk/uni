@@ -3967,11 +3967,14 @@ object MarketSim:
       val cuts = (bandedAt.keySet ++ crashAt).filter(_ != years).map(h => h -> lean.map(_.head(h))).toMap
       def at(h: Int) = cuts.getOrElse(h, lean)
       // the bond rows at their records' horizons, read as `horizonReadings` reads them
-      val banded = bandedAt.toVector.sortBy(_._1).flatMap { (h, rows) =>
-        val s = if h == years then st2 else measureNeeds(at(h), h, PathNeeds.ofRows(rows.map(_._1)))
-        rows.map((n, get, _, _) => n -> get(s))
-      }.toMap
-      val legByPath = bandedAt.toVector.flatMap((h, rows) => bond10PerPath(at(h), h, rows)).toMap
+      val readAt = bandedAt.toVector.sortBy(_._1).map { (h, rows) =>
+        val nd  = PathNeeds.ofRows(rows.map(_._1))
+        val per = pathReads(at(h), h, nd)
+        val s   = if h == years then st2 else statsOfReads(at(h), per, h, nd)
+        (rows.map((n, get, _, _) => n -> get(s)), bandedPerPath(at(h), per, h, nd, rows))
+      }
+      val banded       = readAt.flatMap(_._1).toMap
+      val bandedByPath = readAt.flatMap(_._2).toMap
       val (ex, byPath, bands) = crashAt.fold(
         (Map.empty[String, Vector[Double]], Map.empty[String, Vector[Double]],
          Map.empty[String, (Double, Double)])) { h =>
@@ -3979,7 +3982,7 @@ object MarketSim:
       }
       val hr2 = hr.copy(banded = hr.banded ++ banded, extreme = hr.extreme ++ ex,
                         extremeByPath = hr.extremeByPath ++ byPath, historyBand = hr.historyBand ++ bands,
-                        bond10ByPath = hr.bond10ByPath ++ legByPath)
+                        bandedByPath = hr.bandedByPath ++ bandedByPath)
       Some((st2, rowsFromReadings(a, st2, hr2), hr2))
 
   /** THE DAY FLIP's step input (see `newsFlip`): `x0` reflected when the draw fires, the debt the
@@ -7225,9 +7228,17 @@ object MarketSim:
   /** `measure` on the families `nd` names (`PathNeeds`): their rows read the full read's bits, the
     * others NaN or empty.  What `horizonReadings` reads a record's horizon with. */
   def measureNeeds(sims: Vector[Path], years: Int, nd: PathNeeds): WorldStats =
-    // THE PER-PATH STATISTICS, ACROSS CORES AND IN ONE PASS: `pathRead` computes each path's
-    // readings and `parMap` keeps path order, so every median below reads what it always did.
-    val per = parMap(sims)(s => pathRead(s, years, nd))
+    statsOfReads(sims, pathReads(sims, years, nd), years, nd)
+
+  /** THE PER-PATH STATISTICS, ACROSS CORES AND IN ONE PASS: `pathRead` computes each path's
+    * readings and `parMap` keeps path order, so every median `statsOfReads` takes reads what it
+    * always did. */
+  private def pathReads(sims: Vector[Path], years: Int, nd: PathNeeds): Vector[PathRead] =
+    parMap(sims)(s => pathRead(s, years, nd))
+
+  /** The ensemble's statistics from its paths' readings, `per(k)` read from `sims(k)`
+    * (`pathReads`); over one path and its reading, `measureNeeds(Vector(p), years, nd)`. */
+  private def statsOfReads(sims: Vector[Path], per: Vector[PathRead], years: Int, nd: PathNeeds): WorldStats =
     // `isFinite`, not `!isNaN`: an infinite path is no more a datum than a NaN one, and `pctile`
     // drops the same set, so a median and the percentiles printed beside it describe the same paths.
     def med(v: Seq[Double]) = { val f = finiteSorted(v.toArray); if f.isEmpty then Double.NaN else f(f.length / 2) }
@@ -12153,11 +12164,12 @@ object MarketSim:
                                    // the rows jointly conditions on them itself
                                    extremeByPath: Map[String, Vector[Double]],
                                    historyBand: Map[String, (Double, Double)],
-                                   // the 10-year leg's banded rows read on each path alone at their
+                                   // every banded row read on each path alone at its record's
                                    // horizon, in path order and one per path -- `measure(Vector(
-                                   // p.head(h)), h)` by the row's getter -- where the read holds the
-                                   // paths at that horizon (empty otherwise)
-                                   bond10ByPath: Map[String, Vector[Double]] = Map.empty):
+                                   // p.head(h)), h)` by the row's getter, NaN where the history has
+                                   // no reading -- where the read holds the paths at that horizon
+                                   // (empty otherwise); every banded row is one history's statistic
+                                   bandedByPath: Map[String, Vector[Double]] = Map.empty):
     /** The extreme rows as the loss reads them (`extremeScoreStats`). */
     def extremeScores: Map[String, Double] = extreme.map((nm, xs) => nm -> extremeMedian(xs))
 
@@ -12192,29 +12204,31 @@ object MarketSim:
         case Some(m) if h == years => m
         case Some(m) if h < years  => m.map(_.head(h))
         case _                      => simPaths(w, paths, h, seed)
-      val banded = bandedAt.get(h).fold(Map.empty[String, Double]): rows =>
-        // the families the rows at this horizon read, and nothing else
-        val s = if h == years then st else measureNeeds(sims, h, PathNeeds.ofRows(rows.map(_._1)))
-        rows.map((n, get, _, _) => n -> get(s)).toMap
+      // the paths at this horizon exist unless it is the run's own and the caller holds none
+      val held = main.isDefined || h != years || extremeAt.contains(h)
+      val (banded, bandedByPath) =
+        bandedAt.get(h).fold((Map.empty[String, Double], Map.empty[String, Vector[Double]])): rows =>
+          // the families the rows at this horizon read, and nothing else; the paths' readings
+          // once, for the ensemble and for each path alone
+          val nd  = PathNeeds.ofRows(rows.map(_._1))
+          val per = if held then pathReads(sims, h, nd) else Vector.empty
+          val s   = if h == years then st else statsOfReads(sims, per, h, nd)
+          (rows.map((n, get, _, _) => n -> get(s)).toMap,
+           bandedPerPath(if held then sims else Vector.empty, per, h, nd, rows))
       val (extreme, byPath, bands) =
         if extremeAt.contains(h) then extremeReadingsAndBands(a, sims, h)
         else (Map.empty[String, Vector[Double]], Map.empty[String, Vector[Double]],
               Map.empty[String, (Double, Double)])
-      val legByPath = bandedAt.get(h).fold(Map.empty[String, Vector[Double]]): rows =>
-        if main.isEmpty && h == years then
-          rows.collect { case (n, _, _, _) if Bond10BandRows.contains(n) => n -> Vector.empty[Double] }.toMap
-        else bond10PerPath(sims, h, rows)
       HorizonReadings(acc.banded ++ banded, acc.extreme ++ extreme, acc.extremeByPath ++ byPath,
-                      acc.historyBand ++ bands, acc.bond10ByPath ++ legByPath)
+                      acc.historyBand ++ bands, acc.bandedByPath ++ bandedByPath)
 
-  /** Each `Bond10BandRows` row among `rows` read on every path of `sims` alone, at horizon `h`. */
-  private def bond10PerPath(sims: => Vector[Path], h: Int, rows: Vector[FitTarget]): Map[String, Vector[Double]] =
-    val leg = rows.filter((n, _, _, _) => Bond10BandRows.contains(n))
-    if leg.isEmpty then Map.empty
-    else
-      val nd  = PathNeeds.ofRows(leg.map(_._1))
-      val per = parMap(sims)(p => measureNeeds(Vector(p), h, nd))
-      leg.map((n, get, _, _) => n -> per.map(get)).toMap
+  /** Each of `rows` read on every path of `sims` alone at horizon `h`, from the paths' readings
+    * `per` (`pathReads` with `nd`): `measureNeeds(Vector(p), h, nd)` by the row's getter, in path
+    * order. */
+  private def bandedPerPath(sims: Vector[Path], per: Vector[PathRead], h: Int, nd: PathNeeds,
+                            rows: Vector[FitTarget]): Map[String, Vector[Double]] =
+    val one = parMap(sims.indices.toVector)(k => statsOfReads(Vector(sims(k)), Vector(per(k)), h, nd))
+    rows.map((n, get, _, _) => n -> one.map(get)).toMap
 
   /** The banded rows alone, each at its record's horizon (`horizonReadings`). */
   def bandedReadings(a: Anchors, st: WorldStats, years: Int, paths: Int, seed: Long,

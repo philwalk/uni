@@ -5931,13 +5931,16 @@ pub fn tp_reread(
         .collect();
     let at = |h: usize| -> &[Path] { cuts.get(&h).map_or(&lean, Vec::as_slice) };
     for (h, rows) in &banded_at {
-        hr2.bond10_by_path.extend(bond10_per_path(at(*h), *h, rows));
         let names: Vec<&str> = rows.iter().map(|(n, _)| *n).collect();
-        let measured = (*h != years).then(|| measure_needs(at(*h), *h, PathNeeds::of_rows(&names)));
+        let nd = PathNeeds::of_rows(&names);
+        let per = path_reads(at(*h), *h, nd);
+        let measured = (*h != years).then(|| stats_of_reads(at(*h), &per, *h, nd));
         let s = measured.as_ref().unwrap_or(&st2);
         for (name, get) in rows {
             hr2.banded.insert(name, get(s));
         }
+        hr2.banded_by_path
+            .extend(banded_per_path(at(*h), &per, *h, nd, rows));
     }
     if let Some(h) = crash_at {
         let sims = at(h);
@@ -12937,14 +12940,24 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
 
 /// `measure` on the families `nd` names (`PathNeeds`): their rows read the full read's bits, the
 /// others NaN or empty. What `horizon_readings` reads a record's horizon with.
+pub fn measure_needs(sims: &[Path], years: usize, nd: PathNeeds) -> WorldStats {
+    stats_of_reads(sims, &path_reads(sims, years, nd), years, nd)
+}
+
+/// THE PER-PATH STATISTICS, ACROSS CORES AND IN ONE PASS: `path_read` computes each path's
+/// readings and `collect` keeps path order, so every median `stats_of_reads` takes reads what it
+/// always did.
+fn path_reads(sims: &[Path], years: usize, nd: PathNeeds) -> Vec<PathRead> {
+    sims.par_iter().map(|s| path_read(s, years, nd)).collect()
+}
+
+/// The ensemble's statistics from its paths' readings, `per[k]` read from `sims[k]`
+/// (`path_reads`); over one path and its reading, `measure_needs(&[p], years, nd)`.
 #[expect(
     clippy::too_many_lines,
     reason = "one line per statistic, mirroring the Scala twin's WorldStats construction; splitting it would put a reading somewhere other than beside the others"
 )]
-pub fn measure_needs(sims: &[Path], years: usize, nd: PathNeeds) -> WorldStats {
-    // THE PER-PATH STATISTICS, ACROSS CORES AND IN ONE PASS: `path_read` computes each path's
-    // readings and `collect` keeps path order, so every median below reads what it always did.
-    let per: Vec<PathRead> = sims.par_iter().map(|s| path_read(s, years, nd)).collect();
+fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) -> WorldStats {
     let med_by = |f: fn(&PathRead) -> f64| med(&per.iter().map(f).collect::<Vec<f64>>());
     let eps: Vec<Episode> = per
         .iter()
@@ -16807,10 +16820,12 @@ pub struct HorizonReadings {
     /// history has none: a caller scoring the rows jointly conditions on them itself
     pub extreme_by_path: std::collections::HashMap<&'static str, Vec<f64>>,
     pub history_band: std::collections::HashMap<&'static str, (f64, f64)>,
-    /// the 10-year leg's banded rows read on each path alone at their horizon, in path order and
-    /// one per path -- `measure(&[p.head(h)], h)` by the row's getter -- where the read holds the
-    /// paths at that horizon (empty otherwise)
-    pub bond10_by_path: std::collections::HashMap<&'static str, Vec<f64>>,
+    /// every banded row read on each path alone at its record's horizon, in path order and one
+    /// per path -- `measure(&[p.head(h)], h)` by the row's getter, NaN where the history has no
+    /// reading -- where the read holds the paths at that horizon (empty otherwise). Every banded
+    /// row is one history's statistic: none compares paths, so each reading stands beside the
+    /// record's one history.
+    pub banded_by_path: std::collections::HashMap<&'static str, Vec<f64>>,
 }
 
 impl HorizonReadings {
@@ -16888,14 +16903,18 @@ pub fn horizon_readings(
             .or(own)
             .unwrap_or_default();
         if let Some(rows) = banded_at.get(&h) {
-            // the families the rows at this horizon read, and nothing else
+            // the families the rows at this horizon read, and nothing else; the paths' readings
+            // once, for the ensemble and for each path alone
             let names: Vec<&str> = rows.iter().map(|(n, _)| *n).collect();
-            let measured = (h != years).then(|| measure_needs(sims, h, PathNeeds::of_rows(&names)));
+            let nd = PathNeeds::of_rows(&names);
+            let per = path_reads(sims, h, nd);
+            let measured = (h != years).then(|| stats_of_reads(sims, &per, h, nd));
             let s = measured.as_ref().unwrap_or(st);
             for (name, get) in rows {
                 out.banded.insert(*name, get(s));
             }
-            out.bond10_by_path.extend(bond10_per_path(sims, h, rows));
+            out.banded_by_path
+                .extend(banded_per_path(sims, &per, h, nd, rows));
         }
         if extreme_at.contains(&h) {
             let (readings, by_path, bands) = extreme_readings_and_bands(a, sims, h, &|_| true);
@@ -16907,28 +16926,22 @@ pub fn horizon_readings(
     out
 }
 
-/// Each `BOND10_BAND_ROWS` row among `rows` read on every path of `sims` alone, at horizon `h`.
-fn bond10_per_path(
+/// Each of `rows` read on every path of `sims` alone at horizon `h`, from the paths' readings `per`
+/// (`path_reads` with `nd`): `measure_needs(&[p], h, nd)` by the row's getter, in path order.
+fn banded_per_path(
     sims: &[Path],
+    per: &[PathRead],
     h: usize,
+    nd: PathNeeds,
     rows: &[(&'static str, StatFn)],
 ) -> std::collections::HashMap<&'static str, Vec<f64>> {
-    let leg: Vec<(&'static str, StatFn)> = rows
-        .iter()
-        .copied()
-        .filter(|(n, _)| BOND10_BAND_ROWS.contains(n))
-        .collect();
-    if leg.is_empty() {
-        return std::collections::HashMap::new();
-    }
-    let names: Vec<&str> = leg.iter().map(|(n, _)| *n).collect();
-    let nd = PathNeeds::of_rows(&names);
-    let per: Vec<WorldStats> = sims
+    let one: Vec<WorldStats> = sims
         .par_iter()
-        .map(|p| measure_needs(std::slice::from_ref(p), h, nd))
+        .zip(per)
+        .map(|(p, r)| stats_of_reads(std::slice::from_ref(p), std::slice::from_ref(r), h, nd))
         .collect();
-    leg.into_iter()
-        .map(|(n, get)| (n, per.iter().map(get).collect()))
+    rows.iter()
+        .map(|(n, get)| (*n, one.iter().map(get).collect()))
         .collect()
 }
 
@@ -28922,12 +28935,12 @@ mod bond10_tests {
             bf.sort_unstable();
             assert_eq!(b2, bf, "{name}: banded");
             assert_eq!(
-                sorted(&hr2.bond10_by_path),
-                sorted(&hr_full.bond10_by_path),
-                "{name}: the leg per path"
+                sorted(&hr2.banded_by_path),
+                sorted(&hr_full.banded_by_path),
+                "{name}: the banded rows per path"
             );
             for r in BOND10_BAND_ROWS {
-                let xs = &hr_full.bond10_by_path[r];
+                let xs = &hr_full.banded_by_path[r];
                 assert_eq!(xs.len(), paths, "{name} {r}: one per path");
                 let (_, get, _, _) = fit_targets(a).into_iter().find(|t| t.0 == r).expect("row");
                 let one = measure(&[full[2].head(a.bond10_years)], a.bond10_years);
@@ -30635,6 +30648,51 @@ mod record_band_tests {
             assert!(banded >= 15, "{set}: {banded} banded rows");
             let none = measure_needs(&sims, 30, PathNeeds::NONE);
             assert!(none.vol.is_nan() && none.multi_year[0].is_nan() && none.bond_vol.is_nan());
+        }
+    }
+
+    #[test]
+    fn every_banded_row_is_read_on_each_path_alone() {
+        // `banded_by_path` holds each banded row's reading on every path alone at its record's
+        // horizon, in path order: `measure(&[p.head(h)], h)` through the row's getter. Each is one
+        // history's statistic, so a single path reads it (finite on most paths)
+        let same = |x: f64, y: f64| x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan());
+        for (recipe, set) in [("0.24.6-sp500", "sp500"), ("0.24.6-nasdaq", "nasdaq")] {
+            let a = anchors_named(set);
+            let w = named_world(recipe).expect("recipe").0;
+            let vw = verdict_world(a, &w);
+            let (paths, years, seed) = (5, 100, 7);
+            let main = sim_paths(&vw, paths, years, seed);
+            let st = measure(&main, years);
+            let hr = horizon_readings(a, &st, Some(&main), years, paths, seed, &vw, false);
+            let banded: Vec<(&str, StatFn)> = fit_targets(a)
+                .into_iter()
+                .filter(|t| a.record_bands.iter().any(|b| b.name == t.0))
+                .map(|t| (t.0, t.1))
+                .collect();
+            assert_eq!(
+                hr.banded_by_path.len(),
+                banded.len(),
+                "{set}: every banded row"
+            );
+            for (name, get) in banded {
+                let h = record_band_years(a, name);
+                let xs = &hr.banded_by_path[name];
+                assert_eq!(xs.len(), paths, "{set} {name}: one per path");
+                for (k, x) in xs.iter().enumerate() {
+                    let one = measure(&[main[k].head(h)], h);
+                    assert!(
+                        same(*x, get(&one)),
+                        "{set} {name} path {k}: {x} alone {}",
+                        get(&one)
+                    );
+                }
+                let finite = xs.iter().filter(|x| x.is_finite()).count();
+                assert!(
+                    finite * 2 > paths,
+                    "{set} {name}: {finite} of {paths} paths read"
+                );
+            }
         }
     }
 

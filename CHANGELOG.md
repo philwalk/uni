@@ -330,9 +330,11 @@ Repeated reads in one process gain more: 0.99 → 0.69 s wall each, with kernel 
   `measure_needs(sims, years, needs)`, with `measure` the full read; `fidelity_rows_with_readings`
   returns the rows and the `HorizonReadings` they came from, and `rows_from_readings` builds the
   rows from them. `HorizonReadings` gains `extreme_by_path`, every extreme row's reading per path in
-  path order with NaN where a history has none, and `bond10_by_path`, the 10-year leg's rows read on
-  each path alone. Scala `PathNeeds`, `measureNeeds`, `fidelityRowsWithReadings`,
-  `rowsFromReadings`, `extremeByPath`, `bond10ByPath`.
+  path order with NaN where a history has none, and `banded_by_path`, every banded row read on each
+  path alone at its record's horizon, the same way. Every banded row is one history's statistic, so
+  each per-path reading stands beside the record's one history; they come from the reads the
+  ensemble's statistics already take. Scala `PathNeeds`, `measureNeeds`, `fidelityRowsWithReadings`,
+  `rowsFromReadings`, `extremeByPath`, `bandedByPath`.
 - API, one ensemble per read: `report_world` returns the verdict world whenever the report and the
   verdict read the same `(paths, years)` and the macro panel is the world's own, and
   `as_callers_paths` turns its paths into the caller's; `PathNeeds::LEG` and
