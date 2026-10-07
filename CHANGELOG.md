@@ -37,10 +37,14 @@ the median annual return 11.6% (10.4%) over 100-year paths. Against `0.24.5-sp50
 seeds, paired, both pass every class and miss nothing on all 24, and the new recipe sits 0.51
 closer to the record in summed distance a seed (t −5.2). `0.24.6-nasdaq` is
 `0.24.5-nasdaq` at drift 0.1512 (0.1354), which puts return per vol at QQQ's 0.38 on seeds 1-4 at
-200 × 100 where the 0.24.5 recipe reads 0.30; every other dial is unchanged, and
-`0.24.6-nasdaq-basket` carries the same drift. Against `0.24.5-nasdaq` on 24 fresh seeds, paired,
-it misses 0.88 rows a seed against 0.71 (worse on 5 seeds, better on 2; sign test p 0.23) and sits
-0.087 closer to the record in summed distance; the coupling misses on 19 seeds against 17.
+200 × 100 where the 0.24.5 recipe reads 0.30, and at `inflSize` 0.081 (0.10), the median of the bond
+re-solve's pooled chains (5–95% 0.057–0.111; its term premium and drift sit at their medians), which
+brings `bond10 vol per duration` inside its band on every seed (1.13–1.19 against 1.19–1.26, a miss
+on three of four) with every class passing and no row newly missed; every other dial is unchanged,
+and `0.24.6-nasdaq-basket` carries the same drift and inflation regime. Against `0.24.5-nasdaq` on 24 fresh seeds, paired,
+under this release's grading, it misses 1.00 rows a seed against 1.50 (better on 13 seeds, worse on
+2; sign test p 0.007): the coupling on 21 seeds against 17, the 10-year rows on one against 17, the
+rate floor share on two against none; every class passes on all 24 for both.
 
 **The sets sample the drift.** `0.24.6-sp500.json` and `0.24.6-nasdaq.json` hold 30 members each,
 member 0 the recipe. One history pins the long-run drift only to its own sampling width, and a set
@@ -166,9 +170,9 @@ Every bond used to earn the short rate alone: about a point a year less than a r
 1962–2026, so it climbed out of its drawdowns too slowly for its volatility. `-termpremium` gives
 every bond the short rate plus the premium times its duration. At 0.10 a year of duration the leg's
 excess sits on the record; the record pins the premium only to about ±0.11, so the sets sample it as
-they sample the drift. At 0.10 the recipes read 1.11 / 1.20 per year of duration, 1.16 / 1.01 under
-water and +0.76 / +0.78 excess (S&P / Nasdaq) on seed 1; the Nasdaq recipe's 1.20 sits at its
-band's top edge and crosses it on three seeds of four.
+they sample the drift. At 0.10 the recipes read 1.11 / 1.14 per year of duration, 1.16 / 1.01 under
+water and +0.76 / +0.81 excess (S&P / Nasdaq) on seed 1, the Nasdaq's at the inflation regime its
+re-centre set (above).
 
 **The bond crash rows on the record since 1962.** `bond growth-crash` and `bond infl-crash` are
 graded against a 20-year Treasury from FRED's DGS20 over the set's index's declines of 15%+ since
@@ -181,7 +185,7 @@ more at its trough, the records' rule, which the model reads on its own CPI. The
 +7.0 / −27.9 is reported beside them: its one inflation episode, 2022, held the inflation regime
 high enough to push the 10-year bond's volatility per year of duration past its record. Both
 recipes place the records inside the band on seeds 1–4: the S&P at the 56th–65th (growth) and
-85th–92nd (inflation) percentiles, the Nasdaq at the 14th–22nd and 81st–87th.
+85th–92nd (inflation) percentiles, the Nasdaq at the 16th–25th and 81st–86th.
 
 **Upgrading**
 

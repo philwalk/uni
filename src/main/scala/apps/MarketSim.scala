@@ -2210,16 +2210,19 @@ object MarketSim:
   /** The 0.24.6 recipes.  THE DRIFT HELD AT THE RECORD: each 0.24.5 recipe at the drift that
     * puts return per vol at its record on seeds 1-4 at 200 x 100, every other dial unchanged --
     * QQQ's 0.38 for the Nasdaq (the 0.24.5 recipe reads 0.30), CRSP 1954-2026's 0.69 for the S&P
-    * (0.61).  The Nasdaq basket recipe takes the Nasdaq's drift under `0.24.5-nasdaq-basket`'s
-    * channel dials.  THE TERM PREMIUM at the record: 0.10 a year of duration puts the 10-year leg's
-    * log return over the short rate at DGS10-over-DFF's 0.78 a year, 1962-2026. */
+    * (0.61).  THE TERM PREMIUM at the record: 0.10 a year of duration puts the 10-year leg's
+    * log return over the short rate at DGS10-over-DFF's 0.78 a year, 1962-2026.  THE NASDAQ'S
+    * INFLATION REGIME at its posterior: `inflSize` 0.081 (0.10), the median of the bond re-solve's
+    * pooled chains (5-95% 0.057-0.111), which puts `bond10 vol per duration` inside its band on
+    * seeds 1-4 (1.13-1.19 against 1.19-1.26, a miss on three).  The Nasdaq basket recipe takes the
+    * Nasdaq's drift and inflation regime under `0.24.5-nasdaq-basket`'s channel dials. */
   val Recipes0246: Vector[(String, World, String)] =
     def base(name: String): World =
       Recipes0244.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
     val tp = WorldExt(termPremium = 0.10)
-    val nq = base("0.24.5-nasdaq").copy(drift = 0.15119256, ext = tp)
+    val nq = base("0.24.5-nasdaq").copy(drift = 0.15119256, inflSize = 0.081, ext = tp)
     Vector(("0.24.6-nasdaq", nq, "nasdaq"),
-           ("0.24.6-nasdaq-basket", base("0.24.5-nasdaq-basket").copy(drift = nq.drift, ext = tp), "nasdaq"),
+           ("0.24.6-nasdaq-basket", base("0.24.5-nasdaq-basket").copy(drift = nq.drift, inflSize = nq.inflSize, ext = tp), "nasdaq"),
            ("0.24.6-sp500", base("0.24.5-sp500").copy(drift = 0.14747457, ext = tp), "sp500"))
 
   val Recipes: Vector[(String, World, String)] =

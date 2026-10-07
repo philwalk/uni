@@ -1372,11 +1372,17 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
 /// THE TERM PREMIUM at the record: 0.10 a year of duration puts the 10-year leg's log return over
 /// the short rate at DGS10-over-DFF's 0.78 a year, 1962-2026 (both recipes and the default read
 /// -0.02 to -0.04 without it and 8.0 more per unit of the dial).
-/// The Nasdaq basket recipe takes the Nasdaq's drift under `0.24.5-nasdaq-basket`'s channel dials.
+/// THE NASDAQ'S INFLATION REGIME at its posterior: `infl_size` 0.081 (0.10), the median of the
+/// bond re-solve's pooled chains (5-95% 0.057-0.111; the term premium and the drift sit at their
+/// medians already), which puts `bond10 vol per duration` inside its band on seeds 1-4 (1.13-1.19
+/// against 1.19-1.26, a miss on three) with every class passing and no row newly missed.
+/// The Nasdaq basket recipe takes the Nasdaq's drift and inflation regime under
+/// `0.24.5-nasdaq-basket`'s channel dials.
 fn rows_0246(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
     let nq = World {
         drift: 0.151_192_56,
         term_premium: 0.10,
+        infl_size: 0.081,
         ..recipe_0245_nasdaq(nq_0244)
     };
     vec![

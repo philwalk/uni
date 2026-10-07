@@ -1077,7 +1077,7 @@ QQQ 1999-2026 reads +4.1 and +23.2, against bands of −2.7 to +13.0 and +2.2 to
 own joint band at 0.05, `volexit-2026-10-03.tsv`); CRSP 1954-2026, which has no printed close and
 reads its total return for both, −0.5 and +1.1 (−1.7 to +1.1, −1.8 to +5.7). The verdict judges both
 rows against those bands; the loss weighs them 0. On seeds 1-4 at 200 × 100 `0.24.6-nasdaq` reads
-+0.1 to +0.7 and +9 to +11, the 11th-18th percentile of QQQ's resamples, and `0.24.6-sp500` −1.1 and
++0.1 to +0.5 and +8.6 to +10.4, the 10th-16th percentile of QQQ's resamples, and `0.24.6-sp500` −1.1 and
 +0.1 to +0.4, the 14th-16th and 33rd-39th; every member of both 0.24.6 sets reads inside on every
 seed. QQQ's record sits inside the 5th-95th of the Nasdaq worlds' 27-year histories on both rows,
 whose 95th reads about +6.0 and +29 to +34; its window is the one the consumer's rule was selected
@@ -1732,11 +1732,11 @@ scale, and the traded fund has no longer record. The S&P set grades CRSP through
 The splice and the NDX are price indexes; CRSP is total return.
 
 `0.24.6-nasdaq` on seeds 1-4 at 200 × 100 passes every class and reads every graded splice row
-inside its band but one: the avoided share's record at the 88th-90th percentile of the worlds'
-56-year histories (98th-100th against CRSP's century, outside its band on two seeds), the
-long-window multi-year rows between the 2nd and 38th, the 250-session rung at the 34th-39th. The
-bubble coupling misses on three seeds of four, the record at the 95th-97th percentile (93rd-95th
-against the NDX from 1990). All 30 members of `0.24.6-nasdaq.json` pass the set rule; their avoided
+inside its band but one: the avoided share's record at the 84th-90th percentile of the worlds'
+56-year histories (96th-99th against CRSP's century, inside its band on every seed), the
+long-window multi-year rows between the 2nd and 39th, the 250-session rung at the 34th-41st. The
+bubble coupling misses on every seed, the record at the 96th-97th percentile (92nd-94th against
+the NDX from 1990). All 30 members of `0.24.6-nasdaq.json` pass the set rule; their avoided
 share reads 39.6% and their coupling +0.14.
 
 ## A basket of names — `-basket`
@@ -2273,15 +2273,20 @@ It is member 0 of `test-data/worlds/0.24.5-sp500.json`
 and the S&P world to pin in place of `0.24.4-sp500-channels`.
 
 **`0.24.6-nasdaq`, `0.24.6-nasdaq-basket` and `0.24.6-sp500`** are the 0.24.5 recipes at the drift
-that holds return per vol at the record, every other dial unchanged: the Nasdaq's drift 0.1512
+that holds return per vol at the record, with bonds earning a term premium of 0.10 a year of
+duration, every other dial unchanged but the Nasdaq's inflation regime: the Nasdaq's drift 0.1512
 (0.1354), return per vol 0.38 against QQQ's 0.38 (0.30); the S&P's 0.1475 (0.1364), return per vol
 0.69 against CRSP 1954-2026's 0.69 (0.61); seeds 1-4 at 200 × 100. 0.24.5's search let the loss
 slide the drift down while return per vol stayed inside its band, so every world's return ran under
-the record's. Against its 0.24.5 recipe on 24 fresh seeds, paired, `0.24.6-sp500` passes every class
-and misses nothing on all 24, as the old one does, and sits 0.51 closer to the record in summed
-distance a seed (t −5.2); `0.24.6-nasdaq` misses 0.88 rows a seed against 0.71 (worse on 5 seeds,
-better on 2; sign test p 0.23) and sits 0.09 closer. Each is member 0 of its `0.24.6` set, and the
-worlds to pin in place of the 0.24.5 recipes.
+the record's. The Nasdaq's `inflSize` 0.081 (0.10) is the median of the bond re-solve's pooled
+chains (5-95% 0.057-0.111; its term premium and drift sit at their medians), which brings
+`bond10 vol per duration` inside its band on seeds 1-4 (1.13-1.19 against 1.19-1.26, a miss on
+three) with every class passing and no row newly missed. Against its 0.24.5 recipe on 24 fresh
+seeds, paired, `0.24.6-sp500` passes every class and misses nothing on all 24, as the old one does,
+and sits 0.51 closer to the record in summed distance a seed (t −5.2); `0.24.6-nasdaq` misses 1.00
+rows a seed against 1.50 (better on 13 seeds, worse on 2; sign test p 0.007), the coupling on 21
+seeds against 17 and the 10-year rows on one against 17. Each is member 0 of its `0.24.6` set, and
+the worlds to pin in place of the 0.24.5 recipes.
 
 ## The deleveraging — `-delevrate`
 
