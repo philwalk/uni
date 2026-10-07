@@ -2,13 +2,16 @@ package uni.apps
 
 import java.io.DataInputStream
 
-/** HotSpot never compiles a method of more than 8000 bytes of bytecode (`DontCompileHugeMethods`),
-  * and the price loop is the method that would cross it silently: every test still passes, an
-  * order of magnitude slower.  Past the headroom, move a block out of `priceLoop` the way
-  * `BustSwing`, `jumpDraw` and the inputs' `record` methods were. */
+/** C2 could not compile the price loop as one method: it ran out of nodes after a minute, and every
+  * session meanwhile ran profiled tier-3 code, an order of magnitude slower on every core.  The loop
+  * and the derived channels therefore run each session as phase methods (`PriceRun`, `ChannelRun`)
+  * that C2 compiles within the first paths.  Nothing else notices a phase growing back: every test
+  * still passes, the read just slows.  Past `PhaseLimit`, split the phase. */
 class PriceLoopSizeSuite extends munit.FunSuite:
   private val HugeMethodLimit = 8000
   private val Headroom        = 1000
+  // twice the largest phase when the loop was split
+  private val PhaseLimit      = 2500
 
   /** Every method's name and `Code` length, read from the class file itself. */
   private def codeLengths(in: DataInputStream): Vector[(String, Int)] =
@@ -46,12 +49,16 @@ class PriceLoopSizeSuite extends munit.FunSuite:
     Vector.fill(in.readUnsignedShort())(member())     // fields
     Vector.fill(in.readUnsignedShort())(member())
 
-  test("priceLoop stays under the JIT's huge-method limit, with headroom"):
-    val stream = getClass.getResourceAsStream("/uni/apps/MarketSim$.class")
-    assert(stream != null, "MarketSim$.class is not on the test classpath")
+  private def sizesOf(cls: String): Vector[(String, Int)] =
+    val stream = getClass.getResourceAsStream(s"/uni/apps/$cls.class")
+    assert(stream != null, s"$cls.class is not on the test classpath")
     val in = new DataInputStream(stream)
-    val sizes = try codeLengths(in) finally in.close()
-    val loop = sizes.filter(_._1 == "priceLoop").map(_._2)
-    assertEquals(loop.size, 1, s"expected one priceLoop, found ${loop.size}")
-    assert(loop.head <= HugeMethodLimit - Headroom,
-      s"priceLoop is ${loop.head} bytes of bytecode; HotSpot stops compiling at $HugeMethodLimit")
+    try codeLengths(in) finally in.close()
+
+  test("every session phase of the price loop and the channels stays small enough for C2"):
+    for cls <- Vector("MarketSim$PriceRun", "MarketSim$ChannelRun") do
+      val sizes = sizesOf(cls)
+      assert(sizes.exists(_._1 == "run"), s"$cls has no run")
+      for (name, len) <- sizes do
+        val limit = if name == "<init>" then HugeMethodLimit - Headroom else PhaseLimit
+        assert(len <= limit, s"$cls.$name is $len bytes of bytecode, over $limit")

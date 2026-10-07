@@ -187,6 +187,89 @@ high enough to push the 10-year bond's volatility per year of duration past its 
 recipes place the records inside the band on seeds 1–4: the S&P at the 56th–65th (growth) and
 85th–92nd (inflation) percentiles, the Nasdaq at the 16th–25th and 81st–86th.
 
+**A record horizon's read computes only what its rows take.** A banded row is read at its
+record's length, so a verdict measures its ensemble three or four times more, cut to 24, 64 and 72
+years for the S&P and to 24, 27, 56 and 64 for the Nasdaq, and each of those reads computed every
+per-path statistic for the handful of rows it serves. Each read now computes the families its rows
+name (`PathNeeds`: the equity rows, the clustering lags, the rate rows, the long bond's, the
+10-year leg's), by the same functions on the same series, so every verdict, sidecar and emitted
+path is byte-identical. A 200 × 100 read costs 7% less CPU on 24 threads (22.1 → 20.5 s); the
+simulation is about 70% of a read's CPU and the rest of the measuring 25%.
+
+**A term-premium move re-reads from a cache.** The term premium reaches nothing but the two bonds,
+and a bond's session takes from the rest of the simulation only the rate, the equity's stress, the
+slow and news legs' repricings and one draw. `sim_paths_taped` records those per path,
+`replay_bonds` runs the bonds alone under another premium, bit-identical to `simulate`, and
+`tp_reread` returns a moved world's statistics, fidelity rows and readings bit-identical to a full
+read, from a `TpKeep` of the current world's read. A sampler that moves the premium alone pays a
+fifth of a read for that move:
+
+| 200 × 100, 24 threads | S&P | Nasdaq |
+|---|---|---|
+| full read | 0.84–0.97 s | 0.69–0.80 s |
+| taped read and cache | 0.87–1.04 s | 0.78–0.88 s |
+| term-premium re-read | 0.17–0.19 s | 0.18–0.22 s |
+| cache's data per read (`TpKeep::bytes`) | 507 MB | 516 MB |
+| process memory per cached read | about 0.70 GB | |
+
+The cache copies what it keeps into fresh allocations: kept in place, the read's own vectors pinned
+the memory around them and four cached reads held 7.7 GB where they now hold 2.8.
+
+A world whose macro panel is a sibling path's (`-macronull`) is not replayed.
+
+**A read does the same work once.** Every output is byte-identical:
+- **One ensemble for the report and the verdict.** The report reads the verdict's ensemble with the
+  series the verdict added dropped. A caller whose world left a derived series off had the same
+  primary simulated twice.
+- **The leg alone re-read.** Once the 10-year leg alone is dropped, the report re-reads the leg's
+  statistics, not all of them.
+- **Channel readings only for the full read.** The derived channels' readings are computed only for
+  the full read, never for a record horizon's or the leg's.
+- **Cheaper calendar and percentiles.** The month ends take one calendar conversion per month, not
+  two per session. The sector windows are read in place, and the 3-year 95th percentile is selected
+  rather than sorted.
+
+| 200 × 100 read, CPU seconds | S&P, 1 thread | S&P, 24 threads | Nasdaq, 1 thread | Nasdaq, 24 threads |
+|---|---|---|---|---|
+| before | 11.2 | 20.0 | about 13 | 22.2 |
+| after | 8.4 | 15.0 | 8.6 | 16.1 |
+
+**The Scala twin's session loops compile.** C2 cannot compile a session loop the size of the price
+loop as one method, and the profiled code that runs instead serializes every core. The price loop
+and the derived channels now run each session as small methods on a per-path state class, which C2
+compiles within the first paths. The per-path statistics read primitive arrays: the volatility exit,
+the sector rows, quantiles by selection, and a macro member's trailing rank only at the sessions its
+rows read. Every output is byte-identical.
+
+| 200 × 100 S&P read, 24 threads | CPU seconds | wall seconds |
+|---|---|---|
+| Scala one-shot CLI read, before | 318 | 30.5 |
+| Scala one-shot CLI read, after | 105 | 6.3 |
+| Scala one-shot CLI read, after, `-XX:TieredStopAtLevel=1` | 57 | 3.9 |
+| Scala warm read in a long-lived JVM, before | 202 | 9.5 |
+| Scala warm read in a long-lived JVM, after | 34 | 1.8 |
+| Rust read, for comparison | 13–14 | 1.0 |
+
+The warm rows time the simulation, statistics and rows alone. A one-shot read runs fastest on C1
+alone (`-XX:TieredStopAtLevel=1`). A long-lived JVM should keep the default, which is about a quarter
+faster once warm.
+
+**The Rust binaries keep freed memory.** The simulator's binaries link mimalloc v2 and set it never
+to purge, first thing in `main`. mimalloc v3 handed every freed large buffer back as fresh pages,
+whatever its purge setting, so a 200 × 100 read took 1.7 million page faults and a fifth of its CPU
+in the kernel. Outputs are byte-identical. The memory peak rises: 0.5 GB for a process that reads
+once, 1.2 GB for one that reads repeatedly.
+
+| 200 × 100 read, 24 threads, one `market_sim` process | before (v3) | after (v2, no purge) |
+|---|---|---|
+| CPU seconds, S&P | 14.2 | 11.6 |
+| CPU seconds, Nasdaq | 15.7 | 12.6 |
+| wall seconds, S&P | 1.06 | 0.78 |
+| kernel seconds, S&P | 3.4 | 1.0 |
+| peak working set, S&P | 2.4 GB | 2.9 GB |
+
+Repeated reads in one process gain more: 0.99 → 0.69 s wall each, with kernel time 2.75 → 0.29 s.
+
 **Upgrading**
 
 - **Sidecar schema 28 → 31.** `reportedRows` follows `fidelity`: each a `fidelity` row led by its
@@ -243,6 +326,23 @@ recipes place the records inside the band on seeds 1–4: the S&P at the 56th–
 - Rust: `World::bond10`, `World::term_premium`, `VERDICT_BOND10`, `BOND10_BAND_ROWS`,
   `bond10_readings` and `bond10_resamples`. Scala: `World.bond10`, and `World.ext: WorldExt` holds
   `termPremium` (a JVM constructor takes at most 254 parameter slots, and `World` reached it).
+- API, the selective read: `PathNeeds` (`ALL`, `NONE`, `BONDS`, `of_rows`) and
+  `measure_needs(sims, years, needs)`, with `measure` the full read; `fidelity_rows_with_readings`
+  returns the rows and the `HorizonReadings` they came from, and `rows_from_readings` builds the
+  rows from them. `HorizonReadings` gains `extreme_by_path`, every extreme row's reading per path in
+  path order with NaN where a history has none, and `bond10_by_path`, the 10-year leg's rows read on
+  each path alone. Scala `PathNeeds`, `measureNeeds`, `fidelityRowsWithReadings`,
+  `rowsFromReadings`, `extremeByPath`, `bond10ByPath`.
+- API, one ensemble per read: `report_world` returns the verdict world whenever the report and the
+  verdict read the same `(paths, years)` and the macro panel is the world's own, and
+  `as_callers_paths` turns its paths into the caller's; `PathNeeds::LEG` and
+  `WorldStats::with_bond10_from` read the 10-year leg alone. Scala `reportWorld`, `asCallersPaths`,
+  `PathNeeds.Leg`, `withBond10From`.
+- API, the term-premium replay: `BondTape`, `simulate_taped`, `sim_paths_taped`, `replay_bonds`,
+  `TpKeep` (`new`, `bytes`), `tp_reread` and `WorldStats::with_bonds_from`. Scala `BondTape`,
+  `simulateTaped`, `simPathsTaped`, `replayBonds`, `TpKeep`, `tpReread`, `withBondsFrom`.
+- API, the allocator: `fast_alloc::keep_freed_memory` (feature `fast-alloc`), which a binary that
+  installs mimalloc calls first in `main`; the crate's mimalloc dependency builds v2.
 - API, the bond crash rows: `Anchors` gains `bond_crash_window`, `bond_crash_years` and
   `bond_crash` (Scala `bondCrashWindow`, `bondCrashYears`, `bondCrash`); new `BOND_CRASH_ROWS`,
   `BOND_CRASH_ALPHA` and the reported `BOND_TLT_RECORD` (Scala `BondCrashRows`, `BondCrashAlpha`,

@@ -44,6 +44,8 @@
 
 use std::fmt::Write as _;
 
+#[cfg(feature = "fast-alloc")]
+use uni::fast_alloc;
 use uni::market_sim::World;
 use uni::market_sim::{self as ms};
 use uni::udata::java_format_f;
@@ -1168,6 +1170,8 @@ fn one_step(su: &Setup) -> Result<(Step, Trail), &'static str> {
 }
 
 fn main() {
+    #[cfg(feature = "fast-alloc")]
+    fast_alloc::keep_freed_memory();
     let mut su = Setup::new(parse_args());
     println!(
         "reach: {} on {}, {} x {}y on {} shared seeds; step {} of each dial's width, trust {} steps, robust {} se",

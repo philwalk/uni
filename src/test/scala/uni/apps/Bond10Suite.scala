@@ -47,6 +47,31 @@ class Bond10Suite extends FunSuite:
     val dropped = MarketSim.dropBond10(on)
     assertEquals(bits(dropped), bits(off), "every series, to the bit")
     assertEquals(bits(MarketSim.measureFor(a, dropped, at._2)), bits(MarketSim.measureFor(a, off, at._2)))
+    // the report reads the leg again and nothing else (`main`)
+    val runSt = MarketSim.measureFor(a, on, at._2)
+    assertEquals(bits(runSt.withBond10From(MarketSim.measureNeeds(dropped, at._2, MarketSim.PathNeeds.Leg))),
+                 bits(MarketSim.measureFor(a, off, at._2)), "the leg read again is the whole read again")
+  }
+
+  // A verdict world's paths with its added series dropped are its caller's own, to the bit, for
+  // callers that leave every derived series off, some on, or carry a leg of their own.
+  test("the report reads the verdict's paths as the caller's") {
+    val a    = MarketSim.anchorsNamed("nasdaq")
+    val base = MarketSim.Defaults
+    val callers = Vector(
+      base,
+      MarketSim.namedWorld("0.24.6-nasdaq").map(_._1).getOrElse(fail("recipe")),
+      base.copy(satBeta = 1.2, divYield = 1.0),
+      base.copy(sectors = 3, bond10 = 6.0),
+      MarketSim.namedWorld("0.24.6-sp500").map(_._1).getOrElse(fail("recipe")))
+    for w <- callers do
+      val at   = (3, 12)
+      val runW = MarketSim.reportWorld(a, w, at, at)
+      assert(runW == MarketSim.verdictWorld(a, w), "the verdict's own ensemble")
+      val own = MarketSim.asCallersPaths(w, MarketSim.simPaths(runW, at._1, at._2, MarketSim.DefaultSeed))
+      assertEquals(bits(own), bits(MarketSim.simPaths(w, at._1, at._2, MarketSim.DefaultSeed)), "the caller's paths, to the bit")
+    val sib = base.copy(macroPanel = 1, macroNull = 1)
+    assert(MarketSim.reportWorld(a, sib, (3, 12), (3, 12)) == sib, "a sibling panel is its own")
   }
 
   test("the term premium moves only the bonds, each by its duration") {

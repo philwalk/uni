@@ -494,6 +494,11 @@ class RecordBandSuite extends FunSuite:
       val d = MarketSim.sessionDates(n, "")
       val want = (0 until n).filter(i => i + 1 == n || d(i).substring(0, 7) != d(i + 1).substring(0, 7)).toVector
       assertEquals(MarketSim.monthEnds(n), want, s"$n sessions")
+    // and at every length to six years: a shorter path's dates are a longer one's first
+    val d = MarketSim.sessionDates(1501, "")
+    for n <- 0 until 1500 do
+      val want = (0 until n).filter(i => i + 1 == n || d(i).substring(0, 7) != d(i + 1).substring(0, 7)).toVector
+      assertEquals(MarketSim.monthEnds(n), want, s"$n sessions")
   }
 
   // The reported records come out in the set's order, each row under its record's window, read on

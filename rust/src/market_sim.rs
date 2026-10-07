@@ -4158,13 +4158,18 @@ const LEVEL_SEED: u64 = 0x1e7e_1000;
 /// fundamental/price sum and count.
 type LevelSums = ((f64, f64, f64, f64, f64), (f64, f64, f64), (f64, f64));
 
-fn world_level(w: &World) -> ChannelLevel {
-    let ch_on = w.range_scale > 0.0
+/// Whether any derived channel reads the channel level's per-session inputs (`world_level`).
+fn channels_on(w: &World) -> bool {
+    w.range_scale > 0.0
         || w.sat_beta > 0.0
         || w.overnight > 0.0
         || w.basket > 0
         || w.sectors > 0
-        || w.macro_panel > 0; // the implied-vol member reads `k_vs`
+        || w.macro_panel > 0 // the implied-vol member reads `k_vs`
+}
+
+fn world_level(w: &World) -> ChannelLevel {
+    let ch_on = channels_on(w);
     let div_on = w.div_yield > 0.0;
     if !(ch_on || div_on) {
         return ChannelLevel {
@@ -4179,7 +4184,12 @@ fn world_level(w: &World) -> ChannelLevel {
     let sums: Vec<LevelSums> = (0..LEVEL_PATHS)
         .into_par_iter()
         .map(|k| {
-            let pr = price_loop(w, LEVEL_YEARS, LEVEL_SEED.wrapping_add(k as u64 * 7919));
+            let pr = price_loop(
+                w,
+                LEVEL_YEARS,
+                LEVEL_SEED.wrapping_add(k as u64 * 7919),
+                None,
+            );
             // the channel inputs are recorded only when a channel ran; the dividend level needs
             // none of them
             let ch = if ch_on {
@@ -5139,7 +5149,14 @@ mod macro_bands {
     clippy::too_many_lines,
     reason = "mirrors one Scala method; splitting it would obscure the draw order, which is               the thing that has to stay verifiable"
 )]
-fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64, base: usize) -> Option<MacroPanel> {
+fn derive_macro(
+    w: &World,
+    m: &MacroInputs,
+    seed: u64,
+    k: f64,
+    base: usize,
+    mut parts: Option<&mut SpreadParts>,
+) -> Option<MacroPanel> {
     if w.macro_panel == 0 {
         return None;
     }
@@ -5216,6 +5233,17 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64, base: usize) -> O
             + w.spread_dd * dd_s
             + e_s)
             .max(macro_k::SPREAD_FLOOR);
+        if let Some(sp) = parts.as_deref_mut()
+            && i >= base
+        {
+            sp.head.push(
+                macro_k::SPREAD_BASE
+                    + macro_k::SPREAD_STRESS * m.stress[i]
+                    + macro_k::SPREAD_SLOW * slow,
+            );
+            sp.dd.push(w.spread_dd * dd_s);
+            sp.noise.push(e_s);
+        }
         let target = w.rate_mean + m.infl[i] - m.acc[i];
         slope[i] = 100.0
             * (m.infl[i] * d_i - m.acc[i] * d_a
@@ -5401,12 +5429,23 @@ fn fundamental_seen(
 }
 
 fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path {
-    let pr = price_loop(w, years, seed);
+    simulate_at_taped(w, years, seed, level, None)
+}
+
+/// `simulate_at`, recording the bonds' inputs on `tape` when one is given (`simulate_taped`).
+fn simulate_at_taped(
+    w: &World,
+    years: usize,
+    seed: u64,
+    level: ChannelLevel,
+    mut tape: Option<&mut BondTape>,
+) -> Path {
+    let pr = price_loop(w, years, seed, tape.as_deref_mut());
     let chan = derive_channels(w, &pr.inputs, level, seed);
     let div = derive_dividends(w, &pr.path.price, &pr.path.fundamental, level.k_div);
     // the sibling path's panel inputs (`-macronull` 1 or 2): one extra price loop, only when on
     let sib = seed ^ macro_k::NULL_SEED;
-    let sibling = (w.macro_null > 0).then(|| price_loop(w, years, sib).macro_in);
+    let sibling = (w.macro_null > 0).then(|| price_loop(w, years, sib, None).macro_in);
     Path {
         div_yield: div.0,
         traded: div.1,
@@ -5465,15 +5504,16 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
             // keep this world's marginals and persistence and their coupling to this path's
             // price is nil. One extra price loop per path, only when on. At 2 the path keeps
             // its own panel here and the sibling's rides beside it (`macro_null_panel`).
-            let (macro_in, macro_seed) = match &sibling {
-                Some(m) if w.macro_null == 1 => (m, sib),
-                _ => (&pr.macro_in, seed),
+            let (macro_in, macro_seed, parts) = match &sibling {
+                Some(m) if w.macro_null == 1 => (m, sib, None),
+                _ => (&pr.macro_in, seed, tape.map(|t| &mut t.spread)),
             };
-            derive_macro(w, macro_in, macro_seed, level.k_iv, BURN_IN).map(|m| m.drop(BURN_IN))
+            derive_macro(w, macro_in, macro_seed, level.k_iv, BURN_IN, parts)
+                .map(|m| m.drop(BURN_IN))
         },
         macro_null_panel: match &sibling {
             Some(m) if w.macro_null == 2 => {
-                derive_macro(w, m, sib, level.k_iv, BURN_IN).map(|m| MacroPanel {
+                derive_macro(w, m, sib, level.k_iv, BURN_IN, None).map(|m| MacroPanel {
                     sibling: true,
                     ..m.drop(BURN_IN)
                 })
@@ -5490,8 +5530,513 @@ pub fn simulate(w: &World, years: usize, seed: u64) -> Path {
     simulate_at(w, years, seed, world_level(w))
 }
 
+/// `simulate` and the path's `BondTape`, for a caller that will re-run the bonds under other
+/// term premiums (`replay_bonds`).
+pub fn simulate_taped(w: &World, years: usize, seed: u64) -> (Path, BondTape) {
+    let mut tape = BondTape::new(years * DAYS_PER_YEAR + BURN_IN);
+    let path = simulate_at_taped(w, years, seed, world_level(w), Some(&mut tape));
+    (path, tape)
+}
+
+/// `sim_paths` with each path's `BondTape`, in path order.
+pub fn sim_paths_taped(w: &World, paths: usize, years: usize, seed: u64) -> Vec<(Path, BondTape)> {
+    let level = world_level(w);
+    (0..paths)
+        .into_par_iter()
+        .map(|k| {
+            let mut tape = BondTape::new(years * DAYS_PER_YEAR + BURN_IN);
+            let s = seed.wrapping_add(k as u64 * 7919);
+            let path = simulate_at_taped(w, years, s, level, Some(&mut tape));
+            (path, tape)
+        })
+        .collect()
+}
+
+/// The two bonds' sessions of the price loop over a tape, statement for statement in its order,
+/// at `w`'s term premium; `rate_post` is the path's own rate after the burn-in.
+#[expect(
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    reason = "the bonds' sessions of the price loop, statement for statement in its order"
+)]
+fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRun {
+    let tot = tape.eq_stress.len();
+    let n = tot - BURN_IN;
+    let dt = 1.0 / DAYS_PER_YEAR as f64;
+    let mut bd_m = Market::new(K_VALUE_BOND, w.stress, 1.0);
+    let b10_on = w.bond10 > 0.0;
+    let k10 = w.bond10 / DURATION_REF;
+    let mut b10_m = Market::new(K_VALUE_BOND, w.stress, 1.0);
+    let mut b10rng = NumPyRng::new(seed ^ 0xb01d_10c7u64);
+    let mut fair_b10 = 0.0f64;
+    let tp_b = w.term_premium / 100.0 * w.duration;
+    let tp_b10 = w.term_premium / 100.0 * w.bond10;
+    let mut slow_b10 = 0.0f64;
+    let mut news_b10 = 0.0f64;
+    let mut rate = w.rate_mean;
+    let mut fair_b = 0.0f64;
+    let settle_mu = if w.refuge_days > 0.0 {
+        1.0 - (-(2.0f64.ln()) / w.refuge_days).exp()
+    } else {
+        0.0
+    };
+    let mut settled_stress = 0.0f64;
+    let mut slow_b = 0.0f64;
+    let mut news_b = 0.0f64;
+    let mut bq = vec![0.0f64; tot];
+    let mut bp = vec![0.0f64; tot];
+    let mut b10p = vec![0.0f64; tot];
+    let mut b_stress = vec![0.0f64; n];
+    let mut legs = tape.news_legs.iter().peekable();
+    let mut bond_stress_sum = 0.0f64;
+    let mut bond_stress_hi = 0usize;
+    let mut bd_clamps_at_burn = 0usize;
+    for i in 0..tot {
+        let comp = tape.news_comp[i];
+        if !comp.is_nan() {
+            let bk = if tape.regime[i] & 1 == 1 {
+                -w.news_bond * (w.duration / DURATION_REF)
+            } else {
+                w.news_bond * (w.duration / DURATION_REF)
+            };
+            news_b = NEWS_BOND_DECAY * news_b - bk * comp;
+            bd_m.log_p -= bk * comp;
+            if b10_on {
+                let bk10 = if bk < 0.0 {
+                    -w.news_bond * k10
+                } else {
+                    w.news_bond * k10
+                };
+                news_b10 = NEWS_BOND_DECAY * news_b10 - bk10 * comp;
+                b10_m.log_p -= bk10 * comp;
+            }
+        }
+        if let Some(&(_, leg)) = legs.next_if(|(k, _)| *k as usize == i) {
+            news_b += leg;
+            bd_m.log_p += leg;
+            if b10_on {
+                let leg10 = leg * (w.bond10 / w.duration);
+                news_b10 += leg10;
+                b10_m.log_p += leg10;
+            }
+        }
+        let sm = tape.slow_sm[i];
+        if !sm.is_nan() {
+            let infl_sign = if w.slow_bond_infl > 0.0 && tape.regime[i] & 2 == 2 {
+                1.0 - 2.0 * w.slow_bond_infl
+            } else {
+                1.0
+            };
+            let bm = -w.slow_beta * sm * (w.duration / DURATION_REF) * infl_sign;
+            bd_m.log_p += bm;
+            slow_b += w.slow_perm * bm;
+            if b10_on {
+                let bm10 = -w.slow_beta * sm * k10 * infl_sign;
+                b10_m.log_p += bm10;
+                slow_b10 += w.slow_perm * bm10;
+            }
+        }
+        let r_old = rate;
+        rate = if i < BURN_IN {
+            tape.rate_burn[i]
+        } else {
+            rate_post[i - BURN_IN]
+        };
+        fair_b += (rate + tp_b) * dt - w.duration * (rate - r_old);
+        if b10_on {
+            fair_b10 += (rate + tp_b10) * dt - w.bond10 * (rate - r_old);
+        }
+        let eq_stress = tape.eq_stress[i];
+        let eq_stress_for_refuge = if w.refuge_days > 0.0 {
+            settled_stress
+        } else {
+            eq_stress
+        };
+        let bond_flow = -w.margin * eq_stress * bd_m.stress_idx
+            + w.refuge
+                * (w.duration / DURATION_REF)
+                * eq_stress_for_refuge
+                * 0.0f64.max(1.0 - bd_m.stress_idx);
+        if w.refuge_days > 0.0 {
+            settled_stress += settle_mu * (eq_stress - settled_stress);
+        }
+        let bond_fair = if w.news_bond > 0.0 {
+            fair_b + slow_b + news_b
+        } else {
+            fair_b + slow_b
+        };
+        let bond_noise = SIGMA_N_BOND * (w.duration / DURATION_REF) * tape.noise[i];
+        let _ret_b = bd_m.step(bond_fair, bond_flow + bond_noise);
+        if b10_on {
+            let flow10 = -w.margin * eq_stress * b10_m.stress_idx
+                + w.refuge * k10 * eq_stress_for_refuge * 0.0f64.max(1.0 - b10_m.stress_idx);
+            let fair10 = if w.news_bond > 0.0 {
+                fair_b10 + slow_b10 + news_b10
+            } else {
+                fair_b10 + slow_b10
+            };
+            let noise10 = SIGMA_N_BOND * k10 * b10rng.randn();
+            let _ret10 = b10_m.step(fair10, flow10 + noise10);
+        }
+        bq[i] = bd_m.last_liq;
+        bp[i] = bd_m.log_p.exp();
+        if b10_on {
+            b10p[i] = b10_m.log_p.exp();
+        }
+        if i >= BURN_IN {
+            b_stress[i - BURN_IN] = bd_m.stress_idx;
+            bond_stress_sum += bd_m.stress_idx;
+            if bd_m.stress_idx > 0.5 {
+                bond_stress_hi += 1;
+            }
+        }
+        if i == BURN_IN {
+            bd_clamps_at_burn = bd_m.clamps;
+        }
+    }
+    let nf = n as f64;
+    BondRun {
+        bliq: bq[BURN_IN..].to_vec(),
+        bond: bp[BURN_IN..].to_vec(),
+        bond10: if b10_on {
+            b10p[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        clamped_days: tape.eq_clamps_end + bd_m.clamps - (tape.eq_clamps_burn + bd_clamps_at_burn),
+        mean_bond_stress: bond_stress_sum / nf,
+        pct_bond_stress: bond_stress_hi as f64 / nf,
+        b_stress,
+    }
+}
+
+/// The two bonds' series and summaries from `run_bonds`, and the long bond's stress per recorded
+/// session for the panel's spread.
+struct BondRun {
+    bliq: Vec<f64>,
+    bond: Vec<f64>,
+    bond10: Vec<f64>,
+    clamped_days: usize,
+    mean_bond_stress: f64,
+    pct_bond_stress: f64,
+    b_stress: Vec<f64>,
+}
+
+impl BondRun {
+    /// `p` with the bonds' series and summaries replaced by these, at `w`'s durations.
+    fn onto(self, w: &World, p: Path) -> Path {
+        Path {
+            bliq: self.bliq,
+            bond: self.bond,
+            bond10: self.bond10,
+            clamped_days: self.clamped_days,
+            mean_bond_stress: self.mean_bond_stress,
+            pct_bond_stress: self.pct_bond_stress,
+            duration: w.duration,
+            bond10_duration: w.bond10,
+            ..p
+        }
+    }
+}
+
+/// The panel's spread rebuilt from its recorded terms around the bond's replayed stress, summed in
+/// `derive_macro`'s order.
+fn replay_spread(sp: &SpreadParts, b_stress: &[f64]) -> Vec<f64> {
+    (0..b_stress.len())
+        .map(|j| {
+            (sp.head[j] + macro_k::SPREAD_BOND * b_stress[j] + sp.dd[j] + sp.noise[j])
+                .max(macro_k::SPREAD_FLOOR)
+        })
+        .collect()
+}
+
+/// THE BONDS ALONE UNDER ANOTHER TERM PREMIUM: `path` and `tape` from `simulate_taped` at a
+/// world that differs from `w` only by `term_premium`, and the result is `simulate(w, ..)` to the
+/// bit on every field -- the long bond, its liquidity, the 10-year leg, the clamp and bond-stress
+/// summaries and the macro panel (its spread reads the bond's stress) -- at the cost of the two
+/// bonds' sessions instead of the whole loop. `None` for a world whose panel is a sibling path's
+/// (`macro_null`), which this cannot replay; the caller simulates.
+#[must_use]
+pub fn replay_bonds(w: &World, path: &Path, tape: &BondTape, seed: u64) -> Option<Path> {
+    if w.macro_null > 0 {
+        return None;
+    }
+    let run = run_bonds(w, tape, &path.rate, seed);
+    let macro_panel = path.macro_panel.as_ref().map(|m| MacroPanel {
+        spread: replay_spread(&tape.spread, &run.b_stress),
+        ..m.clone()
+    });
+    Some(Path {
+        macro_panel,
+        ..run.onto(w, path.clone())
+    })
+}
+
+/// THE TERM-PREMIUM CACHE of one read: what `tp_reread` needs of the ensemble a world was read on,
+/// so a move of its term premium alone re-reads at the cost of the two bonds. Per path its bond
+/// tape, the four series the bond-dependent statistics read (price, rate, CPI, inflation
+/// pressure) and its macro panel's reading; about 2.6 MB a 100-year path (`bytes`).
+pub struct TpKeep {
+    paths: Vec<TpPath>,
+    years: usize,
+}
+
+struct TpPath {
+    tape: BondTape,
+    /// the path with every series but price, rate, CPI and inflation pressure dropped
+    lean: Path,
+    seed: u64,
+    macro_read: Option<MacroPathRead>,
+}
+
+impl TpKeep {
+    /// From a read's paths and their tapes (`sim_paths_taped`, path k at `seed + k * 7919`), after
+    /// the caller has read them. What the cache keeps is COPIED into fresh allocations and the
+    /// read's own are dropped: kept in place, each series pinned the memory the read allocated
+    /// around it, and four seeds' caches of 2.0 GB held 7.7 GB (2.75 GB copied, 200 x 100).
+    #[must_use]
+    pub fn new(sims: Vec<Path>, tapes: Vec<BondTape>, years: usize, seed: u64) -> TpKeep {
+        let paths = sims
+            .into_par_iter()
+            .zip(tapes)
+            .enumerate()
+            .map(|(k, (p, tape))| {
+                let macro_read = macro_path_read(&p);
+                TpPath {
+                    tape: tape.copied(),
+                    lean: Path {
+                        price: p.price.clone(),
+                        rate: p.rate.clone(),
+                        cpi: p.cpi.clone(),
+                        infl_press: p.infl_press.clone(),
+                        fundamental: Vec::new(),
+                        liq: Vec::new(),
+                        bliq: Vec::new(),
+                        bond: Vec::new(),
+                        bond10: Vec::new(),
+                        sat: Vec::new(),
+                        log_hi: Vec::new(),
+                        log_lo: Vec::new(),
+                        log_volume: Vec::new(),
+                        div_yield: Vec::new(),
+                        traded: Vec::new(),
+                        log_open: Vec::new(),
+                        names: Vec::new(),
+                        sectors: Vec::new(),
+                        macro_panel: None,
+                        macro_null_panel: None,
+                        ..p
+                    },
+                    seed: seed.wrapping_add(k as u64 * 7919),
+                    macro_read,
+                }
+            })
+            .collect();
+        TpKeep { paths, years }
+    }
+
+    /// The cache's size in bytes, the tapes and the kept series (the macro readings are small).
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.paths
+            .iter()
+            .map(|t| {
+                let l = &t.lean;
+                t.tape.bytes()
+                    + (l.price.len() + l.rate.len() + l.cpi.len() + l.infl_press.len())
+                        * size_of::<f64>()
+            })
+            .sum()
+    }
+}
+
+/// A row whose reading a move of the term premium alone can change and that `fidelity_rows`
+/// reads off a horizon other than the main read's statistics.
+fn is_bond_row(n: &str) -> bool {
+    BOND_BAND_ROWS.contains(&n) || BOND10_BAND_ROWS.contains(&n) || BOND_CRASH_ROWS.contains(&n)
+}
+
+/// THE READ OF A TERM-PREMIUM MOVE from the cache of the current world's read: `w` the move's
+/// verdict world, which differs from the cached read's only by `term_premium`, `st` and `hr` that
+/// read's statistics and `HorizonReadings`. Returns what `measure` and
+/// `fidelity_rows_with_readings` return on `sim_paths(w, ..)` -- the statistics, the rows and
+/// the readings -- to the bit, at the cost of the bonds: `run_bonds` per path, the
+/// bond-dependent statistics (`PathNeeds::BONDS`), the macro panel's spread member, and the bond
+/// rows at their horizons. `None` where a replay cannot stand in for the simulation: a sibling
+/// macro panel, or a bond row's horizon longer than the cached paths.
+#[must_use]
+pub fn tp_reread(
+    a: Anchors,
+    w: &World,
+    keep: &TpKeep,
+    st: &WorldStats,
+    hr: &HorizonReadings,
+) -> Option<(WorldStats, Vec<FidelityRow>, HorizonReadings)> {
+    let years = keep.years;
+    let extreme_too = fit_targets(a)
+        .iter()
+        .any(|(n, _, _, _)| EXTREME_TARGETS.contains(n));
+    let crash_at = (extreme_too && extreme_horizons(a).contains(&a.bond_crash_years))
+        .then_some(a.bond_crash_years);
+    let mut banded_at: std::collections::BTreeMap<usize, Vec<(&'static str, StatFn)>> =
+        std::collections::BTreeMap::new();
+    for (name, get, _, _) in fit_targets(a) {
+        if is_bond_row(name) && a.record_bands.iter().any(|b| b.name == name) {
+            banded_at
+                .entry(record_band_years(a, name))
+                .or_default()
+                .push((name, get));
+        }
+    }
+    if w.macro_null > 0 || banded_at.keys().chain(crash_at.iter()).any(|&h| h > years) {
+        return None;
+    }
+    let replayed: Vec<(Path, Option<MacroPathRead>)> = keep
+        .paths
+        .par_iter()
+        .map(|t| {
+            let run = run_bonds(w, &t.tape, &t.lean.rate, t.seed);
+            let read = t.macro_read.as_ref().map(|m| {
+                let mut members = m.members.clone();
+                members[0] = rank_member_read(
+                    &price_frame(&t.lean.price),
+                    &replay_spread(&t.tape.spread, &run.b_stress),
+                );
+                MacroPathRead {
+                    members,
+                    ..m.clone()
+                }
+            });
+            (run.onto(w, t.lean.clone()), read)
+        })
+        .collect();
+    let (lean, reads): (Vec<Path>, Vec<Option<MacroPathRead>>) = replayed.into_iter().unzip();
+    let fresh = measure_needs(&lean, years, PathNeeds::BONDS);
+    let macro_panel = reads
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .and_then(|per| macro_stats_from(&per, st.macro_panel.is_some_and(|m| m.sibling)));
+    let st2 = WorldStats {
+        macro_panel,
+        ..st.with_bonds_from(&fresh)
+    };
+    // the bond rows at their records' horizons, read as `horizon_readings` reads them
+    let mut hr2 = hr.clone();
+    // each horizon shorter than the paths cut from them once
+    let cuts: std::collections::BTreeMap<usize, Vec<Path>> = banded_at
+        .keys()
+        .chain(crash_at.iter())
+        .filter(|&&h| h != years)
+        .map(|&h| (h, lean.iter().map(|p| p.head(h)).collect()))
+        .collect();
+    let at = |h: usize| -> &[Path] { cuts.get(&h).map_or(&lean, Vec::as_slice) };
+    for (h, rows) in &banded_at {
+        hr2.bond10_by_path.extend(bond10_per_path(at(*h), *h, rows));
+        let names: Vec<&str> = rows.iter().map(|(n, _)| *n).collect();
+        let measured = (*h != years).then(|| measure_needs(at(*h), *h, PathNeeds::of_rows(&names)));
+        let s = measured.as_ref().unwrap_or(&st2);
+        for (name, get) in rows {
+            hr2.banded.insert(name, get(s));
+        }
+    }
+    if let Some(h) = crash_at {
+        let sims = at(h);
+        let (readings, by_path, bands) =
+            extreme_readings_and_bands(a, sims, h, &|n| BOND_CRASH_ROWS.contains(&n));
+        hr2.extreme.extend(readings);
+        hr2.extreme_by_path.extend(by_path);
+        hr2.history_band.extend(bands);
+    }
+    let rows = rows_from_readings(a, &st2, &hr2);
+    Some((st2, rows, hr2))
+}
+
+/// THE BOND TAPE: what the two bonds' sessions take from the rest of a simulation, recorded by
+/// `simulate_taped` so `replay_bonds` can run the bonds alone under another term premium. The
+/// premium reaches nothing but the bonds (`the_term_premium_moves_only_the_bonds_each_by_its_duration`),
+/// and a bond's session reads the policy rate, the equity's stress, the slow and news legs'
+/// repricings and one draw of the main stream; every one of those is the same whatever the
+/// premium, so the replay performs the bonds' own operations on the same inputs in the same order
+/// and lands on the full simulation's bits. One per path, over the burn-in and the recorded
+/// sessions; `f64::NAN` marks a session a leg did not fire on.
+#[derive(Clone)]
+pub struct BondTape {
+    /// the policy rate over the burn-in (the path's own `rate` holds the rest)
+    rate_burn: Vec<f64>,
+    /// the equity's stress index as the bond flow reads it
+    eq_stress: Vec<f64>,
+    /// the long bond's draw of the main stream (the leg draws its own)
+    noise: Vec<f64>,
+    /// the news channel's compensator, NaN where the bond leg of news is off
+    news_comp: Vec<f64>,
+    /// each news session's leg, in session order
+    news_legs: Vec<(u32, f64)>,
+    /// the slow channel's repricing `sm`, NaN where the channel is off
+    slow_sm: Vec<f64>,
+    /// per session: bit 0 the compensator stood in an inflation regime (the news leg reverses),
+    /// bit 1 the slow repricing did
+    regime: Vec<u8>,
+    /// the equity market's clamp counts at the burn-in's end and at the path's end
+    eq_clamps_burn: usize,
+    eq_clamps_end: usize,
+    /// the macro panel's spread, the one member the bond's stress reaches; empty when off
+    spread: SpreadParts,
+}
+
+/// The spread's terms around the bond's (`derive_macro`), over the recorded sessions, so a replay
+/// rebuilds the member in the order it was summed: `((head + bond) + dd) + noise`, floored.
+#[derive(Clone, Default)]
+pub struct SpreadParts {
+    head: Vec<f64>,
+    dd: Vec<f64>,
+    noise: Vec<f64>,
+}
+
+impl BondTape {
+    /// The same tape in fresh allocations of exactly its length (`TpKeep::new`).
+    fn copied(&self) -> BondTape {
+        BondTape {
+            rate_burn: self.rate_burn.clone(),
+            eq_stress: self.eq_stress.clone(),
+            noise: self.noise.clone(),
+            news_comp: self.news_comp.clone(),
+            news_legs: self.news_legs.clone(),
+            slow_sm: self.slow_sm.clone(),
+            regime: self.regime.clone(),
+            eq_clamps_burn: self.eq_clamps_burn,
+            eq_clamps_end: self.eq_clamps_end,
+            spread: self.spread.clone(),
+        }
+    }
+
+    fn new(tot: usize) -> BondTape {
+        BondTape {
+            rate_burn: Vec::new(),
+            eq_stress: vec![0.0; tot],
+            noise: vec![0.0; tot],
+            news_comp: vec![f64::NAN; tot],
+            news_legs: Vec::new(),
+            slow_sm: vec![f64::NAN; tot],
+            regime: vec![0; tot],
+            eq_clamps_burn: 0,
+            eq_clamps_end: 0,
+            spread: SpreadParts::default(),
+        }
+    }
+
+    /// The tape's size in bytes, what a caller holding one per path budgets.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        let f = size_of::<f64>();
+        (self.rate_burn.len() + 4 * self.eq_stress.len() + 3 * self.spread.head.len()) * f
+            + self.regime.len()
+            + self.news_legs.len() * size_of::<(u32, f64)>()
+    }
+}
+
 /// One independent history's PRICE LOOP, with the channels' per-session inputs recorded for the
-/// second pass. Local mutable state only — nothing escapes this function.
+/// second pass, and the bonds' inputs on `tape` when a caller asks for them. Local mutable state
+/// only — nothing escapes this function.
 #[expect(
     clippy::too_many_lines,
     clippy::cognitive_complexity,
@@ -5504,7 +6049,7 @@ pub fn simulate(w: &World, years: usize, seed: u64) -> Path {
               on NaN: `x < a || x > b` leaves NaN on the false branch, `!(a..=b).contains(&x)` \
               puts it on the true branch"
 )]
-fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
+fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape>) -> Priced {
     let n = years * DAYS_PER_YEAR;
     let tot = n + BURN_IN;
     let mut rng = NumPyRng::new(seed);
@@ -6030,6 +6575,10 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 w.news_bond * (w.duration / DURATION_REF)
             };
             if w.news_bond > 0.0 {
+                if let Some(t) = tape.as_deref_mut() {
+                    t.news_comp[i] = comp;
+                    t.regime[i] |= u8::from(bk < 0.0);
+                }
                 news_b = NEWS_BOND_DECAY * news_b - bk * comp;
                 bd_m.log_p -= bk * comp;
                 if b10_on {
@@ -6057,6 +6606,9 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                     } else {
                         bk * size
                     };
+                    if let Some(t) = tape.as_deref_mut() {
+                        t.news_legs.push((i as u32, leg));
+                    }
                     news_b += leg;
                     bd_m.log_p += leg;
                     if b10_on {
@@ -6092,6 +6644,10 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             } else {
                 1.0
             };
+            if let Some(t) = tape.as_deref_mut() {
+                t.slow_sm[i] = sm;
+                t.regime[i] |= u8::from(infl_press > INFL_REGIME_EDGE) << 1;
+            }
             let bm = -w.slow_beta * sm * (w.duration / DURATION_REF) * infl_sign;
             bd_m.log_p += bm;
             slow_b += w.slow_perm * bm;
@@ -6735,6 +7291,9 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         } else {
             eq_m.stress_idx
         };
+        if let Some(t) = tape.as_deref_mut() {
+            t.eq_stress[i] = eq_m.stress_idx;
+        }
         let bond_flow = -w.margin * eq_m.stress_idx * bd_m.stress_idx
             + w.refuge
                 * (w.duration / DURATION_REF)
@@ -6749,7 +7308,11 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         } else {
             fair_b + slow_b
         };
-        let bond_noise = SIGMA_N_BOND * (w.duration / DURATION_REF) * rng.randn();
+        let z_b = rng.randn();
+        if let Some(t) = tape.as_deref_mut() {
+            t.noise[i] = z_b;
+        }
+        let bond_noise = SIGMA_N_BOND * (w.duration / DURATION_REF) * z_b;
         let _ret_b = bd_m.step(bond_fair, bond_flow + bond_noise);
         if b10_on {
             let flow10 = -w.margin * eq_m.stress_idx * b10_m.stress_idx
@@ -6862,6 +7425,9 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             }
         }
         if i == BURN_IN {
+            if let Some(t) = tape.as_deref_mut() {
+                t.eq_clamps_burn = eq_m.clamps;
+            }
             clamps_at_burn = eq_m.clamps + bd_m.clamps;
             eq_floor_at_burn = eq_m.floor_days;
             eq_tail_at_burn = eq_m.tail_days;
@@ -6870,6 +7436,10 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         i += 1;
     }
 
+    if let Some(t) = tape {
+        t.rate_burn = rt[..BURN_IN].to_vec();
+        t.eq_clamps_end = eq_m.clamps;
+    }
     let nf = n as f64;
     let path = Path {
         price: px[BURN_IN..].to_vec(),
@@ -7604,6 +8174,51 @@ const VAR_RATIO_SLOPE_BANDS: [(usize, usize, f64, f64); 2] =
     [(20, 60, -0.20, 0.10), (60, 120, -0.15, 0.15)];
 
 impl WorldStats {
+    /// These statistics with the 10-year leg's taken from `b`, a read of the same paths' leg
+    /// (`PathNeeds::LEG`): what a report reads once the verdict's leg is dropped from its ensemble
+    /// (`drop_bond10`), without measuring the rest again.
+    #[must_use]
+    pub fn with_bond10_from(&self, b: &WorldStats) -> WorldStats {
+        WorldStats {
+            bond10_vol: b.bond10_vol,
+            bond10_growth: b.bond10_growth,
+            bond10_infl: b.bond10_infl,
+            bond10_excess: b.bond10_excess,
+            dd_b10_10: b.dd_b10_10,
+            bond10: b.bond10,
+            ..*self
+        }
+    }
+
+    /// These statistics with every one a move of the term premium alone can change taken from
+    /// `b`, a read of the same paths' bonds (`PathNeeds::BONDS`): the bonds' volatility, depth,
+    /// crash moves, excess and stress, their correlation with the equity, the tail hedge and the
+    /// clamp share. The macro panel's, which reads the bond's stress through the spread, the caller
+    /// sets (`tp_reread`).
+    #[must_use]
+    pub fn with_bonds_from(&self, b: &WorldStats) -> WorldStats {
+        WorldStats {
+            bond_vol: b.bond_vol,
+            bond_growth: b.bond_growth,
+            bond_infl: b.bond_infl,
+            bond10_vol: b.bond10_vol,
+            bond10_growth: b.bond10_growth,
+            bond10_infl: b.bond10_infl,
+            bond10_excess: b.bond10_excess,
+            corr_calm: b.corr_calm,
+            corr_infl: b.corr_infl,
+            mean_bond_stress: b.mean_bond_stress,
+            pct_bond_stress: b.pct_bond_stress,
+            tail_hedge: b.tail_hedge,
+            dd_bd5: b.dd_bd5,
+            dd_bd10: b.dd_bd10,
+            dd_bd20: b.dd_bd20,
+            dd_b10_10: b.dd_b10_10,
+            clamp_pct: b.clamp_pct,
+            ..*self
+        }
+    }
+
     /// Return per unit volatility, in the units this report already prints: `ann_ret` is a LOG
     /// return in %/yr and `vol` is a fraction. An arithmetic-mean anchor is higher by about
     /// sigma/2 (0.08 at 16% vol) and has to be restated before it can be compared with this.
@@ -8243,16 +8858,13 @@ fn ret_3y_p95_excess(lp: &[f64]) -> f64 {
         return f64::NAN;
     }
     let xs: Vec<f64> = (h..=n).map(|k| lp[k] - lp[k - h]).collect();
-    pctile_of(&finite_sorted(&xs), 0.95) - (lp[n] - lp[0]) * h as f64 / n as f64
+    pctile(&xs, 0.95) - (lp[n] - lp[0]) * h as f64 / n as f64
 }
 
 /// The 90th percentile of the years between the peaks of successive declines of 20% or more: the
 /// spacing `calm_stretch_of` reads the single longest of. NaN under three declines.
-fn decline_gap_p90(px: &[f64]) -> f64 {
-    let peaks: Vec<usize> = episodes(px, MULTI_YEAR_DECLINE_PCT)
-        .iter()
-        .map(|e| e.peak)
-        .collect();
+fn decline_gap_p90(eps: &[Episode]) -> f64 {
+    let peaks: Vec<usize> = eps.iter().map(|e| e.peak).collect();
     if peaks.len() < 3 {
         return f64::NAN;
     }
@@ -8268,8 +8880,8 @@ fn decline_gap_p90(px: &[f64]) -> f64 {
 /// provisional), their median and their longest; NaN with none. The depth rungs grade how far a
 /// decline goes and the gap how often; these grade how long it takes to get there, which with the
 /// depth sets what a withdrawal schedule started just before it survives.
-fn decline_lengths(px: &[f64]) -> [f64; 2] {
-    let lens: Vec<f64> = episodes(px, MULTI_YEAR_DECLINE_PCT)
+fn decline_lengths(eps: &[Episode]) -> [f64; 2] {
+    let lens: Vec<f64> = eps
         .iter()
         .filter(|e| !e.censored())
         .map(|e| e.fall_days() as f64 / DAYS_PER_YEAR as f64)
@@ -8288,13 +8900,14 @@ fn multi_year_of(r: &[f64], px: &[f64]) -> [f64; 7] {
     for i in 0..r.len() {
         lp[i + 1] = lp[i] + r[i];
     }
-    let lengths = decline_lengths(px);
+    let eps = episodes(px, MULTI_YEAR_DECLINE_PCT);
+    let lengths = decline_lengths(&eps);
     [
         phase_mean(1, |off| lag1_corr(&block_changes(&lp, off, DAYS_PER_YEAR))),
         multi_year_vr(&lp, 3),
         multi_year_vr(&lp, 5),
         ret_3y_p95_excess(&lp),
-        decline_gap_p90(px),
+        decline_gap_p90(&eps),
         lengths[0],
         lengths[1],
     ]
@@ -8636,6 +9249,11 @@ fn cum_simple(r: &[f64]) -> f64 {
     r.iter().fold(1.0, |acc, x| acc * (1.0 + x)) - 1.0
 }
 
+/// `cum_simple` of a window every month of which is present, read in place.
+fn cum_simple_present(r: &[Option<f64>]) -> f64 {
+    r.iter().flatten().fold(1.0, |acc, x| acc * (1.0 + x)) - 1.0
+}
+
 fn mean_of(v: &[f64]) -> f64 {
     v.iter().sum::<f64>() / v.len() as f64
 }
@@ -8665,10 +9283,11 @@ pub fn sector_momentum(p: &SectorPanel, form: usize, top: usize, from: usize) ->
         let mkt = cum_simple(&p.market[lo..t - 1]);
         let mut scored: Vec<(f64, f64)> = Vec::new();
         for ind in &p.returns {
-            let held = ind[t];
-            let window: Option<Vec<f64>> = ind[lo..t - 1].iter().copied().collect();
-            if let (Some(h), Some(w)) = (held, window) {
-                scored.push((cum_simple(&w) - mkt, h));
+            let w = &ind[lo..t - 1];
+            if let Some(h) = ind[t]
+                && w.iter().all(Option::is_some)
+            {
+                scored.push((cum_simple_present(w) - mkt, h));
             }
         }
         if scored.len() < 2 * top {
@@ -8714,6 +9333,16 @@ fn sector_trend_pairs(p: &SectorPanel, mode: SectorTrend, from: usize) -> Vec<Ve
         SectorTrend::Sign12 => 12,
         SectorTrend::Sma10 => 10,
     };
+    // the bill rate over each month's window, once for every industry
+    let rf_cum: Vec<f64> = (0..months)
+        .map(|t| {
+            if mode == SectorTrend::Sign12 && t >= look {
+                cum_simple(&p.rf[t - look..t])
+            } else {
+                f64::NAN
+            }
+        })
+        .collect();
     p.returns
         .iter()
         .map(|ind| {
@@ -8732,10 +9361,12 @@ fn sector_trend_pairs(p: &SectorPanel, mode: SectorTrend, from: usize) -> Vec<Ve
             (look.max(from)..months)
                 .filter_map(|t| {
                     let held = ind[t]?;
-                    let window: Option<Vec<f64>> = ind[t - look..t].iter().copied().collect();
-                    let w = window?;
+                    let w = &ind[t - look..t];
+                    if !w.iter().all(Option::is_some) {
+                        return None;
+                    }
                     let signal = match mode {
-                        SectorTrend::Sign12 => cum_simple(&w) > cum_simple(&p.rf[t - look..t]),
+                        SectorTrend::Sign12 => cum_simple_present(w) > rf_cum[t],
                         SectorTrend::Sma10 => {
                             let pxw = &px[t - look..t];
                             if pxw.iter().any(|x| x.is_nan()) {
@@ -11243,6 +11874,7 @@ fn fwd_realized_vol(lp: &[f64], h: usize) -> Vec<f64> {
 /// One episode's warning: the share of the log decline still ahead at the first firing (0 if
 /// never), and the firing LAG — sessions from the peak to that firing, negative before it (None
 /// if never).
+#[derive(Clone)]
 struct Warning {
     share: f64,
     lag: Option<i64>,
@@ -11414,6 +12046,7 @@ fn warning_counts(held: &[f64], sp: &[DdSpan]) -> WarningCounts {
     c
 }
 
+#[derive(Clone)]
 struct MacroPathRead {
     members: [MemberRead; 9],
     inv_share: f64,
@@ -11482,43 +12115,69 @@ fn hazard_counts(held: &[f64], sp: &[DdSpan], h: usize) -> HazardCounts {
     c
 }
 
-fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
-    let m = s.macro_panel.as_ref()?;
-    // three quantiles by selection, no sort
-    let levels = |x: &[f64]| {
-        let [p10, p50, p90] = finite_pctiles(x, [0.1, 0.5, 0.9]);
-        (p10, p50, p90)
-    };
-    let lp: Vec<f64> = s.price.iter().map(|v| v.ln()).collect();
+/// What a member's reading takes of its path's price: the log price, its 60-session forward
+/// return, and the 20% episodes the rows grade with the 10% ones -- more events, mostly not macro
+/// ones on a Nasdaq-like world -- whose lag and fired share are reported beside them.
+struct PriceFrame {
+    lp: Vec<f64>,
+    fwd60: Vec<f64>,
+    spans: Vec<DdSpan>,
+    spans10: Vec<DdSpan>,
+}
+
+fn price_frame(price: &[f64]) -> PriceFrame {
+    let lp: Vec<f64> = price.iter().map(|v| v.ln()).collect();
     let fwd60 = fwd_return(&lp, 60);
-    // the 20% episodes the rows grade, and the 10% ones — more events, mostly not macro ones on
-    // a Nasdaq-like world — whose lag and fired share are reported beside them
     let episodes = |thr: f64| -> Vec<DdSpan> {
-        dd_spans(&s.price, thr)
+        dd_spans(price, thr)
             .into_iter()
             .filter(|s| s.lo.saturating_sub(1) >= RANK_WINDOW)
             .collect()
     };
-    let spans = episodes(0.20);
-    let spans10 = episodes(0.10);
-    // a daily rank member (spread, ivol): rank >= 0.90 in the quarter before the peak, the rank
-    // read only at the sessions a warning or a build-up looks at
-    let rank_member = |x: &[f64]| -> MemberRead {
-        let rk = |t: usize| trailing_rank_at(x, 252, t);
-        let fired = |t: usize| {
-            let r = rk(t);
-            r.is_finite() && r >= 0.90
-        };
-        (
-            level_autocorr(x, 1),
-            level_autocorr(x, 20),
-            r2_of(x, &fwd60),
-            warn_shares(&lp, &spans, fired, 63),
-            warn_shares(&lp, &spans10, fired, 63),
-            levels(x),
-            pre_peak_ranks(rk, &spans, 63),
-        )
+    PriceFrame {
+        spans: episodes(0.20),
+        spans10: episodes(0.10),
+        lp,
+        fwd60,
+    }
+}
+
+/// Three quantiles by selection, no sort.
+fn levels3(x: &[f64]) -> (f64, f64, f64) {
+    let [p10, p50, p90] = finite_pctiles(x, [0.1, 0.5, 0.9]);
+    (p10, p50, p90)
+}
+
+/// A daily rank member's reading (spread, ivol): rank >= 0.90 in the quarter before the peak,
+/// the rank read only at the sessions a warning or a build-up looks at.
+fn rank_member_read(f: &PriceFrame, x: &[f64]) -> MemberRead {
+    let rk = |t: usize| trailing_rank_at(x, 252, t);
+    let fired = |t: usize| {
+        let r = rk(t);
+        r.is_finite() && r >= 0.90
     };
+    (
+        level_autocorr(x, 1),
+        level_autocorr(x, 20),
+        r2_of(x, &f.fwd60),
+        warn_shares(&f.lp, &f.spans, fired, 63),
+        warn_shares(&f.lp, &f.spans10, fired, 63),
+        levels3(x),
+        pre_peak_ranks(rk, &f.spans, 63),
+    )
+}
+
+fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
+    let m = s.macro_panel.as_ref()?;
+    let f = price_frame(&s.price);
+    let PriceFrame {
+        lp,
+        fwd60,
+        spans,
+        spans10,
+    } = &f;
+    let levels = levels3;
+    let rank_member = |x: &[f64]| rank_member_read(&f, x);
     // the slope: inverted in the 18 months before the peak; its build-up is the share of the
     // quarter before the peak spent inverted
     let slope_m: MemberRead = {
@@ -11528,11 +12187,11 @@ fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
         (
             level_autocorr(x, 1),
             level_autocorr(x, 20),
-            r2_of(x, &fwd60),
-            warn_shares(&lp, &spans, |t| fired[t], 378),
-            warn_shares(&lp, &spans10, |t| fired[t], 378),
+            r2_of(x, fwd60),
+            warn_shares(lp, spans, |t| fired[t], 378),
+            warn_shares(lp, spans10, |t| fired[t], 378),
             levels(x),
-            pre_peak_ranks(|t| inverted[t], &spans, 63),
+            pre_peak_ranks(|t| inverted[t], spans, 63),
         )
     };
     // the conditions index, READ WEEKLY like its counterpart
@@ -11543,20 +12202,20 @@ fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
             level_autocorr(&cond_w, 1),
             level_autocorr(&cond_w, 4),
             r2_of(&cond_w, &fwd_at),
-            warn_shares(&lp, &spans, |t| cond_fired[t], 63),
-            warn_shares(&lp, &spans10, |t| cond_fired[t], 63),
+            warn_shares(lp, spans, |t| cond_fired[t], 63),
+            warn_shares(lp, spans10, |t| cond_fired[t], 63),
             levels(&cond_w),
-            pre_peak_ranks(|t| cond_held[t], &spans, 63),
+            pre_peak_ranks(|t| cond_held[t], spans, 63),
         )
     };
     let hazards = [
-        hazard_counts(&cond_held, &spans, 63),
-        hazard_counts(&cond_held, &spans, 252),
-        hazard_counts(&cond_held, &spans10, 63),
+        hazard_counts(&cond_held, spans, 63),
+        hazard_counts(&cond_held, spans, 252),
+        hazard_counts(&cond_held, spans10, 63),
     ];
-    let warnings = warning_counts(&cond_held, &spans);
+    let warnings = warning_counts(&cond_held, spans);
     let inv: Vec<bool> = m.slope.iter().map(|v| *v < 0.0).collect();
-    let rv = fwd_realized_vol(&lp, 21);
+    let rv = fwd_realized_vol(lp, 21);
     let l_iv: Vec<f64> = m.ivol.iter().map(|v| v.ln()).collect();
     let l_rv: Vec<f64> = rv.iter().map(|v| v.ln()).collect();
     let d_ok: Vec<f64> = (0..lp.len())
@@ -11594,6 +12253,16 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
         .par_iter()
         .map(macro_path_read)
         .collect::<Option<_>>()?;
+    let sibling = sims
+        .first()
+        .and_then(|s| s.macro_panel.as_ref())
+        .is_some_and(|m| m.sibling);
+    macro_stats_from(&per, sibling)
+}
+
+/// The panel's statistics from its paths' readings, in path order; `sibling` says the panel is a
+/// sibling path's (`-macronull 1`).
+fn macro_stats_from(per: &[MacroPathRead], sibling: bool) -> Option<MacroStats> {
     if per.is_empty() {
         return None;
     }
@@ -11659,9 +12328,9 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
         }
     });
     let spells: Vec<usize> = per.iter().flat_map(|p| p.spells.iter().copied()).collect();
-    let (member_spread, hazard_spread) = macro_spreads(&per);
+    let (member_spread, hazard_spread) = macro_spreads(per);
     let p20q = hazard_ratio(0).1;
-    let (warnings, false_alarm, all_clear) = warning_rates(&per, p20q);
+    let (warnings, false_alarm, all_clear) = warning_rates(per, p20q);
     Some(MacroStats {
         members,
         member_spread,
@@ -11678,10 +12347,7 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
         vrp: med(&per.iter().map(|p| p.vrp).collect::<Vec<_>>()),
         r2rv: med(&per.iter().map(|p| p.r2rv).collect::<Vec<_>>()),
         episodes: per.iter().map(|p| p.members[0].3.len()).sum(),
-        sibling: sims
-            .first()
-            .and_then(|s| s.macro_panel.as_ref())
-            .is_some_and(|m| m.sibling),
+        sibling,
         hazard20q: hazard_ratio(0).0,
         hazard20y: hazard_ratio(1).0,
         hazard10q: hazard_ratio(2).0,
@@ -11891,32 +12557,155 @@ struct PathRead {
     post_floor: f64,
 }
 
+/// WHICH FAMILIES OF PER-PATH STATISTICS A READ COMPUTES. A horizon shorter than the ensemble's
+/// serves a few banded rows (`horizon_readings`), and `path_read` was computing every statistic
+/// for them -- the multi-year windows, the timing rule, the regime correlations -- at every record
+/// horizon: 62% of a 200 x 100 read's measuring. Each family is the statistics a set of rows
+/// reads, computed by the same functions on the same series whether the others are asked for or
+/// not, so a selective read is the full read's bits on its rows; what is not asked for reads NaN
+/// or empty. `of_rows` names a banded row's family by the same lists `record_band_years` uses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PathNeeds {
+    /// the equity rows read at `equity_years`: volatility, the typical year, return per vol,
+    /// kurtosis, the leverage profile, the variance ratios, the asymmetry pair, the leverage
+    /// correlation, the crash count and depth, the vol-timing edge and the vol exit
+    pub equity: bool,
+    /// the clustering lags, read at `cluster_years`
+    pub cluster: bool,
+    /// the short rate's level and floor share
+    pub rate: bool,
+    /// the rate after a trough
+    pub rate_after: bool,
+    /// the long bond's windowed volatility and depth
+    pub bond: bool,
+    /// the 10-year leg's volatility, depth and excess
+    pub bond10: bool,
+    /// the statistics of `rest` that read the bonds: their moves over each decline, their
+    /// correlation with the equity by regime, the tail hedge
+    pub bond_rest: bool,
+    /// everything else `measure` reads: the loss's unbanded rows, the extreme rows' direct
+    /// readings, the report
+    pub rest: bool,
+}
+
+impl PathNeeds {
+    pub const ALL: PathNeeds = PathNeeds {
+        equity: true,
+        cluster: true,
+        rate: true,
+        rate_after: true,
+        bond: true,
+        bond10: true,
+        bond_rest: true,
+        rest: true,
+    };
+    pub const NONE: PathNeeds = PathNeeds {
+        equity: false,
+        cluster: false,
+        rate: false,
+        rate_after: false,
+        bond: false,
+        bond10: false,
+        bond_rest: false,
+        rest: false,
+    };
+    /// the 10-year leg's statistics alone (`WorldStats::with_bond10_from`)
+    pub const LEG: PathNeeds = PathNeeds {
+        bond10: true,
+        ..PathNeeds::NONE
+    };
+    /// every statistic a move of the term premium alone can change (`WorldStats::with_bonds_from`)
+    pub const BONDS: PathNeeds = PathNeeds {
+        bond: true,
+        bond10: true,
+        bond_rest: true,
+        ..PathNeeds::NONE
+    };
+
+    /// The families the named rows read; a row outside every banded family takes the full read.
+    #[must_use]
+    pub fn of_rows(rows: &[&str]) -> PathNeeds {
+        let mut nd = PathNeeds::NONE;
+        for &n in rows {
+            if RECORD_BAND_CLUSTER_ROWS.contains(&n) {
+                nd.cluster = true;
+            } else if RATE_BAND_ROWS.contains(&n) {
+                nd.rate = true;
+            } else if RATE_AFTER_ROWS.contains(&n) {
+                nd.rate_after = true;
+            } else if BOND10_BAND_ROWS.contains(&n) {
+                nd.bond10 = true;
+            } else if BOND_BAND_ROWS.contains(&n) {
+                nd.bond = true;
+            } else if EXTREME_TARGETS.contains(&n) {
+                nd.rest = true;
+            } else {
+                nd.equity = true;
+            }
+        }
+        nd
+    }
+}
+
 #[expect(
     clippy::too_many_lines,
-    reason = "every per-path statistic `measure` takes a median of, in one place"
+    clippy::cognitive_complexity,
+    reason = "every per-path statistic `measure` takes a median of, in one place, each behind the               family that asks for it"
 )]
-fn path_read(s: &Path, years: usize) -> PathRead {
+fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
     let dpy = DAYS_PER_YEAR as f64;
+    let (rest, eq, bd, b10) = (
+        nd.rest,
+        nd.equity || nd.rest,
+        nd.bond || nd.rest,
+        nd.bond10 || nd.rest,
+    );
+    let br = nd.bond_rest || nd.rest;
+    let nan3 = (f64::NAN, f64::NAN, f64::NAN);
     // each series' log returns once: every reading below that takes ln(x[i] / x[i - 1]) takes
-    // these elements, which are those values to the bit
-    let r = daily_returns(&s.price);
-    let rb = daily_returns(&s.bond);
-    let rb10: Vec<f64> = if s.bond10.is_empty() {
+    // these elements, which are those values to the bit; a series no asked-for family reads
+    // stays empty
+    let r: Vec<f64> = if eq || nd.cluster || br {
+        daily_returns(&s.price)
+    } else {
+        Vec::new()
+    };
+    let rb: Vec<f64> = if bd || br {
+        daily_returns(&s.bond)
+    } else {
+        Vec::new()
+    };
+    let rb10: Vec<f64> = if s.bond10.is_empty() || !b10 {
         Vec::new()
     } else {
         daily_returns(&s.bond10)
     };
     // the valuation gap ln(P / V), once for its dispersion and its maximum
-    let gap: Vec<f64> = s
-        .price
-        .iter()
-        .zip(s.fundamental.iter())
-        .map(|(p, f)| (p / f).ln())
-        .collect();
-    let rate = rate_readings(&s.rate);
-    let post = rate_after_readings(&s.price, &s.rate);
+    let gap: Vec<f64> = if rest {
+        s.price
+            .iter()
+            .zip(s.fundamental.iter())
+            .map(|(p, f)| (p / f).ln())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let rate = if nd.rate || rest {
+        rate_readings(&s.rate)
+    } else {
+        [f64::NAN; 2]
+    };
+    let post = if nd.rate_after || rest {
+        rate_after_readings(&s.price, &s.rate)
+    } else {
+        [f64::NAN; 2]
+    };
     // once per path (was recomputed 3x)
-    let eps = episodes(&s.price, 15.0);
+    let eps = if eq || br {
+        episodes(&s.price, 15.0)
+    } else {
+        Vec::new()
+    };
     let corr_in = |infl_regime: bool| -> f64 {
         let idx: Vec<usize> = (1..s.price.len())
             .filter(|&i| (s.infl_press[i] > INFL_REGIME_EDGE) == infl_regime)
@@ -11925,16 +12714,34 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         let b: Vec<f64> = idx.iter().map(|&i| rb[i - 1]).collect();
         pearson(&a, &b)
     };
-    let ac = autocorrs_abs(&r, &[1, 20, 5, 60]);
-    let vr250 = variance_ratio(&r, 250);
-    let wings = wings_of(&s.price, &s.fundamental);
-    let gd = gap_drift_of(&s.price, &s.fundamental);
-    let gs = gap_spread_of(&s.price, &s.fundamental);
+    let ac = if nd.cluster || rest {
+        autocorrs_abs(&r, &[1, 20, 5, 60])
+    } else {
+        vec![f64::NAN; 4]
+    };
+    let vr250 = if eq {
+        variance_ratio(&r, 250)
+    } else {
+        f64::NAN
+    };
+    let (wings, gd, gs) = if rest {
+        (
+            wings_of(&s.price, &s.fundamental),
+            gap_drift_of(&s.price, &s.fundamental),
+            gap_spread_of(&s.price, &s.fundamental),
+        )
+    } else {
+        (
+            nan3,
+            (f64::NAN, f64::NAN, f64::NAN, f64::NAN),
+            (f64::NAN, f64::NAN),
+        )
+    };
     PathRead {
-        dd_eq: depth_shares(&s.price),
-        dd_bd: depth_shares(&s.bond),
-        dd_b10: if s.bond10.is_empty() {
-            (f64::NAN, f64::NAN, f64::NAN)
+        dd_eq: if eq { depth_shares(&s.price) } else { nan3 },
+        dd_bd: if bd { depth_shares(&s.bond) } else { nan3 },
+        dd_b10: if s.bond10.is_empty() || !b10 {
+            nan3
         } else {
             depth_shares(&s.bond10)
         },
@@ -11943,8 +12750,16 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         } else {
             (MatD::apply(&rb10).power(2).mean() * dpy).sqrt()
         },
-        bond10_growth: crash_moves(&s.bond10, &s.cpi, &eps, false),
-        bond10_infl: crash_moves(&s.bond10, &s.cpi, &eps, true),
+        bond10_growth: if br {
+            crash_moves(&s.bond10, &s.cpi, &eps, false)
+        } else {
+            Vec::new()
+        },
+        bond10_infl: if br {
+            crash_moves(&s.bond10, &s.cpi, &eps, true)
+        } else {
+            Vec::new()
+        },
         // each session's log return over the rate it carried, the rate the session set
         bond10_excess: if rb10.is_empty() {
             f64::NAN
@@ -11953,28 +12768,52 @@ fn path_read(s: &Path, years: usize) -> PathRead {
                 * dpy
                 * 100.0
         },
-        vol: (MatD::apply(&r).power(2).mean() * dpy).sqrt(),
-        year_vol: year_vol_of(&r),
-        kurt: kurtosis(&r),
+        vol: if eq {
+            (MatD::apply(&r).power(2).mean() * dpy).sqrt()
+        } else {
+            f64::NAN
+        },
+        year_vol: if eq { year_vol_of(&r) } else { f64::NAN },
+        kurt: if eq { kurtosis(&r) } else { f64::NAN },
         ac: [ac[0], ac[1], ac[2], ac[3]],
-        lev: [lev_abs(&r, 1), lev_abs(&r, 5), lev_abs(&r, 20)],
-        vr: [
-            variance_ratio(&r, 20),
-            variance_ratio(&r, VAR_RATIO_Q),
-            variance_ratio(&r, 120),
-            vr250,
-        ],
-        vr250_eras: VAR_RATIO_250_ERAS.map(|(_, era_years, _)| {
-            let m = (era_years * dpy).round() as usize;
-            if m < r.len() {
-                variance_ratio(&r[..m], 250)
-            } else {
-                vr250
-            }
-        }),
-        ret_ac1: level_autocorr(&r, 1),
-        ann_ret: (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0,
-        div_yield: if s.div_yield.is_empty() {
+        lev: if eq {
+            [lev_abs(&r, 1), lev_abs(&r, 5), lev_abs(&r, 20)]
+        } else {
+            [f64::NAN; 3]
+        },
+        vr: if eq {
+            [
+                variance_ratio(&r, 20),
+                variance_ratio(&r, VAR_RATIO_Q),
+                variance_ratio(&r, 120),
+                vr250,
+            ]
+        } else {
+            [f64::NAN; 4]
+        },
+        vr250_eras: if rest {
+            VAR_RATIO_250_ERAS.map(|(_, era_years, _)| {
+                let m = (era_years * dpy).round() as usize;
+                if m < r.len() {
+                    variance_ratio(&r[..m], 250)
+                } else {
+                    vr250
+                }
+            })
+        } else {
+            [f64::NAN; VAR_RATIO_250_ERAS.len()]
+        },
+        ret_ac1: if rest {
+            level_autocorr(&r, 1)
+        } else {
+            f64::NAN
+        },
+        ann_ret: if eq {
+            (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0
+        } else {
+            f64::NAN
+        },
+        div_yield: if s.div_yield.is_empty() || !rest {
             f64::NAN
         } else {
             s.div_yield.iter().sum::<f64>() / s.div_yield.len() as f64
@@ -11982,7 +12821,7 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         // Median over non-overlapping BOND_VOL_YEARS windows, pooled across paths — see
         // BOND_VOL_YEARS for why this row alone is windowed. A path shorter than one window
         // contributes itself, so a short run still reports something rather than nothing.
-        bond_vol: {
+        bond_vol: if bd {
             let w = BOND_VOL_YEARS * DAYS_PER_YEAR;
             let nw = rb.len() / w;
             let segs: Vec<Vec<f64>> = if nw < 1 {
@@ -11993,14 +12832,26 @@ fn path_read(s: &Path, years: usize) -> PathRead {
             segs.into_iter()
                 .map(|seg| (MatD::apply(&seg).power(2).mean() * dpy).sqrt())
                 .collect()
+        } else {
+            Vec::new()
         },
-        bond_growth: crash_moves(&s.bond, &s.cpi, &eps, false),
-        bond_infl: crash_moves(&s.bond, &s.cpi, &eps, true),
-        corr_calm: corr_in(false),
-        corr_infl: corr_in(true),
-        val_disp: {
+        bond_growth: if br {
+            crash_moves(&s.bond, &s.cpi, &eps, false)
+        } else {
+            Vec::new()
+        },
+        bond_infl: if br {
+            crash_moves(&s.bond, &s.cpi, &eps, true)
+        } else {
+            Vec::new()
+        },
+        corr_calm: if br { corr_in(false) } else { f64::NAN },
+        corr_infl: if br { corr_in(true) } else { f64::NAN },
+        val_disp: if rest {
             let m = scala_sum(gap.iter().copied()) / gap.len() as f64;
             (scala_sum(gap.iter().map(|x| (x - m) * (x - m))) / (gap.len() - 1) as f64).sqrt()
+        } else {
+            f64::NAN
         },
         wing_up: wings.0,
         wing_down: wings.1,
@@ -12011,23 +12862,45 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         gap_late_n: gd.3,
         gap_early2: gs.0,
         gap_late2: gs.1,
-        max_over: gap.iter().copied().fold(f64::MIN, f64::max),
+        max_over: if rest {
+            gap.iter().copied().fold(f64::MIN, f64::max)
+        } else {
+            f64::NAN
+        },
         // the path's own returns, through the same functions a record is read with
-        semi_excess: semi_excess_of(&r),
-        up_share: up_share_of(&r),
-        lev_corr: lev_corr_of(&r),
-        vol_timing: vol_timing_of(&r),
-        vol_exit: vol_exit_of(&vol_exit_days_of_path(s)),
-        bubble_coupling: bubble_coupling_of(&r),
-        run_up_3y: run_up_3y_of(&r),
-        calm_stretch: calm_stretch_of(&r),
-        multi_year: multi_year_of(&r, &s.price),
-        timing: timing_of_path(&s.price),
+        semi_excess: if eq { semi_excess_of(&r) } else { f64::NAN },
+        up_share: if eq { up_share_of(&r) } else { f64::NAN },
+        lev_corr: if eq { lev_corr_of(&r) } else { f64::NAN },
+        vol_timing: if eq { vol_timing_of(&r) } else { f64::NAN },
+        vol_exit: if eq {
+            vol_exit_of(&vol_exit_days_of_path(s))
+        } else {
+            [f64::NAN; 2]
+        },
+        bubble_coupling: if rest {
+            bubble_coupling_of(&r)
+        } else {
+            f64::NAN
+        },
+        run_up_3y: if rest { run_up_3y_of(&r) } else { f64::NAN },
+        calm_stretch: if rest { calm_stretch_of(&r) } else { f64::NAN },
+        multi_year: if rest {
+            multi_year_of(&r, &s.price)
+        } else {
+            [f64::NAN; 7]
+        },
+        timing: if rest {
+            timing_of_path(&s.price)
+        } else {
+            [f64::NAN; 4]
+        },
         short_rate: rate[0],
         rate_floor: rate[1],
         post_rate: post[0],
         post_floor: post[1],
-        tail_hedge: {
+        tail_hedge: if !br {
+            f64::NAN
+        } else {
             let idx: Vec<usize> = (1..s.price.len())
                 .filter(|&i| s.infl_press[i] <= INFL_REGIME_EDGE)
                 .collect();
@@ -12049,19 +12922,29 @@ fn path_read(s: &Path, years: usize) -> PathRead {
                 pearson(&ta, &tb)
             }
         },
-        infl_ann: (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0,
+        infl_ann: if rest {
+            (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0
+        } else {
+            f64::NAN
+        },
         episodes: eps,
     }
 }
 
+pub fn measure(sims: &[Path], years: usize) -> WorldStats {
+    measure_needs(sims, years, PathNeeds::ALL)
+}
+
+/// `measure` on the families `nd` names (`PathNeeds`): their rows read the full read's bits, the
+/// others NaN or empty. What `horizon_readings` reads a record's horizon with.
 #[expect(
     clippy::too_many_lines,
     reason = "one line per statistic, mirroring the Scala twin's WorldStats construction; splitting it would put a reading somewhere other than beside the others"
 )]
-pub fn measure(sims: &[Path], years: usize) -> WorldStats {
+pub fn measure_needs(sims: &[Path], years: usize, nd: PathNeeds) -> WorldStats {
     // THE PER-PATH STATISTICS, ACROSS CORES AND IN ONE PASS: `path_read` computes each path's
     // readings and `collect` keeps path order, so every median below reads what it always did.
-    let per: Vec<PathRead> = sims.par_iter().map(|s| path_read(s, years)).collect();
+    let per: Vec<PathRead> = sims.par_iter().map(|s| path_read(s, years, nd)).collect();
     let med_by = |f: fn(&PathRead) -> f64| med(&per.iter().map(f).collect::<Vec<f64>>());
     let eps: Vec<Episode> = per
         .iter()
@@ -12115,13 +12998,19 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         ann_ret: med_by(|p| p.ann_ret),
         n_episodes: eps.len(),
         ep_per_path: eps.len() as f64 / n_sims,
-        sat: sat_stats(sims, years),
-        bars: bar_stats(sims),
-        open: open_stats(sims),
+        // the derived channels' readings belong to the full read: no banded row reads one, and a
+        // record horizon's cut drops the channels anyway
+        sat: if nd.rest {
+            sat_stats(sims, years)
+        } else {
+            None
+        },
+        bars: if nd.rest { bar_stats(sims) } else { None },
+        open: if nd.rest { open_stats(sims) } else { None },
         // read only against a ruler, under its coverage: `measure_for`
         basket: None,
-        sector: sector_stats(sims),
-        macro_panel: macro_stats(sims),
+        sector: if nd.rest { sector_stats(sims) } else { None },
+        macro_panel: if nd.rest { macro_stats(sims) } else { None },
         div_yield_mean: med_by(|p| p.div_yield),
         depth_med: med(&depths),
         worst_depth: if depths.is_empty() {
@@ -15752,7 +16641,7 @@ pub fn extreme_readings_from(
     sims: &[Path],
     yrs: usize,
 ) -> std::collections::HashMap<&'static str, Vec<f64>> {
-    extreme_readings_and_bands(a, sims, yrs).0
+    extreme_readings_and_bands(a, sims, yrs, &|_| true).0
 }
 
 /// `extreme_readings_from`, and the multi-year rows' joint bands (`multi_year_bands`) off the
@@ -15765,43 +16654,62 @@ fn extreme_readings_and_bands(
     a: Anchors,
     sims: &[Path],
     yrs: usize,
+    keep: &dyn Fn(&str) -> bool,
 ) -> (
+    std::collections::HashMap<&'static str, Vec<f64>>,
     std::collections::HashMap<&'static str, Vec<f64>>,
     std::collections::HashMap<&'static str, (f64, f64)>,
 ) {
     let mut out: std::collections::HashMap<&'static str, Vec<f64>> =
         std::collections::HashMap::new();
+    // the same readings before the finite filter, one per path (`HorizonReadings::extreme_by_path`)
+    let mut by_path: std::collections::HashMap<&'static str, Vec<f64>> =
+        std::collections::HashMap::new();
     // `measure` per path only for a row with no direct reading, and then only once
     let mut full: Option<Vec<WorldStats>> = None;
-    let histories = multi_year_histories(a, sims, yrs);
+    // only the groups that hold a row `keep` asks for
+    let histories: Vec<([&'static str; 8], Vec<[f64; 8]>)> = if MULTI_YEAR_ROWS
+        .iter()
+        .chain(MULTI_YEAR_LONG_ROWS.iter())
+        .any(|n| keep(n))
+    {
+        multi_year_histories(a, sims, yrs)
+            .into_iter()
+            .filter(|(names, _)| names.iter().any(|n| keep(n)))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut bands = multi_year_bands(&histories);
-    if let Some(reads) = timing_histories(a, sims, yrs) {
+    let timing = TIMING_ROWS.iter().any(|n| keep(n));
+    if let Some(reads) = timing.then(|| timing_histories(a, sims, yrs)).flatten() {
         bands.extend(timing_bands(&reads));
         for (k, nm) in TIMING_ROWS.iter().copied().enumerate() {
-            out.insert(
-                nm,
-                reads.iter().map(|x| x[k]).filter(|x| !x.is_nan()).collect(),
-            );
+            let per: Vec<f64> = reads.iter().map(|x| x[k]).collect();
+            out.insert(nm, per.iter().copied().filter(|x| !x.is_nan()).collect());
+            by_path.insert(nm, per);
         }
     }
-    if let Some(reads) = bond_crash_histories(a, sims, yrs) {
+    let crash = BOND_CRASH_ROWS.iter().any(|n| keep(n));
+    if let Some(reads) = crash.then(|| bond_crash_histories(a, sims, yrs)).flatten() {
         // the histories that, like the record, hold declines of both regimes: the band, the
         // median and the count all read these
         let both: Vec<[f64; 2]> = reads
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|x| x.iter().all(|v| v.is_finite()))
             .collect();
         bands.extend(bond_crash_bands(&both));
         for (k, nm) in BOND_CRASH_ROWS.iter().copied().enumerate() {
             out.insert(nm, both.iter().map(|x| x[k]).collect());
+            by_path.insert(nm, reads.iter().map(|x| x[k]).collect());
         }
     }
     for (names, reads) in histories {
         for (k, nm) in names.iter().copied().enumerate() {
-            out.insert(
-                nm,
-                reads.iter().map(|x| x[k]).filter(|x| !x.is_nan()).collect(),
-            );
+            let per: Vec<f64> = reads.iter().map(|x| x[k]).collect();
+            out.insert(nm, per.iter().copied().filter(|x| !x.is_nan()).collect());
+            by_path.insert(nm, per);
         }
     }
     for (_, gy, names) in anchor_groups(a) {
@@ -15811,7 +16719,7 @@ fn extreme_readings_and_bands(
         for nm in names
             .iter()
             .copied()
-            .filter(|n| EXTREME_TARGETS.contains(n) && !is_multi_year(n))
+            .filter(|n| EXTREME_TARGETS.contains(n) && !is_multi_year(n) && keep(n))
         {
             let Some((_, get, _, _)) = fit_targets(a).into_iter().find(|(n, _, _, _)| *n == nm)
             else {
@@ -15831,10 +16739,14 @@ fn extreme_readings_and_bands(
                 .map(get)
                 .collect()
             });
-            out.insert(nm, vals.into_iter().filter(|x| !x.is_nan()).collect());
+            out.insert(nm, vals.iter().copied().filter(|x| !x.is_nan()).collect());
+            by_path.insert(nm, vals);
         }
     }
-    (out, bands)
+    out.retain(|n, _| keep(n));
+    by_path.retain(|n, _| keep(n));
+    bands.retain(|n, _| keep(n));
+    (out, by_path, bands)
 }
 
 /// The median of `extreme_readings_from`, for an ensemble the caller already holds.
@@ -15886,11 +16798,19 @@ pub fn extreme_score_stats(
 /// What a read's own ensemble leaves out (`horizon_readings`): every banded row's reading at its
 /// record's horizon, every extreme row's single-history readings at its anchor's, and the
 /// multi-year rows' joint bands of those histories.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct HorizonReadings {
     pub banded: std::collections::HashMap<&'static str, f64>,
+    /// each extreme row's finite readings; the bond crash rows' over the histories finite on both
     pub extreme: std::collections::HashMap<&'static str, Vec<f64>>,
+    /// each extreme row's reading per path, in path order and one per path, NaN where the
+    /// history has none: a caller scoring the rows jointly conditions on them itself
+    pub extreme_by_path: std::collections::HashMap<&'static str, Vec<f64>>,
     pub history_band: std::collections::HashMap<&'static str, (f64, f64)>,
+    /// the 10-year leg's banded rows read on each path alone at their horizon, in path order and
+    /// one per path -- `measure(&[p.head(h)], h)` by the row's getter -- where the read holds the
+    /// paths at that horizon (empty otherwise)
+    pub bond10_by_path: std::collections::HashMap<&'static str, Vec<f64>>,
 }
 
 impl HorizonReadings {
@@ -15968,19 +16888,48 @@ pub fn horizon_readings(
             .or(own)
             .unwrap_or_default();
         if let Some(rows) = banded_at.get(&h) {
-            let measured = (h != years).then(|| measure(sims, h));
+            // the families the rows at this horizon read, and nothing else
+            let names: Vec<&str> = rows.iter().map(|(n, _)| *n).collect();
+            let measured = (h != years).then(|| measure_needs(sims, h, PathNeeds::of_rows(&names)));
             let s = measured.as_ref().unwrap_or(st);
             for (name, get) in rows {
                 out.banded.insert(*name, get(s));
             }
+            out.bond10_by_path.extend(bond10_per_path(sims, h, rows));
         }
         if extreme_at.contains(&h) {
-            let (readings, bands) = extreme_readings_and_bands(a, sims, h);
+            let (readings, by_path, bands) = extreme_readings_and_bands(a, sims, h, &|_| true);
             out.extreme.extend(readings);
+            out.extreme_by_path.extend(by_path);
             out.history_band.extend(bands);
         }
     }
     out
+}
+
+/// Each `BOND10_BAND_ROWS` row among `rows` read on every path of `sims` alone, at horizon `h`.
+fn bond10_per_path(
+    sims: &[Path],
+    h: usize,
+    rows: &[(&'static str, StatFn)],
+) -> std::collections::HashMap<&'static str, Vec<f64>> {
+    let leg: Vec<(&'static str, StatFn)> = rows
+        .iter()
+        .copied()
+        .filter(|(n, _)| BOND10_BAND_ROWS.contains(n))
+        .collect();
+    if leg.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    let names: Vec<&str> = leg.iter().map(|(n, _)| *n).collect();
+    let nd = PathNeeds::of_rows(&names);
+    let per: Vec<WorldStats> = sims
+        .par_iter()
+        .map(|p| measure_needs(std::slice::from_ref(p), h, nd))
+        .collect();
+    leg.into_iter()
+        .map(|(n, get)| (n, per.iter().map(get).collect()))
+        .collect()
 }
 
 /// The banded rows alone, each at its record's horizon (`horizon_readings`).
@@ -16014,14 +16963,42 @@ pub fn fidelity_rows(
     seed: u64,
     w: &World,
 ) -> Vec<FidelityRow> {
+    fidelity_rows_with_readings(a, st, main, years, paths, seed, w).0
+}
+
+/// `fidelity_rows` and the `HorizonReadings` it read them from: the extreme rows' single-history
+/// readings at their horizon, for a caller that scores them itself instead of measuring again.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the verdict ensemble -- its stats, its paths, size, seed and horizon -- and its world; \
+              the Scala twin's signature, argument for argument"
+)]
+pub fn fidelity_rows_with_readings(
+    a: Anchors,
+    st: &WorldStats,
+    main: Option<&[Path]>,
+    years: usize,
+    paths: usize,
+    seed: u64,
+    w: &World,
+) -> (Vec<FidelityRow>, HorizonReadings) {
     let extreme_too = fit_targets(a)
         .iter()
         .any(|(n, _, _, _)| EXTREME_TARGETS.contains(n));
+    let hr = horizon_readings(a, st, main, years, paths, seed, w, extreme_too);
+    (rows_from_readings(a, st, &hr), hr)
+}
+
+/// Every fidelity row from a read's statistics and its readings at the records' horizons
+/// (`horizon_readings`).
+#[must_use]
+pub fn rows_from_readings(a: Anchors, st: &WorldStats, hr: &HorizonReadings) -> Vec<FidelityRow> {
     let HorizonReadings {
         banded,
         extreme: readings,
         history_band,
-    } = horizon_readings(a, st, main, years, paths, seed, w, extreme_too);
+        ..
+    } = hr;
     fit_targets(a)
         .into_iter()
         .map(|(name, get, want, _)| {
@@ -17067,11 +18044,40 @@ pub const PWR_STAT_NAMES: [&str; 2] = ["real 15y PWR p10 %", "PWR < 4% starts %"
 /// milliseconds a path, several times over.
 #[must_use]
 pub fn month_ends(n: usize) -> Vec<usize> {
-    let ym =
-        |i: usize| civil_year_month(SYNTHETIC_START_DAY + (i as i64 * 365) / DAYS_PER_YEAR as i64);
-    (0..n)
-        .filter(|&i| i + 1 == n || ym(i) != ym(i + 1))
-        .collect()
+    // a session's day never falls, so session i ends its month exactly when the next session's
+    // day reaches the first day of the month after i's: one calendar conversion per month, where
+    // comparing every session's (year, month) with its successor's took two per session
+    let day = |i: usize| SYNTHETIC_START_DAY + (i as i64 * 365) / DAYS_PER_YEAR as i64;
+    let next_month_start = |d: i64| {
+        let (y, m) = civil_year_month(d);
+        if m == 12 {
+            days_from_civil(y + 1, 1)
+        } else {
+            days_from_civil(y, m + 1)
+        }
+    };
+    let mut out = Vec::new();
+    let mut next = next_month_start(day(0));
+    for i in 0..n {
+        let d = day(i + 1);
+        if i + 1 == n || d >= next {
+            out.push(i);
+            next = next_month_start(d);
+        }
+    }
+    out
+}
+
+/// Days from 1970-01-01 to the first of `month` (1-12) of the proleptic Gregorian `year`
+/// (Hinnant's `days_from_civil`), `civil_year_month`'s inverse.
+fn days_from_civil(year: i64, month: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 /// The synthetic calendar's first session, 1900-01-02, in days from 1970-01-01.
@@ -20695,11 +21701,12 @@ pub fn verdict_of(
     }
 }
 
-/// The world a report ensemble of `report_at` runs at: `w`, or `w` carrying the verdict's 10-year
-/// leg where the leg is all that separates `w` from its verdict world and the verdict reads the
-/// same `(paths, years)`. The leg draws its own stream and leaves every other series bit-identical,
-/// so one ensemble serves the verdict and, the leg dropped (`drop_bond10`), the report -- where two
-/// would double a read's memory.
+/// The world a report ensemble of `report_at` runs at: `w`'s verdict world wherever the verdict
+/// reads the same `(paths, years)` and `w`'s macro panel is its own, else `w`. Every series the
+/// verdict world adds -- the derived channels, the dividends, the macro panel, the 10-year leg --
+/// draws its own stream and reaches no other series, so one ensemble serves the verdict and, those
+/// series dropped (`as_callers_paths`), the report: where two simulated the same primary twice and
+/// doubled a read's memory.
 #[must_use]
 pub fn report_world(
     a: Anchors,
@@ -20707,15 +21714,55 @@ pub fn report_world(
     report_at: (usize, usize),
     verdict_at: (usize, usize),
 ) -> World {
-    let vw = verdict_world(a, w);
-    let with_leg = World {
-        bond10: vw.bond10,
-        ..*w
-    };
-    if report_at == verdict_at && with_leg == vw {
-        with_leg
+    if report_at == verdict_at && w.macro_null == 0 {
+        verdict_world(a, w)
     } else {
         *w
+    }
+}
+
+/// Each path of `w`'s verdict world (`report_world`) as `w` simulates it: every series the verdict
+/// turned on and `w` leaves off dropped, and the channel level's readings `w` takes none of zeroed
+/// (`world_level` solves none without a channel, and the dividends' level apart). What remains is
+/// `w`'s own path to the bit.
+pub fn as_callers_paths(w: &World, sims: &mut [Path]) {
+    let (ch_on, div_on) = (channels_on(w), w.div_yield > 0.0);
+    for p in sims {
+        if !div_on {
+            p.div_yield = Vec::new();
+            p.traded = Vec::new();
+            p.chan_k_div = 0.0;
+        }
+        if w.sat_beta <= 0.0 {
+            p.sat = Vec::new();
+        }
+        if w.range_scale <= 0.0 {
+            p.log_hi = Vec::new();
+            p.log_lo = Vec::new();
+        }
+        if w.vol_idio <= 0.0 {
+            p.log_volume = Vec::new();
+        }
+        if w.overnight <= 0.0 {
+            p.log_open = Vec::new();
+        }
+        if w.sectors == 0 {
+            p.sectors = Vec::new();
+        }
+        if w.macro_panel == 0 {
+            p.macro_panel = None;
+        }
+        if w.bond10 <= 0.0 {
+            p.bond10 = Vec::new();
+            p.bond10_duration = 0.0;
+        }
+        if !ch_on {
+            p.chan_k = 0.0;
+            p.chan_k_sat = 0.0;
+            p.chan_k_vs = 0.0;
+            p.chan_k_iv = 0.0;
+            p.chan_k_dr = 0.0;
+        }
     }
 }
 
@@ -23769,11 +24816,21 @@ pub fn main() {
         seed,
         Some((&sims, run_st, (paths, years), &run_w)),
     );
+    // the verdict's added series dropped, the report reads `w`'s own paths; where the leg was all
+    // they added, only the leg's statistics change and nothing else is read again
     let st = if run_w == w {
         run_st
     } else {
-        drop_bond10(&mut sims);
-        measure_for(anchors, &sims, years)
+        as_callers_paths(&w, &mut sims);
+        let leg_only = World {
+            bond10: run_w.bond10,
+            ..w
+        } == run_w;
+        if leg_only {
+            run_st.with_bond10_from(&measure_needs(&sims, years, PathNeeds::LEG))
+        } else {
+            measure_for(anchors, &sims, years)
+        }
     };
     let verdict_st = verdict.st;
     let verdict_banded = banded_of(&verdict.rows);
@@ -27679,11 +28736,65 @@ mod bond10_tests {
             format!("{:?}", measure_for(a, &on, at.1)),
             format!("{:?}", measure_for(a, &off, at.1))
         );
+        // the report reads the leg again and nothing else (`main`)
+        let run_st = measure_for(a, &sim_paths(&run_w, at.0, at.1, DEFAULT_SEED), at.1);
+        assert_eq!(
+            format!(
+                "{:?}",
+                run_st.with_bond10_from(&measure_needs(&on, at.1, PathNeeds::LEG))
+            ),
+            format!("{:?}", measure_for(a, &off, at.1)),
+            "the leg read again is the whole read again"
+        );
     }
 
     /// THE TERM PREMIUM moves only the bonds, each by its duration: a premium of 0.2 a year of
     /// duration adds about 1.6 points a year to the 10-year leg and 2.7 to the 13.5-year bond, and
     /// leaves the equity and the rate bit-identical.
+    /// A verdict world's paths with its added series dropped are its caller's own, to the bit, for
+    /// callers that leave every derived series off, some on, or carry a leg of their own.
+    #[test]
+    fn the_report_reads_the_verdicts_paths_as_the_callers() {
+        let a = anchors_named("nasdaq");
+        let base = default_world();
+        let callers = [
+            base,
+            named_world("0.24.6-nasdaq").expect("recipe").0,
+            World {
+                sat_beta: 1.2,
+                div_yield: 1.0,
+                ..base
+            },
+            World {
+                sectors: 3,
+                bond10: 6.0,
+                ..base
+            },
+            named_world("0.24.6-sp500").expect("recipe").0,
+        ];
+        for w in callers {
+            let at = (3, 12);
+            let run_w = report_world(a, &w, at, at);
+            assert!(run_w == verdict_world(a, &w), "the verdict's own ensemble");
+            let mut sims = sim_paths(&run_w, at.0, at.1, DEFAULT_SEED);
+            as_callers_paths(&w, &mut sims);
+            assert_eq!(
+                format!("{sims:?}"),
+                format!("{:?}", sim_paths(&w, at.0, at.1, DEFAULT_SEED)),
+                "the caller's paths, to the bit"
+            );
+        }
+        let w = World {
+            macro_panel: 1,
+            macro_null: 1,
+            ..base
+        };
+        assert!(
+            report_world(a, &w, (3, 12), (3, 12)) == w,
+            "a sibling panel is its own"
+        );
+    }
+
     #[test]
     fn the_term_premium_moves_only_the_bonds_each_by_its_duration() {
         let (mut w, _) = named_world("0.24.6-sp500").expect("recipe");
@@ -27702,6 +28813,142 @@ mod bond10_tests {
             "the 10-year leg gains {g10} a year"
         );
         assert!((g - 2.7).abs() < 0.4, "the long bond gains {g} a year");
+    }
+
+    /// `replay_bonds` under another premium is the full simulation to the bit, on every field,
+    /// for the three shipped worlds with the leg and the macro panel on; and under the same
+    /// premium it is the taped path itself.
+    #[test]
+    fn a_term_premium_replay_is_the_full_simulation_to_the_bit() {
+        for name in ["0.24.6-sp500", "0.24.6-nasdaq", "0.24.4-sp500-channels"] {
+            let (mut w, _) = named_world(name).expect("recipe");
+            w.bond10 = VERDICT_BOND10;
+            w.macro_panel = 1;
+            for seed in [DEFAULT_SEED, 7] {
+                let (taped, tape) = simulate_taped(&w, 12, seed);
+                assert_eq!(
+                    format!("{:?}", simulate(&w, 12, seed)),
+                    format!("{taped:?}"),
+                    "{name}: taping changes nothing"
+                );
+                let same = replay_bonds(&w, &taped, &tape, seed).expect("replayable");
+                assert_eq!(
+                    format!("{same:?}"),
+                    format!("{taped:?}"),
+                    "{name}: the same premium"
+                );
+                let mut w2 = w;
+                w2.term_premium = w.term_premium + 0.17;
+                let replayed = replay_bonds(&w2, &taped, &tape, seed).expect("replayable");
+                let full = simulate(&w2, 12, seed);
+                assert_eq!(
+                    format!("{replayed:?}"),
+                    format!("{full:?}"),
+                    "{name} seed {seed}: the replay is the simulation"
+                );
+                assert!(
+                    replayed.bond != taped.bond,
+                    "{name}: the premium moved the bond"
+                );
+            }
+            assert!(tape_bytes_sane(&w), "{name}");
+        }
+        // a sibling panel cannot be replayed: the caller simulates
+        let (mut w, _) = named_world("0.24.6-sp500").expect("recipe");
+        w.macro_panel = 1;
+        w.macro_null = 1;
+        let (p, t) = simulate_taped(&w, 5, DEFAULT_SEED);
+        assert!(replay_bonds(&w, &p, &t, DEFAULT_SEED).is_none());
+    }
+
+    /// A term-premium move read from the cache is the full read of the moved world, bit for bit:
+    /// its statistics, its fidelity rows and its readings at every horizon.
+    #[test]
+    fn a_term_premium_reread_is_the_full_read_to_the_bit() {
+        let sorted = |m: &std::collections::HashMap<&'static str, Vec<f64>>| {
+            let mut v: Vec<(&str, Vec<u64>)> = m
+                .iter()
+                .map(|(k, xs)| (*k, xs.iter().map(|x| x.to_bits()).collect()))
+                .collect();
+            v.sort();
+            v
+        };
+        for (name, set) in [("0.24.6-sp500", "sp500"), ("0.24.6-nasdaq", "nasdaq")] {
+            let a = anchors_named(set);
+            let w = named_world(name).expect("recipe").0;
+            let vw = verdict_world(a, &w);
+            let (paths, years, seed) = (6, 70, 11);
+            let (sims, tapes): (Vec<Path>, Vec<BondTape>) =
+                sim_paths_taped(&vw, paths, years, seed).into_iter().unzip();
+            let st = measure(&sims, years);
+            let (_, hr) = fidelity_rows_with_readings(a, &st, Some(&sims), years, paths, seed, &w);
+            let keep = TpKeep::new(sims, tapes, years, seed);
+            let mut w2 = w;
+            w2.term_premium = w.term_premium + 0.13;
+            let vw2 = verdict_world(a, &w2);
+            let (st2, rows2, hr2) = tp_reread(a, &vw2, &keep, &st, &hr).expect("replayable");
+            let full = sim_paths(&vw2, paths, years, seed);
+            let st_full = measure(&full, years);
+            let (rows_full, hr_full) =
+                fidelity_rows_with_readings(a, &st_full, Some(&full), years, paths, seed, &w2);
+            assert_eq!(
+                format!("{st2:?}"),
+                format!("{st_full:?}"),
+                "{name}: statistics"
+            );
+            assert_eq!(
+                format!("{rows2:?}"),
+                format!("{rows_full:?}"),
+                "{name}: rows"
+            );
+            assert_eq!(
+                sorted(&hr2.extreme),
+                sorted(&hr_full.extreme),
+                "{name}: extreme"
+            );
+            assert_eq!(
+                sorted(&hr2.extreme_by_path),
+                sorted(&hr_full.extreme_by_path),
+                "{name}: per path"
+            );
+            let mut b2: Vec<(&str, u64)> =
+                hr2.banded.iter().map(|(k, v)| (*k, v.to_bits())).collect();
+            let mut bf: Vec<(&str, u64)> = hr_full
+                .banded
+                .iter()
+                .map(|(k, v)| (*k, v.to_bits()))
+                .collect();
+            b2.sort_unstable();
+            bf.sort_unstable();
+            assert_eq!(b2, bf, "{name}: banded");
+            assert_eq!(
+                sorted(&hr2.bond10_by_path),
+                sorted(&hr_full.bond10_by_path),
+                "{name}: the leg per path"
+            );
+            for r in BOND10_BAND_ROWS {
+                let xs = &hr_full.bond10_by_path[r];
+                assert_eq!(xs.len(), paths, "{name} {r}: one per path");
+                let (_, get, _, _) = fit_targets(a).into_iter().find(|t| t.0 == r).expect("row");
+                let one = measure(&[full[2].head(a.bond10_years)], a.bond10_years);
+                assert_eq!(
+                    xs[2].to_bits(),
+                    get(&one).to_bits(),
+                    "{name} {r}: path 2 alone"
+                );
+            }
+            assert!(
+                st2.bond_vol != st.bond_vol,
+                "{name}: the move moved the bond"
+            );
+            assert!(keep.bytes() > 0);
+        }
+    }
+
+    fn tape_bytes_sane(w: &World) -> bool {
+        let (_, t) = simulate_taped(w, 5, DEFAULT_SEED);
+        let tot = 5 * DAYS_PER_YEAR + BURN_IN;
+        t.bytes() >= 4 * 8 * tot && t.bytes() <= 9 * 8 * tot
     }
 
     /// The leg's volatility scales with its duration: at 4 years it is about half of 8's.
@@ -29353,6 +30600,68 @@ mod record_band_tests {
                     xs.len() == ys.len()
                         && xs.iter().zip(ys).all(|(x, y)| x.to_bits() == y.to_bits()),
                     "{recipe} {name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_selective_read_matches_the_full_read_to_the_bit() {
+        // a record horizon's read computes only the families its banded rows take
+        // (`PathNeeds::of_rows`); each row reads what the full read reads, bit for bit
+        let same = |x: f64, y: f64| x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan());
+        for (recipe, set) in [("0.24.4", "sp500"), ("0.24.4-nasdaq", "nasdaq")] {
+            let mut w = named_world(recipe).expect("recipe").0;
+            w.bond10 = VERDICT_BOND10;
+            let a = anchors_named(set);
+            let sims = sim_paths(&w, 6, 30, 7);
+            let full = measure(&sims, 30);
+            let mut banded = 0;
+            for (name, get, _, _) in fit_targets(a) {
+                if !a.record_bands.iter().any(|b| b.name == name) {
+                    continue;
+                }
+                banded += 1;
+                let nd = PathNeeds::of_rows(&[name]);
+                assert!(!nd.rest, "{set} {name}: a banded row names a family");
+                let part = measure_needs(&sims, 30, nd);
+                assert!(
+                    same(get(&full), get(&part)),
+                    "{set} {name}: {} against the full read's {}",
+                    get(&part),
+                    get(&full)
+                );
+            }
+            assert!(banded >= 15, "{set}: {banded} banded rows");
+            let none = measure_needs(&sims, 30, PathNeeds::NONE);
+            assert!(none.vol.is_nan() && none.multi_year[0].is_nan() && none.bond_vol.is_nan());
+        }
+    }
+
+    #[test]
+    fn the_extreme_readings_come_one_per_path_in_path_order() {
+        // `extreme_by_path` keeps every path's reading, NaN where the history has none, so a caller
+        // can score the rows jointly; `extreme` is its finite part (the bond crash rows': the
+        // histories finite on both)
+        let w = named_world("0.24.4-nasdaq").expect("recipe").0;
+        let a = anchors_named("nasdaq");
+        let main = sim_paths(&w, 8, 64, 7);
+        let st = measure(&main, 64);
+        let hr = horizon_readings(a, &st, Some(&main), 64, 8, 7, &w, true);
+        assert_eq!(hr.extreme_by_path.len(), hr.extreme.len());
+        for (name, per) in &hr.extreme_by_path {
+            assert_eq!(per.len(), 8, "{name}: one reading per path");
+            let finite: Vec<f64> = per.iter().copied().filter(|x| !x.is_nan()).collect();
+            let xs = &hr.extreme[name];
+            if BOND_CRASH_ROWS.contains(name) {
+                assert!(xs.iter().all(|x| finite.contains(x)), "{name}");
+            } else {
+                assert_eq!(xs.len(), finite.len(), "{name}");
+                assert!(
+                    xs.iter()
+                        .zip(&finite)
+                        .all(|(x, y)| x.to_bits() == y.to_bits()),
+                    "{name}: the finite readings in path order"
                 );
             }
         }
@@ -31698,6 +33007,16 @@ mod timing_tests {
             let d = session_dates(n, "");
             let want: Vec<usize> = (0..n)
                 .filter(|&i| i + 1 == n || d[i][..7] != d[i + 1][..7])
+                .collect();
+            assert_eq!(month_ends(n), want, "{n} sessions");
+        }
+        // and the per-session definition, at every length to six years
+        let ym = |i: usize| {
+            civil_year_month(SYNTHETIC_START_DAY + (i as i64 * 365) / DAYS_PER_YEAR as i64)
+        };
+        for n in 0..1_500usize {
+            let want: Vec<usize> = (0..n)
+                .filter(|&i| i + 1 == n || ym(i) != ym(i + 1))
                 .collect();
             assert_eq!(month_ends(n), want, "{n} sessions");
         }

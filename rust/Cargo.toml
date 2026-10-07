@@ -96,8 +96,11 @@ market-sim = []
 # binaries only (`#[global_allocator]` in src/bin): a program has one allocator, and a library
 # must not choose it for the program linking it, so a dependent crate's allocator is untouched.
 # Output is byte-identical; on Windows the system heap is what bounds a simulator read (six
-# search reads 3.9 s -> 1.4 s). Compiles mimalloc's C source, so it needs a C compiler; a
-# consumer that wants only the library builds with `default-features = false`.
+# search reads 3.9 s -> 1.4 s). mimalloc v2, never purging (`fast_alloc::keep_freed_memory`),
+# not v3: v3 hands a freed large buffer back as fresh pages whatever its purge setting, and a
+# 200 x 100 read paid a fifth of its CPU in page faults. Compiles mimalloc's C source, so it
+# needs a C compiler; a consumer that wants only the library builds with
+# `default-features = false`.
 fast-alloc = ["dep:mimalloc"]
 # Route ndarray's matmul through a system OpenBLAS instead of the pure-Rust
 # `matrixmultiply` kernels. Worth ~3x on the OOS paths, whose gemms are skinny
@@ -118,7 +121,7 @@ rayon = "1.10"
 thiserror = "2"
 blas-src = { version = "0.11", optional = true, features = ["openblas"] }
 openblas-src = { version = "0.10", optional = true, features = ["system"] }
-mimalloc = { version = "0.1.52", optional = true, default-features = false }
+mimalloc = { version = "0.1.52", optional = true, default-features = false, features = ["v2"] }
 
 [dev-dependencies]
 tempfile = "3"

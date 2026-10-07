@@ -46,6 +46,8 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 
 use uni::NumPyRng;
+#[cfg(feature = "fast-alloc")]
+use uni::fast_alloc;
 use uni::market_sim::Anchors;
 use uni::market_sim::World;
 use uni::market_sim::{self as ms};
@@ -2136,6 +2138,8 @@ fn fnum(v: &str, flag: &str) -> f64 {
     reason = "a sequence of independent modes -- export, prune, holdout, search -- each short, and               splitting them would separate each from the settings it is judged under"
 )]
 fn main() {
+    #[cfg(feature = "fast-alloc")]
+    fast_alloc::keep_freed_memory();
     let c = parse_args();
     if c.reps < 1 {
         usage("-reps wants at least 1");

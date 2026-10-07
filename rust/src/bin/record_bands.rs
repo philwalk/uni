@@ -22,6 +22,8 @@
     reason = "a console tool: the fixture rows are its output and the input summary its receipt"
 )]
 
+#[cfg(feature = "fast-alloc")]
+use uni::fast_alloc;
 use uni::market_sim::{self as ms};
 
 // the binary's allocator: see the `fast-alloc` feature
@@ -881,6 +883,8 @@ fn sector_mode(args: &[String]) -> bool {
     reason = "one dispatch over the modes, read once, mirroring the Scala twin's main"
 )]
 fn main() {
+    #[cfg(feature = "fast-alloc")]
+    fast_alloc::keep_freed_memory();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // a mode that reads its own arguments runs and is done
     if basket_mode(&args) || sector_mode(&args) || timing_mode(&args) || volexit_mode(&args) {
