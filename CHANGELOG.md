@@ -72,18 +72,20 @@ members.
 
 | | rows | `0.24.5` set | `0.24.6` set | change, 95% interval |
 |---|---|---|---|---|
-| S&P | 53 | 25.87 | 24.95 | −0.92 (−1.82 to +0.11) |
-| Nasdaq | 45 | 23.18 | 23.42 | +0.24 (−0.34 to +0.88) |
+| S&P | 56 | 29.01 | 26.22 | −2.78 (−3.66 to −1.99) |
+| Nasdaq | 48 | 25.94 | 23.32 | −2.62 (−3.17 to −2.08) |
 
-Neither set changes beyond its sampling error; the S&P's sits nearer the record. What moved:
+Both sets sit nearer the record beyond their sampling error. What moved:
 
-- **S&P:** nearer on the up-day share (1.23 → 0.78), crashes a century (0.86 → 0.66), the
-  60-session variance ratio (0.66 → 0.48) and lag-1 clustering (0.65 → 0.54); further on lag-20
-  clustering (0.66 → 0.94) and equity d10 (0.56 → 0.70).
-- **Nasdaq:** nearer on leverage corr (1.05 → 0.89), the 120- and 250-session variance ratios and
-  the long-window decline gap; further on the long-window 3-year variance ratio (0.74 → 0.90), the
-  avoided share (0.69 → 0.85), the long-window annual autocorrelation (0.76 → 0.91) and the up-day
-  share.
+- **S&P:** nearer on the up-day share (1.23 → 0.32), the 10-year leg's depth vs vol (1.43 → 0.63),
+  the bond's depth vs vol (0.62 → 0.27), kurtosis (0.74 → 0.48) and crashes a century (0.86 →
+  0.61); further on equity vol (0.62 → 1.01), the rate floor share (0.75 → 1.02) and the avoided
+  share (0.47 → 0.72).
+- **Nasdaq:** nearer on the 10-year leg's depth vs vol (0.92 → 0.21) and its excess return (0.90 →
+  0.25), the bond's depth vs vol (0.53 → 0.23) and its volatility (0.50 → 0.27), and the inflation
+  crash (0.50 → 0.29); further on the long window's 3-year variance ratio (0.74 → 0.95), the bubble
+  coupling (1.98 → 2.18), the long window's 5-year variance ratio (0.45 → 0.62) and its 3-year
+  p95 excess (0.30 → 0.47).
 - **Rows outside the central 90%:** on the S&P the record falls there on the 3-year variance ratio
   (at the 3rd percentile of the members' single histories), the annual autocorrelation (the 4th)
   and the decline gap p90 y (the 5th), and the set's leverage corr reads at the 97th percentile of
