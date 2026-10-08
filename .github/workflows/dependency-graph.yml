@@ -28,4 +28,4 @@ jobs:
       - uses: scalacenter/sbt-dependency-submission@v2
         with:
           working-directory: './'
-          configs-ignore: scala-doc-tool
+          configs-ignore: scala-doc-tool scala-tool
