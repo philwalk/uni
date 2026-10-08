@@ -1,4 +1,4 @@
-## Unreleased
+## v0.24.6 — 2026-10-08
 
 **Each set on its own record.** The Nasdaq set grades its timing rows, its bubble coupling, its
 long-window multi-year rows and the variance-ratio profile's 250-session rung on the 1971-2026
@@ -59,7 +59,8 @@ seeds 1-4, and chosen one member per quantile of its drift. Return per vol runs 
 0.062. Every member passes every class on seeds 1-4 under the set rule; the sets miss 0.23 rows a
 read on the S&P (0.42 for `0.24.5-sp500.json`) and 1.18 on the Nasdaq (0.95), 0.90 of them the
 bubble coupling, which the recipe misses too. Each member carries `coverageWeight` 1/30: the set is
-an equal-weight sample with the recipe one member of it.
+an equal-weight sample with the recipe one member of it. A sample twice the size, pooled with an
+independent replicate, reproduces both sets within their sampling error.
 
 **A set is scored against the record.** A median member's distance from the record rewards
 members bunched at it, so it cannot test a set that samples a dial. Each set is now scored by a

@@ -13570,6 +13570,9 @@ fn gate_checks_with(
                 && st.corr_calm < 0.35,
             Mechanism,
         ),
+        // The floor sits inside the record's band: this stress recursion run on the real 20-year
+        // par bond (FRED DGS20 1962-2026) puts 0.66% of sessions above 0.5, one-year blocks
+        // 0.08-1.06%.
         (
             n("bond spiral engages, not always"),
             st.pct_bond_stress > 0.002 && st.pct_bond_stress < 0.5,
