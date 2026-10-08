@@ -302,18 +302,20 @@ value, which the stationarity row now refuses, and those with a nonzero `bustAmp
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
 was searched under it. **The 0.24.6 sets** are the two to draw from now: `0.24.6-nasdaq.json` and
 `0.24.6-sp500.json`, 30 members each, member 0 the recipe itself (the 0.24.5 sets, which ran low on
-return per vol, stay as published). The members sample the long-run drift's uncertainty given the
-record: one history pins the drift only to its own sampling width, and a set whose members shared
-one drift would tell a consumer the long-run return is known exactly. Members 1-29 are drawn from a
-Markov-chain sample over every searched dial under the membership rule and the record's
-return-per-vol likelihood -- a world's drift free over its prior range, the other dials moving with
-it -- seeded from the previous set, judged on seeds 1-4 and chosen one per quantile of the sample's
-drift. Their return per vol runs 0.17-0.82 on the Nasdaq (QQQ 0.38; drift 0.097-0.243) and
-0.52-0.83 on the S&P (CRSP 1954-2026 0.69; drift 0.113-0.167). Every member's `coverageWeight` is
+return per vol, stay as published). The members sample what the record leaves uncertain: one
+history pins the long-run drift, the term premium and the inflation regime only to its own sampling
+width, and a set whose members shared one value would tell a consumer it is known exactly. Members
+1-29 are drawn from a Markov-chain sample over every searched dial under the membership rule and the
+record's likelihood over every banded row and the two bond crash rows -- a Gaussian copula on the
+worlds' single histories, each row's marginal a kernel density -- seeded from the previous set,
+judged on seeds 1-4 and chosen one per quantile of the sample's drift. Their return per vol runs
+0.22-0.65 on the Nasdaq (QQQ 0.38; drift 0.118-0.224) and 0.47-0.73 on the S&P (CRSP 1954-2026
+0.69; drift 0.119-0.167). Every member's `coverageWeight` is
 1/30: the set is an equal-weight sample with the recipe one member of it. The return-per-vol gate is the record's own joint band (Nasdaq -0.18-0.97, S&P
 0.31-1.09), so it refuses only what the record rules out. A member's `seededFrom` names the chain
-particle it was drawn from (run id, founder index), its `score` is the chain's log-likelihood of the
-record's return per vol under that member, not a search score, and its `worstRow` is a placeholder.
+particle it was drawn from (run id, founder index), its `score` is the chain's estimate of the
+record's log-likelihood under that member (the copula at the read that accepted it, about 0.9 from
+read to read), not a search score, and its `worstRow` reads `chain log likelihood`.
 The membership test is
 the verdict's own read on four fresh seeds at 200 paths × 100 years with every derived series and
 the macro panel graded: every class passes on all four, and no row misses on three or more of them
@@ -329,13 +331,13 @@ members' source worlds were searched at that same read, 200 × 100 with every cl
 at fewer paths or under 100 years, or gating realism and mechanism alone, admits mostly members the
 test rejects (under 100 years the 250-session rung grades another era). The set-level reading is
 each row's median over members and seeds, its range across reads, beside the record: on the S&P set
-return per vol 0.70 (0.51-0.84; 0.69), the avoided share 52.4% (43.8-61.1; 64.7), kurtosis 24.8
-(21.8), equity vol 16.7% (15.7%), the median decline 0.71 years (0.66), the 3-year variance ratio
-1.22 (0.75), the wings 6.6 / 7.6 (7.6 / 6.7), the floor share 10.2% (14.6%), leverage corr -0.07,
-0.17 misses a read; on the Nasdaq set return per vol 0.37 (0.16-0.86; 0.38), the avoided share
-39.3% (29.8-49.3; the splice's 59.8), kurtosis 9.8 (9.6), equity vol 24.3% (26.9%), the bubble
-coupling +0.14 (+1.10, missed on 82 reads in 120), the wings 6.5 / 6.7 (7.6 / 6.7), the floor
-share 31% (37%), 0.91 misses a read. To run one:
+return per vol 0.65 (0.46-0.74; 0.69), the avoided share 49.2% (44.9-59.1; 64.7), kurtosis 18.9
+(21.8), equity vol 17.5% (15.7%), the median decline 0.73 years (0.66), the 3-year variance ratio
+1.20 (0.75), the wings 6.3 / 9.4 (7.6 / 6.7), the floor share 7.2% (14.6%), leverage corr -0.07
+(-0.09), 0.23 misses a read; on the Nasdaq set return per vol 0.45 (0.20-0.69; 0.38), the avoided
+share 46.2% (36.3-53.6; the splice's 59.8), kurtosis 9.9 (9.6), equity vol 24.7% (26.9%), the
+bubble coupling +0.09 (+1.10, missed on 108 reads in 120), the wings 6.6 / 7.7 (7.6 / 6.7), the
+floor share 28% (37%), leverage corr -0.06 (-0.11), 1.18 misses a read. To run one:
 
 ```
 market_sim.exe -worldset test-data/worlds/0.24.6-nasdaq.json -worldindex 3 -anchors nasdaq -paths 200 -years 40 -emitall -emit m3.tsv
@@ -1737,7 +1739,7 @@ inside its band but one: the avoided share's record at the 84th-90th percentile 
 long-window multi-year rows between the 2nd and 39th, the 250-session rung at the 34th-41st. The
 bubble coupling misses on every seed, the record at the 96th-97th percentile (92nd-94th against
 the NDX from 1990). All 30 members of `0.24.6-nasdaq.json` pass the set rule; their avoided
-share reads 39.6% and their coupling +0.14.
+share reads 46.2% and their coupling +0.09.
 
 ## A basket of names — `-basket`
 

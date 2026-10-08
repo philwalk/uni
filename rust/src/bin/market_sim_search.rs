@@ -2139,7 +2139,7 @@ fn fnum(v: &str, flag: &str) -> f64 {
 )]
 fn main() {
     #[cfg(feature = "fast-alloc")]
-    fast_alloc::keep_freed_memory();
+    fast_alloc::reuse_freed_memory();
     let c = parse_args();
     if c.reps < 1 {
         usage("-reps wants at least 1");

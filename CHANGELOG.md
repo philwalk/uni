@@ -46,18 +46,20 @@ under this release's grading, it misses 1.00 rows a seed against 1.50 (better on
 2; sign test p 0.007): the coupling on 21 seeds against 17, the 10-year rows on one against 17, the
 rate floor share on two against none; every class passes on all 24 for both.
 
-**The sets sample the drift.** `0.24.6-sp500.json` and `0.24.6-nasdaq.json` hold 30 members each,
-member 0 the recipe. One history pins the long-run drift only to its own sampling width, and a set
-whose members shared one drift would tell a consumer the long-run return is known exactly. So
-members 1-29 are drawn from a Markov-chain sample over every searched dial under the membership rule
-and the record's return-per-vol likelihood — a world's drift free over its prior range, the other
-dials moving with it — seeded from the previous set, judged on seeds 1-4 and chosen one per quantile
-of the sample's drift. Return per vol runs 0.52-0.83 on the S&P (CRSP 1954-2026 0.69; drift
-0.113-0.167) and 0.17-0.82 on the Nasdaq (QQQ 0.38; drift 0.097-0.243). Every member passes every
-class on seeds 1-4 under the set rule; the sets miss 0.17 rows a read on the S&P (0.42 for
-`0.24.5-sp500.json`) and 0.91 on the Nasdaq (0.95), 0.68 of them the bubble coupling, which the
-recipe misses too. Each member carries `coverageWeight` 1/30: the set is an equal-weight sample
-with the recipe one member of it.
+**The sets sample what the record leaves uncertain.** `0.24.6-sp500.json` and `0.24.6-nasdaq.json`
+hold 30 members each, member 0 the recipe. One history pins the long-run drift, the term premium and
+the inflation regime only to its own sampling width, and a set whose members shared one value would
+tell a consumer it is known exactly. So members 1-29 are drawn from a Markov-chain sample over every
+searched dial under the membership rule and the record's likelihood over every banded row and the
+two bond crash rows: a Gaussian copula on the worlds' single histories, each row's marginal a kernel
+density, so no row's scale is set by hand. The sample is seeded from the previous set, judged on
+seeds 1-4, and chosen one member per quantile of its drift. Return per vol runs 0.47-0.73 on the S&P
+(CRSP 1954-2026 0.69; drift 0.119-0.167) and 0.22-0.65 on the Nasdaq (QQQ 0.38; drift
+0.118-0.224); the term premium's median is 0.16 and 0.12, the inflation regime's size 0.073 and
+0.062. Every member passes every class on seeds 1-4 under the set rule; the sets miss 0.23 rows a
+read on the S&P (0.42 for `0.24.5-sp500.json`) and 1.18 on the Nasdaq (0.95), 0.90 of them the
+bubble coupling, which the recipe misses too. Each member carries `coverageWeight` 1/30: the set is
+an equal-weight sample with the recipe one member of it.
 
 **A set is scored against the record.** A median member's distance from the record rewards
 members bunched at it, so it cannot test a set that samples a dial. Each set is now scored by a
@@ -82,8 +84,10 @@ Neither set changes beyond its sampling error; the S&P's sits nearer the record.
   the long-window decline gap; further on the long-window 3-year variance ratio (0.74 → 0.90), the
   avoided share (0.69 → 0.85), the long-window annual autocorrelation (0.76 → 0.91) and the up-day
   share.
-- **Rows outside the central 90%:** the record falls there on one S&P row (decline gap p90 y, at
-  the 5th percentile) and one Nasdaq row (bubble coupling 3y, the 97th), the same two as before.
+- **Rows outside the central 90%:** on the S&P the record falls there on the 3-year variance ratio
+  (at the 3rd percentile of the members' single histories), the annual autocorrelation (the 4th)
+  and the decline gap p90 y (the 5th), and the set's leverage corr reads at the 97th percentile of
+  the record's own resamples; on the Nasdaq only the bubble coupling 3y (the record at the 98th).
 
 **The volatility exit, at 1x and 3x.** Two record-band rows read the consumer's simple
 volatility exit, written down completely: hold the index while the sample sd of the last 24 daily
@@ -254,21 +258,23 @@ The warm rows time the simulation, statistics and rows alone. A one-shot read ru
 alone (`-XX:TieredStopAtLevel=1`). A long-lived JVM should keep the default, which is about a quarter
 faster once warm.
 
-**The Rust binaries keep freed memory.** The simulator's binaries link mimalloc v2 and set it never
-to purge, first thing in `main`. mimalloc v3 handed every freed large buffer back as fresh pages,
-whatever its purge setting, so a 200 × 100 read took 1.7 million page faults and a fifth of its CPU
-in the kernel. Outputs are byte-identical. The memory peak rises: 0.5 GB for a process that reads
-once, 1.2 GB for one that reads repeatedly.
+**The Rust binaries reuse freed memory.** The simulator's binaries link mimalloc v2 and set it to
+purge freed memory only after a second unused, first thing in `main`. mimalloc v3 handed every freed
+large buffer back as fresh pages, whatever its purge setting, so a 200 × 100 read took 1.7 million
+page faults and a fifth of its CPU in the kernel. Within the second a read's buffers come back
+committed, and a long-lived process still returns what it stops using. Outputs are byte-identical.
 
-| 200 × 100 read, 24 threads, one `market_sim` process | before (v3) | after (v2, no purge) |
+| 200 × 100 read, 24 threads, one `market_sim` process | before (v3) | after (v2, 1 s purge) |
 |---|---|---|
-| CPU seconds, S&P | 14.2 | 11.6 |
-| CPU seconds, Nasdaq | 15.7 | 12.6 |
-| wall seconds, S&P | 1.06 | 0.78 |
+| CPU seconds, S&P | 14.3 | 12.0 |
+| CPU seconds, Nasdaq | 16.0 | 11.9 |
+| wall seconds, S&P | 1.06 | 0.77 |
 | kernel seconds, S&P | 3.4 | 1.0 |
 | peak working set, S&P | 2.4 GB | 2.9 GB |
 
-Repeated reads in one process gain more: 0.99 → 0.69 s wall each, with kernel time 2.75 → 0.29 s.
+Repeated reads in one process gain more: 0.99 → 0.64 s wall each, with kernel time 2.75 → 0.22 s,
+the working set settling about 1 GB higher. Never purging (`keep_freed_memory`) is no faster, and
+a long-lived process then holds every thread's peak.
 
 **Upgrading**
 
@@ -318,9 +324,10 @@ Repeated reads in one process gain more: 0.99 → 0.69 s wall each, with kernel 
 - The `return per vol` gate is the record's own joint band: `return per vol 0.31-1.09` on the S&P
   (was `0.50-0.85`), `return per vol -0.18-0.97` on the Nasdaq (was `0.27-0.47`). A reader matching
   the gate's label sees the new band in the name.
-- A set member's `seededFrom` names the chain particle it was drawn from (run id, founder index),
-  its `score` is the chain's log-likelihood of the record's return per vol under that member, not a
-  search score, and its `worstRow` is a placeholder.
+- A set member's `seededFrom` names the chain particle it was drawn from (run id, founder index).
+  Its `score` is the chain's estimate of the record's log-likelihood under that member, the copula
+  over every banded row and the two crash rows at the read that accepted it (about 0.9 from read to
+  read), not a search score, and its `worstRow` reads `chain log likelihood`.
 - `record_bands -bond10 -yahoo DGS10.csv -fred DFF.csv` prints the three `bond10` rows (twin:
   `recordBands.sc -bond10`).
 - Rust: `World::bond10`, `World::term_premium`, `VERDICT_BOND10`, `BOND10_BAND_ROWS`,
@@ -343,8 +350,9 @@ Repeated reads in one process gain more: 0.99 → 0.69 s wall each, with kernel 
 - API, the term-premium replay: `BondTape`, `simulate_taped`, `sim_paths_taped`, `replay_bonds`,
   `TpKeep` (`new`, `bytes`), `tp_reread` and `WorldStats::with_bonds_from`. Scala `BondTape`,
   `simulateTaped`, `simPathsTaped`, `replayBonds`, `TpKeep`, `tpReread`, `withBondsFrom`.
-- API, the allocator: `fast_alloc::keep_freed_memory` (feature `fast-alloc`), which a binary that
-  installs mimalloc calls first in `main`; the crate's mimalloc dependency builds v2.
+- API, the allocator (feature `fast-alloc`): `fast_alloc::reuse_freed_memory`, which a binary that
+  installs mimalloc calls first in `main`, and `keep_freed_memory`, never purging, for a one-read
+  process; the crate's mimalloc dependency builds v2.
 - API, the bond crash rows: `Anchors` gains `bond_crash_window`, `bond_crash_years` and
   `bond_crash` (Scala `bondCrashWindow`, `bondCrashYears`, `bondCrash`); new `BOND_CRASH_ROWS`,
   `BOND_CRASH_ALPHA` and the reported `BOND_TLT_RECORD` (Scala `BondCrashRows`, `BondCrashAlpha`,

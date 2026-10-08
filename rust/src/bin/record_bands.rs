@@ -884,7 +884,7 @@ fn sector_mode(args: &[String]) -> bool {
 )]
 fn main() {
     #[cfg(feature = "fast-alloc")]
-    fast_alloc::keep_freed_memory();
+    fast_alloc::reuse_freed_memory();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // a mode that reads its own arguments runs and is done
     if basket_mode(&args) || sector_mode(&args) || timing_mode(&args) || volexit_mode(&args) {

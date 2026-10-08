@@ -1171,7 +1171,7 @@ fn one_step(su: &Setup) -> Result<(Step, Trail), &'static str> {
 
 fn main() {
     #[cfg(feature = "fast-alloc")]
-    fast_alloc::keep_freed_memory();
+    fast_alloc::reuse_freed_memory();
     let mut su = Setup::new(parse_args());
     println!(
         "reach: {} on {}, {} x {}y on {} shared seeds; step {} of each dial's width, trust {} steps, robust {} se",

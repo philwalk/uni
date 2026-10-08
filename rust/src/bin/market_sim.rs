@@ -11,6 +11,6 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
     #[cfg(feature = "fast-alloc")]
-    fast_alloc::keep_freed_memory();
+    fast_alloc::reuse_freed_memory();
     market_sim::main();
 }
