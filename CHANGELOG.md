@@ -1,3 +1,17 @@
+## v0.24.7 — 2026-10-10
+
+**`-emitall` writes its paths in parallel.** A batch's TSVs and sidecars were written one after
+another on the main thread, which was 91% of a 128-path emit: the simulation finished on every
+core in 3.5 s and the writing took 35 s on one, whatever the core count. Each path's files
+depend on that path, the spec and the shared verdict alone, so `write_emitted_batch` writes
+them on rayon, and the output is byte-identical (256 of 256 files, folio's bundle command).
+A 128-path x 48-year emit takes 6.6 s against 39.1 s on a 24-core VM.
+
+- A path holding a non-finite value now refuses the whole batch before any file is written;
+  0.24.6 wrote paths `0..k-1` and then refused path `k`, leaving a partial directory. The
+  message and exit code are unchanged. `-emitpath` and `-emitf32` are untouched.
+- The Scala twin is unchanged: nothing it is compared against moved.
+
 ## v0.24.6 — 2026-10-08
 
 **Each set on its own record.** The Nasdaq set grades its timing rows, its bubble coupling, its

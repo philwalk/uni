@@ -21851,6 +21851,53 @@ pub fn write_emitted(a: Anchors, file: &str, p: &Path, k: usize, spec: EmitSpec<
     write_emit_sidecar(a, file, &shape, spec.world, v);
 }
 
+/// Whether every series `-emit` writes of `p` is finite; a path failing this is refused, not
+/// written, by both emit arms in `main`.
+pub fn path_is_finite(p: &Path) -> bool {
+    [
+        &p.price,
+        &p.sat,
+        &p.log_hi,
+        &p.log_lo,
+        &p.log_volume,
+        &p.div_yield,
+        &p.traded,
+        &p.log_open,
+    ]
+    .iter()
+    .all(|s| s.iter().all(|x| x.is_finite()))
+        && p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite()))
+}
+
+/// `-emitall`'s batch: path `from + i` to its indexed name, every path in parallel, since a
+/// path's TSV and sidecar depend on that path, `spec` and the shared verdict alone. A path
+/// holding a non-finite value refuses the whole batch before any file is written, naming the
+/// first such path and its file. Returns the names in index order.
+pub fn write_emitted_batch(
+    a: Anchors,
+    emit: &str,
+    batch: &[Path],
+    from: usize,
+    spec: EmitSpec<'_>,
+    v: &Verdict,
+) -> Result<Vec<String>, String> {
+    let width = index_width(from + batch.len() - 1);
+    let names: Vec<String> = (from..from + batch.len())
+        .map(|k| indexed_name(emit, k, width))
+        .collect();
+    for (k, (p, f)) in (from..).zip(batch.iter().zip(&names)) {
+        if !path_is_finite(p) {
+            return Err(format!(
+                "path {k} holds a non-finite value; nothing written to {f}"
+            ));
+        }
+    }
+    names.par_iter().enumerate().for_each(|(i, f)| {
+        write_emitted(a, f, &batch[i], from + i, spec, v);
+    });
+    Ok(names)
+}
+
 /// The path or chunk block's horizon and calendar lines, shared by both formats.
 fn calendar_lines(spec: EmitSpec<'_>, dates: &[String]) -> String {
     let calendar = if spec.start_ymd.is_empty() {
@@ -24872,16 +24919,7 @@ pub fn main() {
         // world is still a world; a path holding a non-finite price is not data at all. The dial
         // domains close the routes reachable from the command line; this closes the file.
         let refuse_non_finite = |p: &Path, k: usize, f: &str| {
-            if !p.price.iter().all(|x| x.is_finite())
-                || !p.sat.iter().all(|x| x.is_finite())
-                || !p.log_hi.iter().all(|x| x.is_finite())
-                || !p.log_lo.iter().all(|x| x.is_finite())
-                || !p.log_volume.iter().all(|x| x.is_finite())
-                || !p.div_yield.iter().all(|x| x.is_finite())
-                || !p.traded.iter().all(|x| x.is_finite())
-                || !p.log_open.iter().all(|x| x.is_finite())
-                || !p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite()))
-            {
+            if !path_is_finite(p) {
                 eprintln!("REFUSED: path {k} holds a non-finite value; nothing written to {f}");
                 std::process::exit(2);
             }
@@ -24895,15 +24933,13 @@ pub fn main() {
             } else {
                 sim_path_range(&w, emit_from, paths, years, seed)
             };
-            let width = index_width(emit_from + paths - 1);
-            (emit_from..emit_from + paths)
-                .map(|k| {
-                    let f = indexed_name(&emit, k, width);
-                    refuse_non_finite(&batch[k - emit_from], k, &f);
-                    write_emitted(anchors, &f, &batch[k - emit_from], k, spec, &verdict);
-                    f
-                })
-                .collect()
+            match write_emitted_batch(anchors, &emit, &batch, emit_from, spec, &verdict) {
+                Ok(names) => names,
+                Err(m) => {
+                    eprintln!("REFUSED: {m}");
+                    std::process::exit(2);
+                }
+            }
         } else {
             let p = path_at(emit_path);
             refuse_non_finite(&p, emit_path, &emit);
@@ -25757,6 +25793,61 @@ mod emit_sidecar_tests {
         std::fs::remove_file(&json).ok();
         std::fs::remove_dir(&dir).ok();
         text.lines().map(str::to_string).collect()
+    }
+
+    /// A batch holding a non-finite path writes nothing at all; a clean one writes every
+    /// path's TSV and sidecar under its indexed name.
+    #[test]
+    fn a_batch_is_refused_whole_before_any_file_is_written() {
+        let years = 2usize;
+        let seed = 20260825u64;
+        let w = default_world();
+        let p = simulate(&w, years, seed);
+        let st = measure(std::slice::from_ref(&p), years);
+        let rows = fidelity_rows(SP500_ANCHORS, &st, None, years, 1, seed, &w);
+        let v = one_path_verdict(&w, &p, &st, rows);
+        let spec = EmitSpec {
+            world: &w,
+            years,
+            seed,
+            start_ymd: "",
+        };
+        let dir = std::env::temp_dir().join(format!("emit_batch_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let emit = dir.join("batch.tsv").to_string_lossy().into_owned();
+        let mut poisoned = simulate(&w, years, seed + 7919);
+        poisoned.price[3] = f64::NAN;
+
+        let refused =
+            write_emitted_batch(SP500_ANCHORS, &emit, &[p.clone(), poisoned], 0, spec, &v);
+        assert_eq!(
+            refused.unwrap_err(),
+            format!(
+                "path 1 holds a non-finite value; nothing written to {}",
+                indexed_name(&emit, 1, 3)
+            )
+        );
+        assert_eq!(
+            std::fs::read_dir(&dir).expect("dir").count(),
+            0,
+            "nothing written"
+        );
+
+        let q = simulate(&w, years, seed + 7919);
+        let names =
+            write_emitted_batch(SP500_ANCHORS, &emit, &[p, q], 0, spec, &v).expect("written");
+        assert_eq!(
+            names,
+            vec![indexed_name(&emit, 0, 3), indexed_name(&emit, 1, 3)]
+        );
+        for f in &names {
+            assert!(std::path::Path::new(f).is_file(), "{f}");
+            assert!(
+                std::path::Path::new(&sidecar_name(f)).is_file(),
+                "{f} sidecar"
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Every optional column the TSV carries is named in `ungradedChannelSeries`, and the base
