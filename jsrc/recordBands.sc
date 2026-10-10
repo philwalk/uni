@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.6
+//> using dep org.vastblue:uni_3:0.24.7
 
 // THE RECORD BANDS: one real record's own sampling spread on every fidelity row a single daily
 // series can be read the model's way.  The generator behind

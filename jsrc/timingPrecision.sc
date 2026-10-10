@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.6
+//> using dep org.vastblue:uni_3:0.24.7
 
 // TIMING PRECISION — is a rotation schedule's timing better than nearby timing, or is it luck?
 //
