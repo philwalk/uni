@@ -1,3 +1,136 @@
+## v0.25.0 — unreleased
+
+**The real side: a TIPS leg, a real yield and graded inflation.** The simulator emits a
+constant-maturity TIPS leg (`-tips D`) beside the nominal ten-year leg, with the real yield it is
+marked to (`realYield10`), the market's ten-year inflation expectation (`expInfl10`, the breakeven
+over the nominal leg's yield by construction) and the policy rate less the one-year expectation
+(`realRate`), all in percent, and its price (`tips10`) with the principal indexed to the model's
+CPI session by session; a consumer applies its own reference lag. Everything is graded on
+public-domain records only: a par TIPS built from FRED's DFII10 and CPI-U beside the DGS10 par bond
+and Ken French's market, 2003–2026, and DFF less the next year's CPI-U, 1954–2025. Licensed
+series are not fetched and no download code ships; a consumer grading a fund supplies its own
+file.
+
+Three mechanisms carry it, each on its own random stream so every frozen world is bit-identical
+with its dials at zero:
+
+- **Inflation has two components and a deflation side.** The slow regime now has a deflation
+  side (`-deflprob`, `-deflsize`: a half-normal below zero at a switch; policy chases a target
+  below its floor and holds at zero), rarer sharper spikes beside it (`-spikerate`, `-spikesize`:
+  Poisson pulses decaying at 2 a year; the pressure the economy sees is regime plus pulse and is
+  what `inflPress` emits), and the price level its own noise (`-cpinoise`). The record's
+  inflation is a 1970s-like regime plus short spikes (1951, 1990, 2008, 2021–22); one regime
+  could not make both the 4%+ spell rate and the month-to-month spread. Graded on CPI-U 1954–2026
+  (`cpi mean %/yr`, `cpi yoy sd pp`, `cpi monthly sd pp`, `cpi 4%+ share %`) and on the century's
+  not-seasonally-adjusted record from 1913 (`cpi deflation share % (century)`, `cpi 4%+ spells
+  per century`: the row that tells one spell of 300 months from ten of thirty). A year of
+  unchanged rounded prices counts as zero, not deflation.
+- **The market filters inflation; it does not see it.** The market's ten-year and one-year
+  expectations are built from its own estimates of the regime and the spike, updated each session
+  by the steady-state Kalman filter of the model's own process on the price level's noisy session
+  change. The gains are set by the inflation dials and nothing else, so the breakeven's rows grade
+  those dials. The macro panel's `macroYield10` keeps the economy's states, and now carries the
+  spike at its own decay (exactly zero without spikes).
+- **A breakeven premium of its own.** With `-brkvol` above zero the market's ten-year breakeven
+  carries a premium over its inflation expectation, an OU state reverting at 1.4 a year (the
+  record's breakeven level has a 12-month persistence of 0.24) on its own stream, and the TIPS leg
+  is marked to the nominal yield less that breakeven. The record's breakeven moves 0.167 pp a month
+  and nine tenths of that is its own: the change's slope on the year-over-year inflation change is
+  0.11 and their correlation 0.30, where a breakeven that is the filter's expectation alone moves
+  with the prints at a slope of 0.5 whatever the inflation dials, and could only match the record's
+  size by shrinking the regime below the CPI record's. At zero the breakeven is the expectation
+  alone and every series is bit-identical. `expInfl10` is the breakeven, the expectation plus the
+  premium; `realRate` keeps the one-year expectation, which carries none of it. `-brknominal` is
+  the share of that state priced into the nominal yield as expected-inflation news, which the
+  real yield does not carry: the record's breakeven change correlates 0.51 with the nominal
+  yield's and −0.17 with the real yield's (`breakeven vs yield corr monthly`), where a premium
+  the real yield carries whole reads about 0.15 and −0.5.
+- **A ten-year yield of its own.** With `-termvol` above zero both ten-year legs are marked to a
+  ten-year yield: the expected average short rate on the market's estimates, anchored on the
+  policy rate's long-run mean as the market has seen it (anchored on the neutral rate, which the
+  policy sits below on average, every yield carried a 1.3-point premium), plus a premium that
+  moves as an OU state (reverting at 0.2 a year) rather than to the overnight rate, which gave a
+  ten-year real yield 1.75 times the record's month-to-month movement. The two legs take one
+  Treasury session draw at their own scales, since the record's TIPS and nominal move together
+  day to day (0.81) beyond what a common yield gives two legs with noise of their own. At zero the
+  legs are marked as every earlier release marked them; the long bond keeps the short rate.
+
+**The era rule.** The TIPS records begin in 2003 and the model's rates anchor on 1954–2026, so
+the 2003–2026 levels (a real yield of 1.0 against the century's 2.3, a breakeven at that era's
+target, the sd of each over one secular hump) are reported beside the model's and never graded;
+the graded rows are era-free: `real yield monthly change sd pp` 0.222, `breakeven monthly
+change sd pp` 0.167 and `breakeven own change sd pp` 0.159, the change's residual on the
+year-over-year inflation change (resampled on the changes, since a resample of the levels puts a
+jump at every block join), `breakeven vs yield corr monthly` 0.51, `tips vol per duration` 0.819, `tips depth vs vol` 1.83, `tips vs bond10 corr`
+0.81, `tips vs equity corr monthly` 0.156 (daily it is −0.11, flight-to-quality days), `real rate
+ex post %` 1.08 and `real rate ex post sd pp` 2.98. A ladder priced off the model's real yield is
+priced off the century's, not 2003–2026's 1.0; the TIPS leg carries no refuge bid,
+which is what its positive monthly correlation with the market reads. The CPI, real-rate and
+ten-year-leg rows follow each set's rate window: the S&P set's 1954–2026 (DGS10 from 1962), the
+Nasdaq set's 1999–2026 (`cpi mean %/yr` 2.57, `cpi yoy sd pp` 1.72, `cpi monthly sd pp` 0.30, `cpi
+4%+ share %` 12.9, `real rate ex post %` −0.47, `real rate ex post sd pp` 2.58, `bond10 vol per
+duration` 0.92, `bond10 depth vs vol` 0.84, `bond10 excess return pts/yr` 1.14), since a 2.1%
+policy rate under 1954–2026's 3.5% inflation is a real rate near −1 that no dial holds at the
+71-year record's +1.1, and a ten-year bond's depth against its volatility is the era's carry. The
+year-over-year rate's persistence at twelve months (`cpi yoy persistence 12m`,
+`cpipersist-2026-10-12.tsv`) is graded per set as a single-history row, the record's percentile
+among the world's histories of the window's length: 0.73 on 1954–2026, 0.26 on 1999–2026. The S&P
+set reports its breakeven rows and `tips vs bond10 corr` instead of grading them (its era rows):
+a market whose inflation regimes last as 1954–2026's do moves its breakeven with the prints as the
+TIPS era's market did not; the Nasdaq set grades them.
+
+**The recipes.** `0.25.0-sp500` and `0.25.0-nasdaq` are the 0.24.6 recipes re-solved on the real
+side: the inflation form, the term state, the breakeven premium and every other dial searched under
+each set's own conventions, the outgoing recipe the no-regression reference, each the closing
+archive's best member that passes every class on eight fresh seeds at 200 × 100. The S&P's holds
+the seven dials read off the record where 0.24.6 held them and with them the breakeven premium
+(`brkVol` 0.0055) and its nominal share (`brkNominal` 0.68), both read off the TIPS era's record,
+since the set reports the breakeven rows; no row misses on any seed; reads (eight-seed means;
+record): `real yield monthly change sd pp` 0.24 (0.22), `cpi yoy persistence 12m` 0.81 (0.73), `tips
+vol per duration` 0.70 (0.82), `real rate ex post %` 1.52 (1.08), `bond10 vol per duration` 0.94
+(1.03), `cpi mean %/yr` 3.08 (3.47), `cpi 4%+ share %` 19.6 (29.6), `cpi deflation share %
+(century)` 4.7 (12.7), `equity vol %` 16.6 (15.7), `kurtosis` 27.2 (21.8), `crashes/century` 20.7
+(24.9); reported, the era's: `breakeven monthly change sd pp` 0.25 (0.17), its own 0.21 (0.16),
+`breakeven vs yield corr monthly` 0.66 (0.51), `tips vs bond10 corr` 0.64 (0.81); against 0.24.6
+five band rows move toward their records by more than a quarter band and three away (`up-day
+share %`, `clustering lag 20`, `tips depth vs vol`). The Nasdaq's grades the breakeven rows on its
+own era, so the premium and its share were free: the search put them at 0.0020 and 0.62, beside
+the record's own decomposition; no row misses on more than one seed (the 60- and 250-session
+variance ratios once each at the band's edge) and the century's deflation share, which 0.24.6
+never held, is inside; reads: `tips vs bond10 corr` 0.78 (0.81), `breakeven monthly change sd pp`
+0.22 (0.17), `breakeven vs yield corr monthly` 0.61 (0.51), `real yield monthly change sd pp` 0.26
+(0.22), `cpi yoy persistence 12m` 0.74 (0.26, inside its 27-year histories' band), `cpi 4%+ share
+%` 20.6 (12.9), `real rate ex post %` −1.12 (−0.47), `bubble coupling 3y` 0.40 (1.10). Each is
+member 0 of its 0.25.0 set.
+
+**The sets.** `0.25.0-sp500.json` and `0.25.0-nasdaq.json` hold 30 members each, member 0 the recipe,
+built as the 0.24.6 sets were: a Markov-chain sample of every searched dial under the membership rule
+(every class on seeds 1–4 at 200 × 100, no row missed on three) and the synthetic likelihood of the
+record's return per vol, 64 particles over 30 generations seeded from a judge-in-the-loop pool bred
+around the recipe, the trajectory's distinct particles judged on seeds 1–4 (S&P 1431 of 1740 pass,
+Nasdaq 1077 of 1625) and 29 drawn one per drift quantile; coverage weight 1/30 each. The S&P's drift
+runs 0.112–0.173 (the recipe's 0.142), the Nasdaq's 0.120–0.204 (0.145). Against the 0.24.6 sets
+under the release rule (the record's CRPS under each set's pooled single-history predictive, summed
+over the graded rows in the record's own yardstick, bootstrapped over members): S&P 46.4 → 32.9,
+difference −13.5 [−14.0, −12.8]; Nasdaq 59.8 → 39.9, −20.0 [−21.2, −18.4]; both significantly better.
+What moved: the S&P nearer on the CPI rows the old set never held (the 4%+ spell rate, the
+persistence, the monthly spread) and the real yield's change, further on the up-day share, the SMA
+exits, the ten-year leg's depth and kurtosis; the Nasdaq nearer on the breakeven rows, the TIPS leg's
+correlation with the nominal leg, the CPI persistence and the bubble coupling, further on the
+ten-year leg's depth, the TIPS leg's correlation with equities, the downside excess and the up-day
+share. Each set's record-band misses: S&P 0.28 a read, Nasdaq 0.31.
+
+- Emit schema 32: the four columns above are present exactly when `tips > 0`, after `bond10`;
+  `world` gained `tips`, `termVol`, `brkVol`, `brkNominal` and the five inflation dials; the gate block gained `tips`. A
+  tips-off file is byte-identical to its schema-31 counterpart except the schema number and those
+  keys. The world digests moved with the keys. The verdict runs the TIPS leg at duration 8 when the
+  caller leaves it off, as it runs the nominal leg; every set file carries the new keys at zero,
+  and a member without them is refused as before.
+- `record_bands -tips` (and `jsrc/recordBands.sc -tips`, byte-identical) builds the fixture
+  `tips-2026-10-11.tsv` from the FRED and French files; monthly records resample in five-year
+  blocks (a year-over-year rate straddles a join in every month of a twelve-month block).
+- `-emit` with the legs on and `-macro 1` is byte-identical across the twins on every column.
+
 ## v0.24.7 — 2026-10-10
 
 **`-emitall` writes its paths in parallel.** A batch's TSVs and sidecars were written one after

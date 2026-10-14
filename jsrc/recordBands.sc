@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.7
+//> using dep org.vastblue:uni_3:0.25.0
 
 // THE RECORD BANDS: one real record's own sampling spread on every fidelity row a single daily
 // series can be read the model's way.  The generator behind
@@ -69,6 +69,18 @@ object RecordBands {
     "              DGS10 as a par bond, with -fred DFF as the short rate its excess return is read",
     "              over: the record by `bond10Readings`, its resamples by `bond10Resamples`, their",
     "              own joint band over the three rows",
+    "-tips         THE REAL SIDE's rows (item 60), a mode of its own: -cpi CPIAUCSL -cpicentury",
+    "              CPIAUCNS -real DFII10 -breakeven T10YIE -nominal DGS10 -fred DFF -french <daily",
+    "              factors> -set S [-from -to] (the real window) [-cpifrom -cpito] (the CPI and",
+    "              real-rate window; the century file is read whole) [-resamples -seed -joint -of",
+    "              -header]; six groups (`CpiBandRows`, `CpiCenturyRows`, `RealYieldBandRows`,",
+    "              `BreakevenBandRows`, `TipsBandRows`, `RealRateBandRows`), each on its own record",
+    "              with its own joint band at the mode's share of -of (default 16, the mode's graded",
+    "              rows); the reported rows go to stderr",
+    "-cpipersist   THE CPI PERSISTENCE ROW (`CpiPersistenceRow`, `cpiPersistence`) of -cpi over",
+    "              [-cpifrom -cpito] for -set, the rows of `cpipersist-2026-10-12.tsv`: the record's",
+    "              own reading, no resampling (the statistic straddles a block join in every pair),",
+    "              graded among the world's single histories of the window's length [-header]",
     "-rateafter    THE CONDITIONAL RATE ROWS (`RateAfterRows`): the -fred rate on the equity window's",
     "              session dates, the two years after each 20% decline's trough; the record by",
     "              `rateAfterOfReturns`, its paired block resamples, their own joint band",
@@ -163,7 +175,8 @@ object RecordBands {
     if t <= 0.0 then 1.0
     else
       val v = MarketSim.expDet(-2.0 * t * MarketSim.lnDet(1.0 + y / 2.0))
-      if y > 0.0 then (c / y) * (1.0 - v) + v else 1.0 + c * t
+      // the closed form holds for a negative yield too (a real yield below zero); only zero divides
+      if y != 0.0 then (c / y) * (1.0 - v) + v else 1.0 + c * t
 
   /** `(date, log return)` of an n-year par Treasury rebought at every observation of a FRED
     * `observation_date,DGSn` yield file: bought at par at the last yield, sold at the next
@@ -359,7 +372,210 @@ object RecordBands {
         eprintln(s"wrote $out")
       case None => print(tsv)
 
+  /** `(date, value)` of every row of a FRED `observation_date,SERIES` file whose value is a
+    * number, as published: levels, or percent. */
+  def fredSeries(file: String): Vector[(String, Double)] =
+    file.asPath.lines.toVector.drop(1).flatMap { l =>
+      val f = l.split(',').map(_.trim)
+      f.lift(1).flatMap(_.toDoubleOption).map(v => (f(0), v))
+    }
+
+  /** The series name a FRED file's header carries. */
+  def fredName(file: String): String =
+    file.asPath.lines.toVector.headOption.getOrElse("").split(',').map(_.trim) match
+      case Array("observation_date", h) => h
+      case _ => usage(s"$file: not a FRED observation_date,SERIES file")
+
+  /** Each month's last observation of a dated series: `(month, date, value)`. */
+  def monthEndsOf(obs: Vector[(String, Double)]): Vector[(String, String, Double)] =
+    obs.foldLeft(Vector.empty[(String, String, Double)]) { case (out, (d, v)) =>
+      val m = d.take(7)
+      out.lastOption match
+        case Some(last) if last._1 == m => out.init :+ (m, d, v)
+        case _ => out :+ (m, d, v)
+    }
+
+  /** `YYYY-MM` plus `k` months. */
+  def monthAdd(key: String, k: Int): String =
+    val t = key.take(4).toInt * 12 + (key.slice(5, 7).toInt - 1) + k
+    f"${t / 12}%04d-${t % 12 + 1}%02d"
+
+  /** The returns of dated log-return series over the sessions ALL of them trade, each compounded
+    * across the sessions the others skip: cumulative logs differenced at the common dates, from
+    * the second common date on. */
+  def joinReturns(series: Vector[Vector[(String, Double)]], from: String, to: String): (Vector[String], Vector[Array[Double]]) =
+    val cums: Vector[Map[String, Double]] = series.map { s =>
+      var acc = 0.0
+      s.map { (d, r) => acc += r; (d, acc) }.toMap
+    }
+    val dates = series.flatMap(_.map(_._1).filter(d => d >= from && d <= to)).distinct.sorted
+      .filter(d => cums.forall(_.contains(d)))
+    val rets = cums.map(c => Array.tabulate(dates.length - 1)(i => c(dates(i + 1)) - c(dates(i))))
+    (dates.drop(1), rets)
+
+  /** One row group of `-tips`: the record, its resamples' quantiles and the group's own joint band. */
+  def printTipsGroup(set: String, names: Vector[String], series: String, window: String, n: Int,
+                     record: Vector[Double], reads: Vector[Vector[Double]], alpha: Double): Unit =
+    val ks = names.indices.toVector
+    val (c, edges) = MarketSim.recordBandJoint(reads, ks, alpha)
+    for (name, k) <- names.zipWithIndex do
+      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      val (lo, hi) = edges(k)
+      println(f"$set%s\t$name%s\t$series%s\t$window%s\t$n%d\t${reads.length}%d\t${record(k)}%.6f\t" +
+              qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
+
+  /** `name value, name value, ...` for a summary line. */
+  def rowList(names: Vector[String], values: Vector[Double]): String =
+    names.zip(values).map((n, v) => f"$n $v%.4f").mkString(", ")
+
+  /** `-cpipersist`: THE CPI PERSISTENCE ROW (`CpiPersistenceRow`) of -cpi over the CPI window for
+    * -set, the record's own reading: a single-history row, not resampled. */
+  def cpiPersistMode(args: Array[String]): Unit =
+    def opt(flag: String): Option[String] =
+      val i = args.indexOf(flag)
+      if i < 0 then None else args.lift(i + 1)
+    val cpiFile = opt("-cpi").getOrElse(usage("-cpipersist wants -cpi FILE"))
+    val set     = opt("-set").getOrElse(usage("-cpipersist wants -set"))
+    val cpiFrom = opt("-cpifrom").getOrElse("")
+    val cpiTo   = opt("-cpito").getOrElse("9999")
+    val cpi     = fredSeries(cpiFile).filter((d, _) => d >= cpiFrom && d <= cpiTo)
+    if cpi.length < 25 then usage(s"$cpiFile: ${cpi.length} months in the CPI window")
+    val dlog   = Array.tabulate(cpi.length - 1)(i => MarketSim.lnDet(cpi(i + 1)._2 / cpi(i)._2))
+    val window = s"${cpi.head._1}..${cpi.last._1}"
+    if args.contains("-header") then println("set\trow\tseries\twindow\tn\trecord")
+    println(f"$set%s\t${MarketSim.CpiPersistenceRow}%s\t${fredName(cpiFile)}%s\t$window%s\t${dlog.length}%d\t${MarketSim.cpiPersistence(dlog)}%.6f")
+
+  /** `-tips`: THE REAL SIDE's five row groups (item 60), each on a public-domain record -- CPI-U
+    * monthly, DFII10 and T10YIE at month ends, a 10-year par TIPS rebought at every DFII10
+    * observation beside the DGS10 par bond and the equity market on their common sessions, and
+    * the policy rate less the next year's realised inflation -- resampled in one-year blocks of
+    * each record's own cadence, each group under its own joint band at the mode's share of `-of`. */
+  def tipsMode(args: Array[String]): Unit =
+    def opt(flag: String): Option[String] =
+      val i = args.indexOf(flag)
+      if i < 0 then None else args.lift(i + 1)
+    def need(flag: String): String = opt(flag).getOrElse(usage(s"-tips wants $flag FILE"))
+    def num[T](flag: String, default: T, parse: String => Option[T], msg: String): T =
+      opt(flag).fold(default)(v => parse(v).getOrElse(usage(s"$flag wants $msg")))
+    val (cpiFile, realFile, beiFile) = (need("-cpi"), need("-real"), need("-breakeven"))
+    val centuryFile = need("-cpicentury")
+    val (nomFile, dffFile, frenchFile) = (need("-nominal"), need("-fred"), need("-french"))
+    val set       = opt("-set").getOrElse(usage("-tips wants -set"))
+    val from      = opt("-from").getOrElse("")
+    val to        = opt("-to").getOrElse("9999")
+    val cpiFrom   = opt("-cpifrom").getOrElse("")
+    val cpiTo     = opt("-cpito").getOrElse("9999")
+    val resamples = num("-resamples", 20000, _.toIntOption, "an integer")
+    val seed      = num("-seed", 20260918L, _.toLongOption, "a non-negative integer")
+    val joint     = num("-joint", 0.10, _.toDoubleOption, "a share in (0, 1)")
+    val of        = num("-of", 16, _.toIntOption, "a row count")
+    def alpha(k: Int): Double = joint * k / of
+    if args.contains("-header") then
+      println("set\trow\tseries\twindow\tn\tresamples\trecord\t" +
+              MarketSim.RecordBandPcts.map(p => s"p$p").mkString("\t") + "\tjointC\tjointLo\tjointHi")
+    def inWindow(d: String, lo: String, hi: String): Boolean = d >= lo && d <= hi
+
+    // CPI: monthly log changes of the level over the CPI window
+    val cpi = fredSeries(cpiFile).filter((d, _) => inWindow(d, cpiFrom, cpiTo))
+    if cpi.length < 25 then usage(s"$cpiFile: ${cpi.length} months in the CPI window")
+    val dlog      = Array.tabulate(cpi.length - 1)(i => MarketSim.lnDet(cpi(i + 1)._2 / cpi(i)._2))
+    val cpiWindow = s"${cpi.head._1}..${cpi.last._1}"
+    val cpiRecord = MarketSim.cpiReadings(dlog)
+    eprintln(s"${fredName(cpiFile)}: ${dlog.length} monthly changes $cpiWindow; ${rowList(MarketSim.CpiBandRows, cpiRecord)}; " +
+             s"reported ${rowList(MarketSim.CpiReportedRows, MarketSim.cpiReported(dlog))}; $resamples resamples, seed $seed")
+    printTipsGroup(set, MarketSim.CpiBandRows, fredName(cpiFile), cpiWindow, dlog.length, cpiRecord,
+                   MarketSim.cpiResamples(dlog, resamples, seed), alpha(4))
+
+    // the century: CPI-U not seasonally adjusted from 1913, read whole
+    val century = fredSeries(centuryFile)
+    if century.length < 25 then usage(s"$centuryFile: ${century.length} months")
+    val cdlog   = Array.tabulate(century.length - 1)(i => MarketSim.lnDet(century(i + 1)._2 / century(i)._2))
+    val cWindow = s"${century.head._1}..${century.last._1}"
+    val cRecord = MarketSim.cpiCenturyReadings(cdlog)
+    eprintln(s"${fredName(centuryFile)}: ${cdlog.length} monthly changes $cWindow; ${rowList(MarketSim.CpiCenturyRows, cRecord)}")
+    printTipsGroup(set, MarketSim.CpiCenturyRows, fredName(centuryFile), cWindow, cdlog.length, cRecord,
+                   MarketSim.cpiCenturyResamples(cdlog, resamples, seed), alpha(2))
+
+    // the real yield and the breakeven at month ends over the real window, each with its month
+    def monthLevels(file: String): (Vector[(String, Double)], String) =
+      val ends = monthEndsOf(fredSeries(file)).filter((_, d, _) => inWindow(d, from, to))
+      if ends.length < 25 then usage(s"$file: ${ends.length} month ends in the real window")
+      (ends.map((m, _, v) => (m, v)), s"${ends.head._2}..${ends.last._2}")
+    val (ryMonths, ryWindow) = monthLevels(realFile)
+    val ry       = ryMonths.map(_._2).toArray
+    val ryRecord = MarketSim.realYieldReadings(ry)
+    eprintln(s"${fredName(realFile)}: ${ry.length} month ends $ryWindow; ${rowList(MarketSim.RealYieldBandRows, ryRecord)}; " +
+             s"reported ${rowList(MarketSim.RealYieldReportedRows, MarketSim.realYieldReported(ry))}")
+    printTipsGroup(set, MarketSim.RealYieldBandRows, fredName(realFile), ryWindow, ry.length, ryRecord,
+                   MarketSim.realYieldResamples(ry, resamples, seed), alpha(1))
+    val (beiMonths, beiWindow) = monthLevels(beiFile)
+    val bei       = beiMonths.map(_._2).toArray
+    // the year-over-year rate of the CPI window's months, beside each breakeven month end
+    val cpiOfMonth = cpi.map((d, v) => (d.take(7), v)).toMap
+    val yoy = beiMonths.map { (m, _) =>
+      val yearAgo = f"${m.take(4).toInt - 1}%04d-${m.drop(5).take(2)}"
+      (cpiOfMonth.get(m), cpiOfMonth.get(yearAgo)) match
+        case (Some(a), Some(b)) => 100.0 * MarketSim.lnDet(a / b)
+        case _                  => Double.NaN // a month the CPI lacks (October 2025 was never published)
+    }.toArray
+    // the nominal ten-year yield at the breakeven's month ends
+    val nomOfMonth = monthLevels(nomFile)._1.toMap
+    val y = beiMonths.map((m, _) => nomOfMonth.getOrElse(m, Double.NaN)).toArray
+    val beiRecord = MarketSim.breakevenReadings(bei, yoy, y)
+    eprintln(s"${fredName(beiFile)}: ${bei.length} month ends $beiWindow; ${rowList(MarketSim.BreakevenBandRows, beiRecord)}; " +
+             s"reported ${rowList(MarketSim.BreakevenReportedRows, MarketSim.breakevenReported(bei))}")
+    printTipsGroup(set, MarketSim.BreakevenBandRows, fredName(beiFile), beiWindow, bei.length, beiRecord,
+                   MarketSim.breakevenResamples(bei, yoy, y, resamples, seed), alpha(3))
+
+    // the TIPS leg: a 10-year par TIPS on DFII10, the DGS10 par bond and the market on common days
+    val realLines = realFile.asPath.lines.toVector
+    val tipsDaily = readTreasury(realLines, 10.0)
+    val durs      = treasuryDurations(realLines, 10.0)
+    val nomDaily  = readTreasury(nomFile.asPath.lines.toVector, 10.0)
+    val eqDaily   = readFrench(frenchFile).map((d, v) => (d, MarketSim.lnDet(1.0 + v / 100.0)))
+    val (dates, rets) = joinReturns(Vector(tipsDaily, nomDaily, eqDaily), from, to)
+    if dates.length < 2 * 252 then usage(s"$realFile: ${dates.length} common sessions in the real window")
+    val dur        = dates.map(d => durs.getOrElse(d, usage(s"$realFile: no duration for $d"))._1).toArray
+    val tipsWindow = s"${dates.head}..${dates.last}"
+    val tipsRecord = MarketSim.tipsReadings(rets(0), dur, rets(1), rets(2))
+    val r2022      = tipsDaily.filter((d, _) => d > "2021-12-31" && d <= "2022-10-31").map(_._2).foldLeft(0.0)(_ + _)
+    eprintln(f"${fredName(realFile)}%s par TIPS: ${dates.length}%d common sessions $tipsWindow%s; ${rowList(MarketSim.TipsBandRows, tipsRecord)}%s; " +
+             f"reported 2022 real return (Dec 2021 - Oct 2022) ${(MarketSim.expDet(r2022) - 1.0) * 100.0}%.2f%%")
+    printTipsGroup(set, MarketSim.TipsBandRows, fredName(realFile), tipsWindow, dates.length, tipsRecord,
+                   MarketSim.tipsResamples(rets(0), dur, rets(1), rets(2), resamples, seed), alpha(4))
+
+    // the ex-post real rate: the month's mean policy rate less the next twelve months' inflation
+    val dffMonths = fredSeries(dffFile).foldLeft(Vector.empty[(String, Double, Int)]) { case (out, (d, v)) =>
+      val m = d.take(7)
+      out.lastOption match
+        case Some(last) if last._1 == m => out.init :+ (m, last._2 + v, last._3 + 1)
+        case _ => out :+ (m, v, 1)
+    }
+    val cpiByMonth = cpi.map((d, v) => (d.take(7), v)).toMap
+    val rr = dffMonths.flatMap { (m, sum, n) =>
+      for now <- cpiByMonth.get(m); next <- cpiByMonth.get(monthAdd(m, 12))
+      yield (m, sum / n - MarketSim.lnDet(next / now) * 100.0)
+    }
+    if rr.length < 25 then usage(s"$dffFile: ${rr.length} months with a year of CPI ahead")
+    val rrWindow = s"${rr.head._1}..${rr.last._1}"
+    val x        = rr.map(_._2).toArray
+    val rrRecord = MarketSim.realRateReadings(x)
+    // reported: the real yield less the ex-post real rate over the months both hold
+    val rrByMonth = rr.toMap
+    val both      = ryMonths.flatMap((m, y) => rrByMonth.get(m).map(r => (y, r)))
+    val over      = both.map(_._1).sum / both.length - both.map(_._2).sum / both.length
+    eprintln(f"${fredName(dffFile)}%s less the next year's ${fredName(cpiFile)}%s: ${x.length}%d months $rrWindow%s; ${rowList(MarketSim.RealRateBandRows, rrRecord)}%s; " +
+             f"reported real yield less the ex-post real rate over their ${both.length}%d common months $over%.3f")
+    printTipsGroup(set, MarketSim.RealRateBandRows, fredName(dffFile), rrWindow, x.length, rrRecord,
+                   MarketSim.realRateResamples(x, resamples, seed), alpha(2))
+
   def main(args: Array[String]): Unit = {
+    if args.contains("-cpipersist") then
+      cpiPersistMode(args)
+      return
+    if args.contains("-tips") then
+      tipsMode(args)
+      return
     if args.contains("-basket") then
       basketMode(args)
       return
@@ -627,7 +843,7 @@ object RecordBands {
     }
     (1 until obs.length).map { i =>
       val y = obs(i - 1)._2
-      val d = if y > 0.0 then (1.0 - MarketSim.expDet(-2.0 * years * MarketSim.lnDet(1.0 + y / 2.0))) / y else years
+      val d = if y != 0.0 then (1.0 - MarketSim.expDet(-2.0 * years * MarketSim.lnDet(1.0 + y / 2.0))) / y else years
       (obs(i)._1, (d, obs(i - 1)._1))
     }.toMap
 

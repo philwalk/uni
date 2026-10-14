@@ -268,7 +268,16 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // ruler omits it unless an `-emitf32` run's `-emitcols` names it. A world without a basket loses
 // the basket rows, readings and `verdictSeries` entries the verdict used to supply.
 // `channels.macro` gained `warnings`, `falseAlarm` and `allClear` (`warning_counts`).
-const EMIT_SCHEMA: u32 = 31;
+// 31 -> 32: THE REAL SIDE (item 60). The TSV gained `tips10`, `realYield10`, `expInfl10` and
+// `realRate` (present ONLY when `tips > 0`, after `bond10`: the TIPS leg's price with its
+// principal indexed to `cpi`, the real yield it is marked to in percent, the market's ten-year
+// inflation expectation in percent -- the breakeven over the nominal leg's yield by
+// construction -- and the policy rate less the one-year expectation in percent); `world` gained
+// `tips` (0 in every shipped world) and the five inflation dials `cpiNoise`, `deflProb`,
+// `deflSize`, `spikeRate` and `spikeSize` (0 in every frozen world); the gate block gained
+// `tips`. A tips-off schema-32 file is byte-identical to its schema-31 counterpart except the
+// schema number and those keys.
+const EMIT_SCHEMA: u32 = 32;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -409,6 +418,83 @@ const EASE_IN_SPEED: f64 = 6.0;
 /// and the rate's own noise carries the spike above it. A cap consumes no draw, so a path whose
 /// regimes never reach it is bit-identical to the uncapped model.
 const INFL_CAP: f64 = 0.12;
+/// THE SPIKES' DECAY, per year (item 60): a pulse of `spike_size` falls to a third in half a
+/// year, so a 5-point spike holds the year-over-year rate above 4% for about seven months, the
+/// record's spells' median length being five.
+const SPIKE_DECAY: f64 = 2.0;
+/// The base inflation the regime's pressure sits on, per year: the long-run target the market's
+/// ten-year expectation returns to (`expInfl10`), and what makes a `rate_mean` of 4.2% a ~1.7%
+/// real rate.
+const PI_BASE: f64 = 0.025;
+/// The TIPS leg's share of the refuge bid the nominal legs take: 0, since the record's TIPS fall
+/// with equities in a flight to quality where the nominal bond rallies (its monthly correlation
+/// with the market reads +0.16 against the nominal bond's below zero).
+const TIPS_REFUGE: f64 = 0.0;
+/// The term state's reversion, per year (`World::term_vol`): the record's ten-year real yield
+/// moves as a random walk within the year (its 12-month change's sd is 0.96 of sqrt(12) times its
+/// 1-month change's, which an OU gives at a reversion near 0.17) and reverts over years; a
+/// half-life of three and a half years.
+const TERM_REVERT: f64 = 0.2;
+/// The breakeven premium's reversion, per year (`World::brk_vol`): the record's ten-year
+/// breakeven level has a 12-month persistence of 0.24 (T10YIE month ends 2003-2026), a half-life
+/// of six months, and nine tenths of its monthly change is this premium's rather than a reaction
+/// to the inflation print (the change's slope on the year-over-year rate's change is 0.11, their
+/// correlation 0.30).
+const BRK_REVERT: f64 = 1.4;
+/// THE MARKET'S INFLATION FILTER (item 60): the market does not see the regime's pressure or the
+/// spike's pulse, it sees the price level's session change -- the pressure plus the level's own
+/// noise (`cpi_noise`) -- and estimates both states with the steady-state Kalman filter of the
+/// model's own process: the regime an OU to zero at the mean regime life with the stationary
+/// variance the switch draws give it (the half-normal's second moment, the cap ignored), the spike
+/// a decay at `SPIKE_DECAY` fed at `spike_rate` by half-normal pulses, both read through one print
+/// whose noise is the level's per session. The two gains, (regime, spike) per unit of print
+/// surprise in annualized rate, by the Riccati recursion iterated to its fixed point; with no
+/// level noise the surprise is split by the states' own predicted variances. No free parameter:
+/// every input is a dial, and the arithmetic is +, -, x and / alone, so both twins agree to the bit.
+fn inflation_filter_gains(w: &World) -> [f64; 2] {
+    let dt = 1.0 / DAYS_PER_YEAR as f64;
+    let f_g = 1.0 - dt / macro_k::REGIME_YEARS;
+    let f_s = 1.0 - SPIKE_DECAY * dt;
+    // the regime target's second moment at a switch: a half-normal above with `infl_prob`, one
+    // below with `defl_prob` of the rest, zero otherwise
+    let v_reg = w.infl_prob * w.infl_size * w.infl_size
+        + (1.0 - w.infl_prob) * w.defl_prob * w.defl_size * w.defl_size;
+    let q_g = v_reg * (1.0 - f_g * f_g);
+    let q_s = w.spike_rate * dt * w.spike_size * w.spike_size;
+    let r = w.cpi_noise * w.cpi_noise / dt;
+    let (mut p_gg, mut p_gs, mut p_ss) = (v_reg, 0.0f64, q_s / (1.0 - f_s * f_s).max(dt));
+    let (mut k_g, mut k_s) = (0.0f64, 0.0f64);
+    for _ in 0..40_000 {
+        // predict
+        let a_gg = f_g * f_g * p_gg + q_g;
+        let a_gs = f_g * f_s * p_gs;
+        let a_ss = f_s * f_s * p_ss + q_s;
+        // the print's variance and the gains
+        let s = a_gg + 2.0 * a_gs + a_ss + r;
+        if s <= 0.0 {
+            return [1.0, 0.0];
+        }
+        k_g = (a_gg + a_gs) / s;
+        k_s = (a_gs + a_ss) / s;
+        // update: (I - K H) A, H = [1 1]
+        p_gg = a_gg - k_g * (a_gg + a_gs);
+        p_gs = a_gs - k_g * (a_gs + a_ss);
+        p_ss = a_ss - k_s * (a_gs + a_ss);
+    }
+    [k_g, k_s]
+}
+
+/// The T-year average of a deviation decaying at speed k: (1 - e^{-kT}) / (kT), 1 at k = 0. The
+/// macro panel's yield expectations and the TIPS leg's inflation expectation share it, so the
+/// breakeven the two imply is one arithmetic.
+fn horizon_weight(k: f64, t: f64) -> f64 {
+    let kt = k * t;
+    if kt <= 0.0 {
+        1.0
+    } else {
+        (1.0 - exp_det(-kt)) / kt
+    }
+}
 /// Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the
 /// paths are longer. Every other statistic is measured over the whole path.
 ///
@@ -809,7 +895,16 @@ pub fn default_world() -> World {
         panic: 0.0,
         duration: 13.5,
         bond10: 0.0,
+        tips: 0.0,
         term_premium: 0.10,
+        cpi_noise: 0.0,
+        defl_prob: 0.0,
+        defl_size: 0.0,
+        spike_rate: 0.0,
+        spike_size: 0.0,
+        term_vol: 0.0,
+        brk_vol: 0.0,
+        brk_nominal: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -967,7 +1062,16 @@ fn v0_19_2() -> World {
         panic: 0.0,
         duration: 13.5,
         bond10: 0.0,
+        tips: 0.0,
         term_premium: 0.0,
+        cpi_noise: 0.0,
+        defl_prob: 0.0,
+        defl_size: 0.0,
+        spike_rate: 0.0,
+        spike_size: 0.0,
+        term_vol: 0.0,
+        brk_vol: 0.0,
+        brk_nominal: 0.0,
         easing: 0.045,
         unwind: 0.35,
         floorhold: 0.0,
@@ -1087,7 +1191,16 @@ fn v0_24_1() -> World {
         panic: 0.0,
         duration: 13.5,
         bond10: 0.0,
+        tips: 0.0,
         term_premium: 0.0,
+        cpi_noise: 0.0,
+        defl_prob: 0.0,
+        defl_size: 0.0,
+        spike_rate: 0.0,
+        spike_size: 0.0,
+        term_vol: 0.0,
+        brk_vol: 0.0,
+        brk_nominal: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -1156,6 +1269,7 @@ pub fn releases() -> Vec<(&'static str, World)> {
     pre.drift = 0.100;
     pre.duration = 13.5;
     pre.bond10 = 0.0;
+    pre.tips = 0.0;
     pre.term_premium = 0.0;
     pre.infl_size = 0.07;
     pre.discount = 4.0;
@@ -1363,6 +1477,7 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     ];
     rows.extend(rows_0245(nq_0244));
     rows.extend(rows_0246(nq_0244));
+    rows.extend(rows_0250(nq_0244));
     rows
 }
 
@@ -1379,12 +1494,7 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
 /// The Nasdaq basket recipe takes the Nasdaq's drift and inflation regime under
 /// `0.24.5-nasdaq-basket`'s channel dials.
 fn rows_0246(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
-    let nq = World {
-        drift: 0.151_192_56,
-        term_premium: 0.10,
-        infl_size: 0.081,
-        ..recipe_0245_nasdaq(nq_0244)
-    };
+    let nq = v0_24_6_nasdaq(nq_0244);
     vec![
         ("0.24.6-nasdaq", nq, "nasdaq"),
         (
@@ -1392,17 +1502,253 @@ fn rows_0246(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
             with_sectors(recipe_0245_nasdaq_basket(nq), NASDAQ_CHANNEL_DIALS),
             "nasdaq",
         ),
+        ("0.24.6-sp500", v0_24_6_sp500(), "sp500"),
+    ]
+}
+
+/// The 0.24.6 S&P recipe: the 0.24.5 recipe at the drift re-solve's value with the term premium.
+fn v0_24_6_sp500() -> World {
+    World {
+        drift: 0.147_474_57,
+        term_premium: 0.10,
+        ..with_sectors(
+            recipe_0245_sp500(recipe_0244_sp500_channels(v0_24_4())),
+            SP500_CHANNEL_DIALS,
+        )
+    }
+}
+
+/// THE REAL SIDE (item 60, 0.25.0): the S&P recipe re-solved on the settled rows with the inflation
+/// form, the term state and every other dial free, the seven dials read off the record held fixed at
+/// the record's values, and with them the breakeven premium (`brk_vol` 0.0055) and its nominal share
+/// (`brk_nominal` 0.68), both read off the TIPS era's record, since this set reports the breakeven
+/// rows (`SP500_ERA_ROWS`) and nothing grades them; the outgoing recipe the no-regression reference.
+/// The closing archive's best member (score 5.45), judged on eight fresh seeds at 200 x 100: every
+/// class passes on all eight and no row misses on any. Reads (eight-seed means; record): `real yield
+/// monthly change sd pp` 0.24 (0.22), `cpi yoy persistence 12m` 0.81 (0.73, at the record's own
+/// percentile), `tips vol per duration` 0.70 (0.82), `tips vs equity corr monthly` -0.03 (0.16),
+/// `real rate ex post %` 1.52 (1.08), `bond10 vol per duration` 0.94 (1.03), `bond10 excess return
+/// pts/yr` 0.92 (0.78), `cpi mean %/yr` 3.08 (3.47), `cpi yoy sd pp` 2.11 (2.76), `cpi 4%+ share %`
+/// 19.6 (29.6), `cpi deflation share % (century)` 4.7 (12.7), `short rate %` 4.58 (4.60), `rate floor
+/// share %` 8.7 (14.6), `equity vol %` 16.6 (15.7), `return per vol` 0.66 (0.69), `kurtosis` 27.2
+/// (21.8), `crashes/century` 20.7 (24.9), the upper wing 5.9 (7.6), the lower 6.2 (6.7), `valuation
+/// dispersion` 0.30 (0.30); reported, the era's: `breakeven monthly change sd pp` 0.25 (0.17), its
+/// own 0.21 (0.16), `breakeven vs yield corr monthly` 0.66 (0.51), `tips vs bond10 corr` 0.64 (0.81).
+/// Against the outgoing recipe five band rows move toward their records by more than a quarter band
+/// and three away (`up-day share %`, `clustering lag 20`, `tips depth vs vol`).
+fn recipe_0250_sp500(mut w: World) -> World {
+    w.trend_share = 0.066037263;
+    w.depth = 18.098121;
+    w.stress = 4.2943695;
+    w.drift = 0.14202717;
+    w.fund_vol = 0.036768504;
+    w.rate_mean = 0.066436376;
+    w.vol_of_vol = 0.024247821;
+    w.leverage = 0.090826334;
+    w.down_shock = 0.012503484;
+    w.jump_skew = 0.80782697;
+    w.jump_var = 0.18894203;
+    w.jump_rate = 0.0040676908;
+    w.news_rate = 0.975625;
+    w.news_size = 0.023939175;
+    w.news_lev = 1.7486166;
+    w.news_revert = 0.31021905;
+    w.news_scale = 0.24595851;
+    w.news_bond = 0.092942898;
+    w.credit_regime = 0.0093500256;
+    w.credit_regime_rate = 1.5682981;
+    w.slow_bond_infl = 0.17252302;
+    w.noise_skew = 0.83779199;
+    w.news_flip = 0.24058896;
+    w.value_pull = 0.049780991;
+    w.recovery_drag = 5.7787105;
+    w.boom_rate = 1.3467512;
+    w.boom_size = 0.9823395;
+    w.boom_len = 11.371872;
+    w.recess_rate = 0.088128625;
+    w.recess_size = 0.46344499;
+    w.recess_len = 1.3099111;
+    w.recess_recover = 0.80102402;
+    w.recess_news = 2.4740992;
+    w.recess_vol = 0.0;
+    w.recess_reprice = 0.52817318;
+    w.recess_shape = 1.048454;
+    w.overshoot = 0.77433345;
+    w.overshoot_rate = 0.1729774;
+    w.recess_rec_mult = 1.0419226;
+    w.recess_credit = 8.0594488;
+    w.regime_drift = 0.00075956021;
+    w.drift_sd = 0.0037764015;
+    w.boom_fade = 1.9084166;
+    w.delev_rate = 0.06050941;
+    w.delev_from = 2.0898269;
+    w.delev_size = 0.17198313;
+    w.delev_len = 0.11314246;
+    w.vol_pull = 0.62689482;
+    w.belief_share = 0.9697191;
+    w.belief_years = 2.0754186;
+    w.belief_leak = 0.17320246;
+    w.cap_years = 0.19162615;
+    w.cycle_sd = 0.11943752;
+    w.cycle_years = 19.866068;
+    w.crowd_impact = 0.044181898;
+    w.term_premium = 0.099996994;
+    w.cpi_noise = 0.0055725033;
+    w.defl_prob = 0.20409555;
+    w.defl_size = 0.031641947;
+    w.spike_rate = 0.41336221;
+    w.spike_size = 0.017462717;
+    w.term_vol = 0.0076751442;
+    w.brk_vol = 0.0055;
+    w.brk_nominal = 0.68;
+    w.easing = 0.10720463;
+    w.floorhold = 0.08932882;
+    w.refuge = 0.13443791;
+    w.refuge_days = 1.1751832;
+    w.lev_gain = 10.764332;
+    w.bust_amp = 0.063056209;
+    w.slow_share = 0.15903041;
+    w.slow_vol = 0.96232945;
+    w.slow_perm = 0.2239177;
+    w.slow_beta = 0.48681762;
+    w.infl_size = 0.049910879;
+    w.discount = 6.6998705;
+    w.discount_ref = 0.33178715;
+    w.margin = 0.0067253191;
+    w
+}
+
+/// `0.24.6-nasdaq`: the 0.24.5 Nasdaq recipe at its drift and inflation regime posterior under
+/// the term premium.
+fn v0_24_6_nasdaq(nq_0244: World) -> World {
+    World {
+        drift: 0.151_192_56,
+        term_premium: 0.10,
+        cpi_noise: 0.0,
+        defl_prob: 0.0,
+        defl_size: 0.0,
+        spike_rate: 0.0,
+        spike_size: 0.0,
+        term_vol: 0.0,
+        brk_vol: 0.0,
+        brk_nominal: 0.0,
+        infl_size: 0.081,
+        ..recipe_0245_nasdaq(nq_0244)
+    }
+}
+
+/// THE REAL SIDE (item 60, 0.25.0): the Nasdaq recipe re-solved on the settled rows, every dial free
+/// (the breakeven premium and its nominal share included, since the rows that identify them are
+/// graded on this set's era), the outgoing recipe the no-regression reference; member 18 of the
+/// closing archive, judged on eight fresh seeds at 200 x 100: every class passes on all eight, no
+/// row misses on more than one (the 60- and 250-session variance ratios once each at the band's
+/// edge), and the century's deflation share, which the outgoing recipe never held, is inside.
+/// Reads (eight-seed means; record): `tips vs bond10 corr` 0.78 (0.81), `breakeven monthly
+/// change sd pp` 0.22 (0.17), `breakeven vs yield corr monthly` 0.61 (0.51), `real yield monthly
+/// change sd pp` 0.26 (0.22), `cpi yoy persistence 12m` 0.74 (0.26, inside its histories' band),
+/// `bubble coupling 3y` 0.40 (1.10), `cpi 4%+ share %` 20.6 (12.9), `real rate ex post %` -1.12
+/// (-0.47). The search put the premium at `brk_vol` 0.0020 with `brk_nominal` 0.62, beside the
+/// record's own decomposition (0.68).
+fn recipe_0250_nasdaq(mut w: World) -> World {
+    w.trend_share = 0.18916903;
+    w.depth = 11.679319;
+    w.stress = 2.9440994;
+    w.drift = 0.14497017;
+    w.fund_vol = 0.039178116;
+    w.rate_mean = 0.034400256;
+    w.vol_of_vol = 0.019667305;
+    w.leverage = 0.057915869;
+    w.down_shock = 0.012604702;
+    w.jump_skew = 0.17463027;
+    w.jump_var = 0.067615614;
+    w.jump_rate = 0.0051929937;
+    w.news_rate = 30.0;
+    w.news_size = 0.0062294131;
+    w.news_lev = 57.829119;
+    w.news_revert = 0.26967094;
+    w.news_scale = 0.17313078;
+    w.news_bond = 0.23867647;
+    w.news_bond_skip = 0.25160457;
+    w.credit_regime = 0.61666644;
+    w.credit_regime_rate = 7.5048142;
+    w.slow_bond_infl = 0.68672957;
+    w.noise_skew = 0.19476425;
+    w.news_flip = 0.41901483;
+    w.value_pull = 0.084913994;
+    w.recovery_drag = 2.307977;
+    w.recovery_floor = 0.19240333;
+    w.disaster_rate = 0.8133567;
+    w.disaster_size = 1.2381943;
+    w.disaster_recover = 0.45200827;
+    w.boom_rate = 2.522272;
+    w.boom_size = 1.9883926;
+    w.boom_len = 2.6835243;
+    w.recess_rate = 0.034770947;
+    w.recess_size = 0.4535609;
+    w.recess_len = 1.643482;
+    w.recess_recover = 0.68832085;
+    w.recess_news = 1.9001416;
+    w.recess_vol = 0.2279013;
+    w.recess_reprice = 0.55237174;
+    w.recess_base = 0.057373641;
+    w.recess_shape = 1.1914432;
+    w.overshoot = 0.56045965;
+    w.overshoot_rate = 0.2316142;
+    w.recess_rec_mult = 1.1516823;
+    w.recess_credit = 3.1959814;
+    w.regime_drift = 0.00055264827;
+    w.drift_sd = 0.035540271;
+    w.boom_fade = 1.0342506;
+    w.delev_rate = 1.1597108;
+    w.delev_from = 5.2149982;
+    w.delev_size = 0.23215326;
+    w.delev_len = 0.02;
+    w.spread_dd = 0.4204917;
+    w.disaster_anticipate = 0.0;
+    w.disaster_overshoot = 0.095164163;
+    w.vol_pull = 0.39989189;
+    w.belief_share = 0.61554108;
+    w.belief_years = 0.80468443;
+    w.belief_leak = 0.25734408;
+    w.cap_years = 5.3010881;
+    w.cycle_sd = 0.019702838;
+    w.cycle_years = 8.5711031;
+    w.crowd_impact = 0.032273503;
+    w.term_premium = 0.09443145;
+    w.cpi_noise = 0.0090746905;
+    w.defl_prob = 0.33062808;
+    w.defl_size = 0.019739191;
+    w.spike_rate = 0.30119632;
+    w.spike_size = 0.02165545;
+    w.term_vol = 0.0087854889;
+    w.brk_vol = 0.0019662045;
+    w.brk_nominal = 0.6223439;
+    w.easing = 0.10494565;
+    w.floorhold = 0.13264625;
+    w.refuge = 0.12697384;
+    w.refuge_days = 1.2181857;
+    w.lev_gain = 2.9566377;
+    w.bust_amp = 0.17307961;
+    w.slow_share = 0.39986941;
+    w.slow_vol = 1.2360015;
+    w.slow_perm = 0.056039274;
+    w.slow_beta = 0.58818367;
+    w.infl_size = 0.060153158;
+    w.discount = 5.5277903;
+    w.discount_lag = 0.038577817;
+    w.discount_ref = 0.9096684;
+    w.margin = 0.006359531;
+    w
+}
+
+/// The 0.25.0 recipes.
+fn rows_0250(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
+    vec![
+        ("0.25.0-sp500", recipe_0250_sp500(v0_24_6_sp500()), "sp500"),
         (
-            "0.24.6-sp500",
-            World {
-                drift: 0.147_474_57,
-                term_premium: 0.10,
-                ..with_sectors(
-                    recipe_0245_sp500(recipe_0244_sp500_channels(v0_24_4())),
-                    SP500_CHANNEL_DIALS,
-                )
-            },
-            "sp500",
+            "0.25.0-nasdaq",
+            recipe_0250_nasdaq(v0_24_6_nasdaq(nq_0244)),
+            "nasdaq",
         ),
     ]
 }
@@ -2094,7 +2440,16 @@ fn v0_23_0() -> World {
         panic: 0.0,
         duration: 13.5,
         bond10: 0.0,
+        tips: 0.0,
         term_premium: 0.0,
+        cpi_noise: 0.0,
+        defl_prob: 0.0,
+        defl_size: 0.0,
+        spike_rate: 0.0,
+        spike_size: 0.0,
+        term_vol: 0.0,
+        brk_vol: 0.0,
+        brk_nominal: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2233,7 +2588,16 @@ fn v0_22_1() -> World {
         panic: 0.0,
         duration: 13.5,
         bond10: 0.0,
+        tips: 0.0,
         term_premium: 0.0,
+        cpi_noise: 0.0,
+        defl_prob: 0.0,
+        defl_size: 0.0,
+        spike_rate: 0.0,
+        spike_size: 0.0,
+        term_vol: 0.0,
+        brk_vol: 0.0,
+        brk_nominal: 0.0,
         easing: 0.060,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2374,7 +2738,16 @@ fn v0_22_0() -> World {
         panic: 0.0,
         duration: 13.5,
         bond10: 0.0,
+        tips: 0.0,
         term_premium: 0.0,
+        cpi_noise: 0.0,
+        defl_prob: 0.0,
+        defl_size: 0.0,
+        spike_rate: 0.0,
+        spike_size: 0.0,
+        term_vol: 0.0,
+        brk_vol: 0.0,
+        brk_nominal: 0.0,
         easing: 0.060,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2515,7 +2888,16 @@ fn v0_21_0() -> World {
         panic: 0.0,
         duration: 13.5,
         bond10: 0.0,
+        tips: 0.0,
         term_premium: 0.0,
+        cpi_noise: 0.0,
+        defl_prob: 0.0,
+        defl_size: 0.0,
+        spike_rate: 0.0,
+        spike_size: 0.0,
+        term_vol: 0.0,
+        brk_vol: 0.0,
+        brk_nominal: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2656,7 +3038,16 @@ fn v0_20_0() -> World {
         panic: 0.0,
         duration: 13.5,
         bond10: 0.0,
+        tips: 0.0,
         term_premium: 0.0,
+        cpi_noise: 0.0,
+        defl_prob: 0.0,
+        defl_size: 0.0,
+        spike_rate: 0.0,
+        spike_size: 0.0,
+        term_vol: 0.0,
+        brk_vol: 0.0,
+        brk_nominal: 0.0,
         easing: 0.046,
         unwind: 0.35,
         floorhold: 0.0,
@@ -3402,11 +3793,72 @@ pub struct World {
     /// graded against FRED's DGS10 read as a par bond. A consumer holding a 10-year Treasury
     /// (duration about 8) reads this leg, not the long bond's
     pub bond10: f64,
+    /// THE TIPS LEG (item 60): a third bond market at this duration (0 = off), the nominal leg's
+    /// state and flows at its scale on its own stream, marked to the nominal leg's yield LESS the
+    /// market's ten-year inflation expectation -- the expectation of the model's own regime and
+    /// spike at their decay speeds, `PI_BASE` beyond -- and its principal indexed to the model's
+    /// CPI session by session (the consumer applies its own reference lag). The real yield it is
+    /// marked to is emitted as `realYield10`, the expectation as `expInfl10` (the breakeven over
+    /// the nominal leg's yield by construction), the policy rate less the one-year expectation as
+    /// `realRate`, and the leg's price as `tips10`; graded against a par TIPS built from FRED's
+    /// DFII10 and CPI-U (`tips-2026-10-11.tsv`). No refuge bid: the record's TIPS fall with
+    /// equities in a flight to quality (2008, March 2020), which is what its monthly correlation
+    /// with the market (+0.16, against the nominal bond's below zero) reads.
+    pub tips: f64,
     /// THE TERM PREMIUM, percentage points a year per year of duration: every bond leg carries the
     /// short rate plus this times its duration, where a bond without it earns the short rate alone.
     /// Sampled with the sets (a record pins it only to its own sampling width) and graded by the
     /// 10-year leg's log return over the short rate against FRED's DGS10 over DFF, 1962-2026
     pub term_premium: f64,
+    /// THE PRICE LEVEL'S NOISE (item 60), the sd of a year of log CPI changes beyond the pressure
+    /// (0 = off, the 0.24.7 level: deterministic from the pressure): drawn on its own stream, so
+    /// a world with it off is bit-identical to one without it. Graded by `cpi monthly sd pp`
+    /// (the record's 0.31% a month is 1.07 a year) against what an indexation lag reads
+    pub cpi_noise: f64,
+    /// THE DEFLATION SIDE (item 60): at a regime switch that draws no inflation regime, the chance
+    /// of a DEFLATION regime instead, its target a half-normal of `defl_size` below zero, capped
+    /// like the inflation side's (0 = off: no draw is consumed). Policy then chases a target below
+    /// its floor and holds at zero; graded by the century's deflation share (12.7% of months)
+    pub defl_prob: f64,
+    /// the deflation regimes' size, in pressure units: the record's troughs are mostly one to
+    /// four points below zero (1926-29, 1938-39, 1949, 2009), the inflation regimes' peaks five
+    /// to twenty above, so the two sides have their own scales
+    pub defl_size: f64,
+    /// THE INFLATION SPIKES (item 60): Poisson arrivals a year, on their own stream, of a pressure
+    /// pulse a half-normal of `spike_size` high that decays at `SPIKE_DECAY` (0 = off). The
+    /// short sharp inflations the regime cannot make (1951, 2008, 2021-22; the record's 4%+
+    /// spells start 19 times a century with a median of five months) and the sharp rate rises
+    /// and bond sell-off runs that follow them
+    pub spike_rate: f64,
+    /// the spikes' size, in pressure units (0.04 = four points of inflation at the peak)
+    pub spike_size: f64,
+    /// THE TERM STATE (item 60): the sd per sqrt-year, decimal, of the innovation of the premium
+    /// the ten-year legs' yield carries over the expected average short rate. At 0 the legs are
+    /// marked to the overnight rate, as every release before 0.25.0 marked them (bit-identical).
+    /// Above 0 both ten-year legs (`bond10`, `tips`) are marked to a ten-year yield: the
+    /// expectation the macro panel's `macroYield10` uses (the neutral rate, the regime and the
+    /// spike, accommodation and the rate's gap at their decay speeds) plus this premium, an OU
+    /// state reverting at `TERM_REVERT` on its own stream. The record's ten-year real yield moves
+    /// 0.22 pp a month as a random walk within the year and reverts over years, which the
+    /// overnight rate's noise cannot give a ten-year yield; the long bond keeps the short rate.
+    pub term_vol: f64,
+    /// THE BREAKEVEN PREMIUM (item 60): the sd per sqrt-year, decimal, of the innovation of the
+    /// premium the market's ten-year breakeven carries over its inflation expectation, an OU state
+    /// reverting at `BRK_REVERT` on its own stream. At 0 the breakeven is the expectation alone,
+    /// bit-identical to the world without it. Above 0 the TIPS leg is marked to the nominal yield
+    /// less the breakeven, so the premium moves the TIPS leg, `realYield10` and `expInfl10` and
+    /// nothing else: the record's breakeven moves 0.167 pp a month of which 0.159 is its own
+    /// (`breakeven own change sd pp`); the nominal leg and the one-year expectation keep nothing
+    /// of it.
+    pub brk_vol: f64,
+    /// THE NOMINAL SHARE of the breakeven premium (item 60): the share of `brk_vol`'s state
+    /// priced into the ten-year yield both legs are marked to, as expected-inflation news the
+    /// real yield does not carry; the rest is a premium the real yield carries. The record's
+    /// breakeven change correlates 0.51 with the nominal yield's and -0.17 with the real yield's
+    /// (`breakeven vs yield corr monthly`), where a premium the real yield carries whole reads
+    /// about 0.15 and -0.5. At 0 the whole state is the real yield's, bit-identical to 0.25.0's
+    /// first form; at 1 the real yield keeps none of it.
+    pub brk_nominal: f64,
     /// CAP on policy accommodation under equity stress, in rate points
     pub easing: f64,
     /// how fast that accommodation is withdrawn, per year
@@ -3458,6 +3910,14 @@ pub struct Path {
     pub bond: Vec<f64>,
     /// the 10-year leg's price (its own Market at `World::bond10`; empty when the leg is off)
     pub bond10: Vec<f64>,
+    /// THE REAL SIDE (item 60; `World::tips`), each empty when the leg is off: the TIPS leg's
+    /// price, its principal indexed to `cpi`; the real yield it is marked to, in percent; the
+    /// market's ten-year inflation expectation, in percent (the breakeven over the nominal leg's
+    /// yield); and the policy rate less the one-year expectation, in percent
+    pub tips10: Vec<f64>,
+    pub real_yield10: Vec<f64>,
+    pub exp_infl10: Vec<f64>,
+    pub real_rate: Vec<f64>,
     /// inflation pressure, for regime classification
     pub infl_press: Vec<f64>,
     /// realized price level, deterministic from pressure
@@ -3487,6 +3947,8 @@ pub struct Path {
     pub duration: f64,
     /// the 10-year leg's duration, 0 when the leg is off
     pub bond10_duration: f64,
+    /// the TIPS leg's duration, 0 when the leg is off
+    pub tips_duration: f64,
     pub mean_crowd_flow: f64,
     /// BINDING diagnostic for the disaster channel: collapses begun post burn-in on this path.
     pub disasters: usize,
@@ -3555,6 +4017,10 @@ impl Path {
             bliq: cut(&self.bliq),
             bond: cut(&self.bond),
             bond10: cut(&self.bond10),
+            tips10: cut(&self.tips10),
+            real_yield10: cut(&self.real_yield10),
+            exp_infl10: cut(&self.exp_infl10),
+            real_rate: cut(&self.real_rate),
             infl_press: cut(&self.infl_press),
             cpi: cut(&self.cpi),
             mean_trend_share: self.mean_trend_share,
@@ -3568,6 +4034,7 @@ impl Path {
             pct_bond_stress: self.pct_bond_stress,
             duration: self.duration,
             bond10_duration: self.bond10_duration,
+            tips_duration: self.tips_duration,
             mean_crowd_flow: self.mean_crowd_flow,
             disasters: self.disasters,
             booms: self.booms,
@@ -4845,8 +5312,10 @@ struct MacroInputs {
     borrow: Vec<f64>,
     /// the policy rate, decimal
     rate: Vec<f64>,
-    /// inflation pressure, decimal
+    /// the inflation regime's pressure, decimal
     infl: Vec<f64>,
+    /// the spike's pulse, decimal (item 60): 0 without spikes
+    spike: Vec<f64>,
     /// the log price level, for nominal output
     log_cpi: Vec<f64>,
     /// the fundamental's log base, BEFORE the rate markdown: the model's real activity
@@ -4913,6 +5382,7 @@ impl MacroPanel {
 /// record's (`macro-2026-09-06.tsv`, <= 0.02) — the oracle-leak guard.
 mod macro_k {
     use super::DAYS_PER_YEAR;
+    pub(super) const T1: f64 = 1.0;
     pub(super) const T2: f64 = 2.0;
     pub(super) const T10: f64 = 10.0;
     /// 10y over 2y at neutral, decimal
@@ -5162,23 +5632,18 @@ fn derive_macro(
     }
     let mut rng = NumPyRng::new(seed ^ 0x3ac2_0c0du64);
     let n = m.stress.len();
-    // the T-year average of a deviation decaying at speed k: (1 - e^{-kT}) / (kT), 1 at k = 0
-    let phi = |k: f64, t: f64| -> f64 {
-        let kt = k * t;
-        if kt <= 0.0 {
-            1.0
-        } else {
-            (1.0 - exp_det(-kt)) / kt
-        }
-    };
+    let phi = horizon_weight;
     let d_r = phi(w.rate_speed, macro_k::T10) - phi(w.rate_speed, macro_k::T2);
     let d_a = phi(w.unwind, macro_k::T10) - phi(w.unwind, macro_k::T2);
     let d_i = phi(1.0 / macro_k::REGIME_YEARS, macro_k::T10)
         - phi(1.0 / macro_k::REGIME_YEARS, macro_k::T2);
+    // the spike's pulse decays at its own speed (item 60): its term is exactly 0 without spikes
+    let d_s = phi(SPIKE_DECAY, macro_k::T10) - phi(SPIKE_DECAY, macro_k::T2);
     // the 10-year yield's own factors: the level the slope is a difference of
     let p_r10 = phi(w.rate_speed, macro_k::T10);
     let p_a10 = phi(w.unwind, macro_k::T10);
     let p_i10 = phi(1.0 / macro_k::REGIME_YEARS, macro_k::T10);
+    let p_s10 = phi(SPIKE_DECAY, macro_k::T10);
     // `k` is the world's implied-vol level (`ChannelLevel::k_iv`): forward realized vol over the
     // very factor read below, as a mean of logs, so the member's log premium over forward
     // realized vol is the record's by construction in every world and only the premium's
@@ -5244,19 +5709,23 @@ fn derive_macro(
             sp.dd.push(w.spread_dd * dd_s);
             sp.noise.push(e_s);
         }
-        let target = w.rate_mean + m.infl[i] - m.acc[i];
+        let target = w.rate_mean + m.infl[i] - m.acc[i] + m.spike[i];
         slope[i] = 100.0
             * (m.infl[i] * d_i - m.acc[i] * d_a
                 + (m.rate[i] - target) * d_r
-                + macro_k::TERM_PREMIUM);
+                + macro_k::TERM_PREMIUM
+                + m.spike[i] * d_s);
         // THE 10-YEAR YIELD (DGS10-like, pp): the OU-expected average of the short rate over ten
         // years — the neutral rate, the regime's inflation term, the accommodation term and the
-        // rate's own gap decaying at their speeds — plus the term premium. The slope above is
-        // this less the 2-year's, so the level cannot contradict it. No noise: an expectation.
+        // rate's own gap decaying at their speeds, and the spike's pulse at its own — plus the
+        // term premium. The slope above is this less the 2-year's, so the level cannot contradict
+        // it. No noise: an expectation. Less the TIPS leg's `expInfl10` it is the leg's real yield
+        // but for the rate's gap and accommodation terms, which the leg marks at the short rate.
         yield10[i] = 100.0
             * (w.rate_mean + m.infl[i] * p_i10 - m.acc[i] * p_a10
                 + (m.rate[i] - target) * p_r10
-                + macro_k::TERM_PREMIUM);
+                + macro_k::TERM_PREMIUM
+                + m.spike[i] * p_s10);
         // NOMINAL OUTPUT (GDP-like, index): the real trend and the price level — the SMOOTH
         // nominal rate credit also grows at — plus `OUT_SHARE` of the fundamental's excess
         // growth, which is the model's real activity and carries its disasters as depressions.
@@ -5573,6 +6042,17 @@ fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRu
     let tp_b10 = w.term_premium / 100.0 * w.bond10;
     let mut slow_b10 = 0.0f64;
     let mut news_b10 = 0.0f64;
+    let t_on = w.tips > 0.0;
+    let kt = w.tips / DURATION_REF;
+    let mut t_m = Market::new(K_VALUE_BOND, w.stress, 1.0);
+    let mut fair_t = 0.0f64;
+    let tp_t = w.term_premium / 100.0 * w.tips;
+    let mut slow_t = 0.0f64;
+    let mut news_t = 0.0f64;
+    let mut ry_old = w.rate_mean - PI_BASE;
+    let mut tpx = vec![0.0f64; tot];
+    let mut ryv = vec![0.0f64; tot];
+    let mut y10_old = w.rate_mean;
     let mut rate = w.rate_mean;
     let mut fair_b = 0.0f64;
     let settle_mu = if w.refuge_days > 0.0 {
@@ -5610,6 +6090,15 @@ fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRu
                 news_b10 = NEWS_BOND_DECAY * news_b10 - bk10 * comp;
                 b10_m.log_p -= bk10 * comp;
             }
+            if t_on {
+                let bkt = if bk < 0.0 {
+                    -w.news_bond * kt
+                } else {
+                    w.news_bond * kt
+                };
+                news_t = NEWS_BOND_DECAY * news_t - bkt * comp;
+                t_m.log_p -= bkt * comp;
+            }
         }
         if let Some(&(_, leg)) = legs.next_if(|(k, _)| *k as usize == i) {
             news_b += leg;
@@ -5618,6 +6107,11 @@ fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRu
                 let leg10 = leg * (w.bond10 / w.duration);
                 news_b10 += leg10;
                 b10_m.log_p += leg10;
+            }
+            if t_on {
+                let legt = leg * (w.tips / w.duration);
+                news_t += legt;
+                t_m.log_p += legt;
             }
         }
         let sm = tape.slow_sm[i];
@@ -5635,6 +6129,11 @@ fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRu
                 b10_m.log_p += bm10;
                 slow_b10 += w.slow_perm * bm10;
             }
+            if t_on {
+                let bmt = -w.slow_beta * sm * kt * infl_sign;
+                t_m.log_p += bmt;
+                slow_t += w.slow_perm * bmt;
+            }
         }
         let r_old = rate;
         rate = if i < BURN_IN {
@@ -5642,10 +6141,17 @@ fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRu
         } else {
             rate_post[i - BURN_IN]
         };
+        let y10 = tape.y10[i];
         fair_b += (rate + tp_b) * dt - w.duration * (rate - r_old);
         if b10_on {
-            fair_b10 += (rate + tp_b10) * dt - w.bond10 * (rate - r_old);
+            fair_b10 += (y10 + tp_b10) * dt - w.bond10 * (y10 - y10_old);
         }
+        if t_on {
+            let ry = y10 - tape.e10[i];
+            fair_t += (ry + tp_t) * dt - w.tips * (ry - ry_old) + tape.d_cpi[i];
+            ry_old = ry;
+        }
+        y10_old = y10;
         let eq_stress = tape.eq_stress[i];
         let eq_stress_for_refuge = if w.refuge_days > 0.0 {
             settled_stress
@@ -5667,6 +6173,7 @@ fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRu
         };
         let bond_noise = SIGMA_N_BOND * (w.duration / DURATION_REF) * tape.noise[i];
         let _ret_b = bd_m.step(bond_fair, bond_flow + bond_noise);
+        let z_b10 = if b10_on || t_on { b10rng.randn() } else { 0.0 };
         if b10_on {
             let flow10 = -w.margin * eq_stress * b10_m.stress_idx
                 + w.refuge * k10 * eq_stress_for_refuge * 0.0f64.max(1.0 - b10_m.stress_idx);
@@ -5675,13 +6182,32 @@ fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRu
             } else {
                 fair_b10 + slow_b10
             };
-            let noise10 = SIGMA_N_BOND * k10 * b10rng.randn();
+            let noise10 = SIGMA_N_BOND * k10 * z_b10;
             let _ret10 = b10_m.step(fair10, flow10 + noise10);
+        }
+        if t_on {
+            let flow_t = -w.margin * eq_stress * t_m.stress_idx
+                + TIPS_REFUGE
+                    * w.refuge
+                    * kt
+                    * eq_stress_for_refuge
+                    * 0.0f64.max(1.0 - t_m.stress_idx);
+            let fair_tv = if w.news_bond > 0.0 {
+                fair_t + slow_t + news_t
+            } else {
+                fair_t + slow_t
+            };
+            let noise_t = SIGMA_N_BOND * kt * z_b10;
+            let _ret_t = t_m.step(fair_tv, flow_t + noise_t);
         }
         bq[i] = bd_m.last_liq;
         bp[i] = bd_m.log_p.exp();
         if b10_on {
             b10p[i] = b10_m.log_p.exp();
+        }
+        if t_on {
+            tpx[i] = t_m.log_p.exp();
+            ryv[i] = 100.0 * (y10 + tp_t - tape.e10[i]);
         }
         if i >= BURN_IN {
             b_stress[i - BURN_IN] = bd_m.stress_idx;
@@ -5703,6 +6229,16 @@ fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRu
         } else {
             Vec::new()
         },
+        tips10: if t_on {
+            tpx[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        real_yield10: if t_on {
+            ryv[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
         clamped_days: tape.eq_clamps_end + bd_m.clamps - (tape.eq_clamps_burn + bd_clamps_at_burn),
         mean_bond_stress: bond_stress_sum / nf,
         pct_bond_stress: bond_stress_hi as f64 / nf,
@@ -5710,12 +6246,15 @@ fn run_bonds(w: &World, tape: &BondTape, rate_post: &[f64], seed: u64) -> BondRu
     }
 }
 
-/// The two bonds' series and summaries from `run_bonds`, and the long bond's stress per recorded
-/// session for the panel's spread.
+/// The three bonds' series and summaries from `run_bonds` (the TIPS leg's price and the real
+/// yield it is marked to carry the premium; its expectations do not), and the long bond's stress
+/// per recorded session for the panel's spread.
 struct BondRun {
     bliq: Vec<f64>,
     bond: Vec<f64>,
     bond10: Vec<f64>,
+    tips10: Vec<f64>,
+    real_yield10: Vec<f64>,
     clamped_days: usize,
     mean_bond_stress: f64,
     pct_bond_stress: f64,
@@ -5729,11 +6268,14 @@ impl BondRun {
             bliq: self.bliq,
             bond: self.bond,
             bond10: self.bond10,
+            tips10: self.tips10,
+            real_yield10: self.real_yield10,
             clamped_days: self.clamped_days,
             mean_bond_stress: self.mean_bond_stress,
             pct_bond_stress: self.pct_bond_stress,
             duration: w.duration,
             bond10_duration: w.bond10,
+            tips_duration: w.tips,
             ..p
         }
     }
@@ -5814,6 +6356,8 @@ impl TpKeep {
                         bliq: Vec::new(),
                         bond: Vec::new(),
                         bond10: Vec::new(),
+                        tips10: Vec::new(),
+                        real_yield10: Vec::new(),
                         sat: Vec::new(),
                         log_hi: Vec::new(),
                         log_lo: Vec::new(),
@@ -5853,7 +6397,13 @@ impl TpKeep {
 /// A row whose reading a move of the term premium alone can change and that `fidelity_rows`
 /// reads off a horizon other than the main read's statistics.
 fn is_bond_row(n: &str) -> bool {
-    BOND_BAND_ROWS.contains(&n) || BOND10_BAND_ROWS.contains(&n) || BOND_CRASH_ROWS.contains(&n)
+    BOND_BAND_ROWS.contains(&n)
+        || BOND10_BAND_ROWS.contains(&n)
+        || BOND_CRASH_ROWS.contains(&n)
+        || REAL_YIELD_BAND_ROWS.contains(&n)
+        || BREAKEVEN_BAND_ROWS.contains(&n)
+        || TIPS_BAND_ROWS.contains(&n)
+        || REAL_RATE_BAND_ROWS.contains(&n)
 }
 
 /// THE READ OF A TERM-PREMIUM MOVE from the cache of the current world's read: `w` the move's
@@ -5984,6 +6534,12 @@ pub struct BondTape {
     eq_clamps_end: usize,
     /// the macro panel's spread, the one member the bond's stress reaches; empty when off
     spread: SpreadParts,
+    /// THE TIPS LEG's inputs (item 60): the market's ten-year inflation expectation and the
+    /// session's log price-level change, what the leg's marking and indexation read
+    e10: Vec<f64>,
+    d_cpi: Vec<f64>,
+    /// the ten-year yield the legs are marked to (`World::term_vol`; the rate itself at 0)
+    y10: Vec<f64>,
 }
 
 /// The spread's terms around the bond's (`derive_macro`), over the recorded sessions, so a replay
@@ -6009,6 +6565,9 @@ impl BondTape {
             eq_clamps_burn: self.eq_clamps_burn,
             eq_clamps_end: self.eq_clamps_end,
             spread: self.spread.clone(),
+            e10: self.e10.clone(),
+            d_cpi: self.d_cpi.clone(),
+            y10: self.y10.clone(),
         }
     }
 
@@ -6024,6 +6583,9 @@ impl BondTape {
             eq_clamps_burn: 0,
             eq_clamps_end: 0,
             spread: SpreadParts::default(),
+            e10: vec![0.0; tot],
+            d_cpi: vec![0.0; tot],
+            y10: vec![0.0; tot],
         }
     }
 
@@ -6031,7 +6593,7 @@ impl BondTape {
     #[must_use]
     pub fn bytes(&self) -> usize {
         let f = size_of::<f64>();
-        (self.rate_burn.len() + 4 * self.eq_stress.len() + 3 * self.spread.head.len()) * f
+        (self.rate_burn.len() + 7 * self.eq_stress.len() + 3 * self.spread.head.len()) * f
             + self.regime.len()
             + self.news_legs.len() * size_of::<(u32, f64)>()
     }
@@ -6119,6 +6681,55 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let tp_b10 = w.term_premium / 100.0 * w.bond10;
     let mut slow_b10 = 0.0f64;
     let mut news_b10 = 0.0f64;
+    // THE TIPS LEG (item 60; `World::tips`): the nominal leg's market, flows and noise scale at
+    // its own duration on its own stream, marked to the nominal leg's yield less the market's
+    // ten-year inflation expectation, its principal indexed to the model's CPI. Nothing here
+    // reaches another series: off, it draws nothing and every other column is bit-identical.
+    let t_on = w.tips > 0.0;
+    let kt = w.tips / DURATION_REF;
+    let mut t_m = Market::new(K_VALUE_BOND, w.stress, 1.0);
+    let mut fair_t = 0.0f64;
+    let tp_t = w.term_premium / 100.0 * w.tips;
+    let mut slow_t = 0.0f64;
+    let mut news_t = 0.0f64;
+    // the leg's real yield entering the first session: the short rate at its mean less the base
+    let mut ry_old = w.rate_mean - PI_BASE;
+    // THE MARKET'S INFLATION EXPECTATION at ten years and at one: the base plus the regime's
+    // pressure and the spike's pulse, each averaged over the horizon at its own decay -- the
+    // regime's at the mean regime life, the pulse's at `SPIKE_DECAY` -- the arithmetic the macro
+    // panel's ten-year yield uses, so the breakeven is the panel's by construction
+    let p_i10 = horizon_weight(1.0 / macro_k::REGIME_YEARS, macro_k::T10);
+    let p_s10 = horizon_weight(SPIKE_DECAY, macro_k::T10);
+    let p_i1 = horizon_weight(1.0 / macro_k::REGIME_YEARS, macro_k::T1);
+    let p_s1 = horizon_weight(SPIKE_DECAY, macro_k::T1);
+    // THE MARKET'S ESTIMATES of the regime and the spike (`inflation_filter_gains`), what its
+    // expectations and the legs' yield are built from; the states themselves stay the economy's
+    let [k_g, k_s] = inflation_filter_gains(w);
+    let f_g = 1.0 - dt / macro_k::REGIME_YEARS;
+    let f_s = 1.0 - SPIKE_DECAY * dt;
+    let (mut g_hat, mut s_hat) = (0.0f64, 0.0f64);
+    let t_vec = || if t_on { vec![0.0f64; tot] } else { Vec::new() };
+    let (mut tpx, mut ryv, mut eiv, mut rrv) = (t_vec(), t_vec(), t_vec(), t_vec());
+    // THE TERM STATE (`World::term_vol`): the premium over the expected average short rate the
+    // ten-year legs' yield carries, an OU on its own stream; with it the legs are marked to that
+    // yield, without it to the overnight rate, as before
+    let term_on = w.term_vol > 0.0;
+    let mut tau = 0.0f64;
+    let mut taurng = NumPyRng::new(seed ^ 0x7e2a_5a1eu64);
+    // THE BREAKEVEN PREMIUM (`World::brk_vol`): what the market's ten-year breakeven carries over
+    // its expectation, an OU on its own stream; the TIPS leg alone is marked to it
+    let brk_on = w.brk_vol > 0.0;
+    let mut phi = 0.0f64;
+    let mut phirng = NumPyRng::new(seed ^ 0x4b1d_7e51u64);
+    // the market's long-run anchors for the ten-year yield: the means of the policy rate, the
+    // accommodation and its own two inflation estimates over every session it has seen (a
+    // neutral rate the policy sits below on average, since easing is one-sided and the spikes
+    // one-signed, would otherwise put a premium into every ten-year yield)
+    let (mut r_sum, mut a_sum, mut g_sum, mut s_sum, mut n_seen) =
+        (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let p_a10 = horizon_weight(w.unwind, macro_k::T10);
+    let p_r10 = horizon_weight(w.rate_speed, macro_k::T10);
+    let mut y10_old = w.rate_mean;
     // THE AMPLIFIER STUDY's gain scale: the equity market's alone (the bond's impact IS its
     // reference). Exact forms at 1 and 0.5; anything else goes through `exp_det` on a log, which
     // the twins' parity run guards.
@@ -6140,6 +6751,13 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     // the markdown's reference (see `discount_ref`), `rate_mean` while the dial is off
     let mut rate_ref = w.rate_mean;
     let mut infl_press = 0.0f64;
+    // THE REAL SIDE (item 60): the spikes' pulse and the pressure the economy sees, regime plus
+    // pulse -- exactly `infl_press` while the spikes are off -- each on its own stream so a world
+    // without them is bit-identical to one with them at zero
+    let mut spike = 0.0f64;
+    let mut press = 0.0f64;
+    let mut spike_rng = NumPyRng::new(seed ^ 0x5b1c_e5e5u64);
+    let mut cpi_rng = NumPyRng::new(seed ^ 0x0c91_0015u64);
     // policy accommodation in force, in rate points
     let mut acc = 0.0f64;
     let mut infl_target = 0.0f64;
@@ -6149,7 +6767,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     // realized inflation: baseline plus the same pressure that drives the rate. DELIBERATELY
     // noise-free — it consumes no random draws, so adding it left every calibrated statistic
     // bit-identical. piBase 0.025 makes rateMean 4.2% a ~1.7% real rate.
-    let pi_base = 0.025f64;
+    let pi_base = PI_BASE;
     let mut log_cpi = 0.0f64;
     let mut w_trend = w.trend_share;
     let mut w_trend_sum = 0.0f64;
@@ -6374,6 +6992,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         borrow: mc_vec(),
         rate: mc_vec(),
         infl: mc_vec(),
+        spike: mc_vec(),
         log_cpi: mc_vec(),
         log_fund: mc_vec(),
         log_p: mc_vec(),
@@ -6411,6 +7030,9 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         if regime_countdown <= 0 {
             infl_target = if rng.next_f64() < w.infl_prob {
                 INFL_CAP.min(rng.randn().abs() * w.infl_size)
+            } else if w.defl_prob > 0.0 && rng.next_f64() < w.defl_prob {
+                // the deflation side: a half-normal of its own size below zero, the same cap
+                -INFL_CAP.min(rng.randn().abs() * w.defl_size)
             } else {
                 0.0
             };
@@ -6499,7 +7121,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                         < recess_prob
                             * (w.recess_base
                                 + eq_m.stress_idx
-                                + recession_macro_onset(w, lev_on, borrow, lev_slow, infl_press))
+                                + recession_macro_onset(w, lev_on, borrow, lev_slow, press))
                 {
                     recess_left = ((w.recess_len * DAYS_PER_YEAR as f64) as usize).max(1);
                     recess_total = recess_left;
@@ -6572,7 +7194,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             }
             // the bond's leg, fair and price together, so its value channel has nothing to undo
             // reversed in an inflation regime, read as it stood before the session
-            let bk = if infl_press > INFL_REGIME_EDGE {
+            let bk = if press > INFL_REGIME_EDGE {
                 -w.news_bond * (w.duration / DURATION_REF)
             } else {
                 w.news_bond * (w.duration / DURATION_REF)
@@ -6592,6 +7214,15 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     };
                     news_b10 = NEWS_BOND_DECAY * news_b10 - bk10 * comp;
                     b10_m.log_p -= bk10 * comp;
+                }
+                if t_on {
+                    let bkt = if bk < 0.0 {
+                        -w.news_bond * kt
+                    } else {
+                        w.news_bond * kt
+                    };
+                    news_t = NEWS_BOND_DECAY * news_t - bkt * comp;
+                    t_m.log_p -= bkt * comp;
                 }
             }
             if nrng.next_f64() < p_news {
@@ -6620,6 +7251,11 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                         news_b10 += leg10;
                         b10_m.log_p += leg10;
                     }
+                    if t_on {
+                        let legt = leg * (w.tips / w.duration);
+                        news_t += legt;
+                        t_m.log_p += legt;
+                    }
                 }
                 news_j = size;
             }
@@ -6642,14 +7278,14 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // duration
             // in an inflation regime `slow_bond_infl` of the leg reverses (see the field); a
             // factor of exactly 1.0 when it is off
-            let infl_sign = if w.slow_bond_infl > 0.0 && infl_press > INFL_REGIME_EDGE {
+            let infl_sign = if w.slow_bond_infl > 0.0 && press > INFL_REGIME_EDGE {
                 1.0 - 2.0 * w.slow_bond_infl
             } else {
                 1.0
             };
             if let Some(t) = tape.as_deref_mut() {
                 t.slow_sm[i] = sm;
-                t.regime[i] |= u8::from(infl_press > INFL_REGIME_EDGE) << 1;
+                t.regime[i] |= u8::from(press > INFL_REGIME_EDGE) << 1;
             }
             let bm = -w.slow_beta * sm * (w.duration / DURATION_REF) * infl_sign;
             bd_m.log_p += bm;
@@ -6659,15 +7295,57 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 b10_m.log_p += bm10;
                 slow_b10 += w.slow_perm * bm10;
             }
+            if t_on {
+                let bmt = -w.slow_beta * sm * kt * infl_sign;
+                t_m.log_p += bmt;
+                slow_t += w.slow_perm * bmt;
+            }
             slow_g = w.slow_phi * slow_g - w.slow_lev * slow_k * zs;
         }
         infl_press += w.infl_speed * (infl_target - infl_press);
+        // the spikes: a pulse that decays, arrivals on their own stream; nothing at rate 0
+        if w.spike_rate > 0.0 {
+            spike -= SPIKE_DECAY * spike * dt;
+            if spike_rng.next_f64() < w.spike_rate * dt {
+                spike += spike_rng.randn().abs() * w.spike_size;
+            }
+        }
+        press = infl_press + spike;
+        // THE REAL SIDE's expectations (`expInfl10`, `realRate`) and the session's price-level
+        // change, drawn here on its own stream so the leg can index to it this session; the
+        // level itself moves where it always did
+        let d_cpi = (pi_base + press) * dt
+            + if w.cpi_noise > 0.0 {
+                w.cpi_noise * sqdt * cpi_rng.randn()
+            } else {
+                0.0
+            };
+        // the market reads the print and revises its two estimates (`inflation_filter_gains`)
+        g_hat *= f_g;
+        s_hat *= f_s;
+        let surprise = d_cpi / dt - pi_base - (g_hat + s_hat);
+        g_hat += k_g * surprise;
+        s_hat += k_s * surprise;
+        // the ten-year breakeven: the expectation, plus the premium where it is on
+        let e10 = if brk_on {
+            phi += -BRK_REVERT * phi * dt + w.brk_vol * sqdt * phirng.randn();
+            pi_base + g_hat * p_i10 + s_hat * p_s10 + phi
+        } else {
+            pi_base + g_hat * p_i10 + s_hat * p_s10
+        };
+        let e1 = pi_base + g_hat * p_i1 + s_hat * p_s1;
+        if let Some(t) = tape.as_deref_mut() {
+            t.e10[i] = e10;
+            t.d_cpi[i] = d_cpi;
+        }
         // policy: chase rateMean + pressure MINUS accommodation, and accommodation is a CAPPED
         // STOCK rather than a cut speed — eased in within ~2 months, withdrawn over years. As a
         // speed it was unbounded, so a stress episode took the rate to the floor and the same
         // `rate_speed` pulled it straight back; the bond's peak was set by that spike. Inflation
-        // suppresses the easing, which is what ties policy's hands in 2022-like regimes.
-        let acc_want = w.easing * eq_m.stress_idx * (-infl_press / 0.005).exp();
+        // suppresses the easing, which is what ties policy's hands in 2022-like regimes; a
+        // deflation regime (pressure below zero) suppresses nothing, rather than easing without
+        // bound.
+        let acc_want = w.easing * eq_m.stress_idx * (-press.max(0.0) / 0.005).exp();
         acc = if acc_want > acc {
             acc + EASE_IN_SPEED * (acc_want - acc) * dt
         } else {
@@ -6683,14 +7361,55 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // is what makes stocks and bonds co-move in an inflation regime: both are priced off
         // the same rate, so more rate news = more shared-factor variance = the correlation flip.
         rate = 0.0f64.max(
-            rate + w.rate_speed * ((w.rate_mean + infl_press - acc) - rate) * dt
-                + 0.01 * (1.0 + 25.0 * infl_press) * sqdt * rng.randn(),
+            rate + w.rate_speed * ((w.rate_mean + press - acc) - rate) * dt
+                + 0.01 * (1.0 + 25.0 * press.max(0.0)) * sqdt * rng.randn(),
         );
+        // THE TEN-YEAR YIELD the legs are marked to (item 60): the expected average short rate
+        // over ten years -- the rate's long-run mean as the market has seen it, the regime, the
+        // spike, accommodation and the rate's gap at their decay speeds, the macro panel's
+        // arithmetic less its premium constant -- plus the term state; the overnight rate while
+        // the state is off
+        let y10_base = if term_on {
+            tau += -TERM_REVERT * tau * dt + w.term_vol * sqdt * taurng.randn();
+            r_sum += rate;
+            a_sum += acc;
+            g_sum += g_hat;
+            s_sum += s_hat;
+            n_seen += 1.0;
+            let (rbar, abar, gbar, sbar) = (
+                r_sum / n_seen,
+                a_sum / n_seen,
+                g_sum / n_seen,
+                s_sum / n_seen,
+            );
+            // the market's expectation, on its own estimates of the regime and the spike:
+            // the rate's long-run mean plus each state's excess over its own, decaying
+            let (g_x, s_x, a_x) = (g_hat - gbar, s_hat - sbar, acc - abar);
+            let target_mkt = rbar + g_x + s_x - a_x;
+            rbar + g_x * p_i10 + s_x * p_s10 - a_x * p_a10 + (rate - target_mkt) * p_r10 + tau
+        } else {
+            rate
+        };
+        // the share of the breakeven's own state priced into the nominal yield
+        // (`World::brk_nominal`): expected-inflation news, which the real yield does not carry
+        let y10 = y10_base + w.brk_nominal * phi;
+        if let Some(t) = tape.as_deref_mut() {
+            t.y10[i] = y10;
+        }
         // bond fair value: carry minus duration times the realised rate move
         fair_b += (rate + tp_b) * dt - w.duration * (rate - r_old);
         if b10_on {
-            fair_b10 += (rate + tp_b10) * dt - w.bond10 * (rate - r_old);
+            fair_b10 += (y10 + tp_b10) * dt - w.bond10 * (y10 - y10_old);
         }
+        if t_on {
+            // the leg's real yield is the nominal leg's less the ten-year expectation: its fair
+            // value carries the real yield, the duration times the real yield's move, and the
+            // session's indexation
+            let ry = y10 - e10;
+            fair_t += (ry + tp_t) * dt - w.tips * (ry - ry_old) + d_cpi;
+            ry_old = ry;
+        }
+        y10_old = y10;
         // The discount markdown applies to the OBSERVED equity price directly — same-day,
         // like the bond's duration response — because equities reprice discount-rate news
         // immediately. Routing it through the slow value channel smeared rate news over ~40
@@ -7317,6 +8036,11 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         }
         let bond_noise = SIGMA_N_BOND * (w.duration / DURATION_REF) * z_b;
         let _ret_b = bd_m.step(bond_fair, bond_flow + bond_noise);
+        // ONE TREASURY MARKET's session noise for both ten-year legs, each at its own scale: the
+        // record's TIPS and nominal move together day to day (0.81) beyond what their common
+        // yield gives two legs with noise of their own; drawn exactly as the nominal leg alone
+        // drew it, so that leg is bit-identical with the TIPS leg on or off
+        let z_b10 = if b10_on || t_on { b10rng.randn() } else { 0.0 };
         if b10_on {
             let flow10 = -w.margin * eq_m.stress_idx * b10_m.stress_idx
                 + w.refuge * k10 * eq_stress_for_refuge * 0.0f64.max(1.0 - b10_m.stress_idx);
@@ -7325,8 +8049,24 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             } else {
                 fair_b10 + slow_b10
             };
-            let noise10 = SIGMA_N_BOND * k10 * b10rng.randn();
+            let noise10 = SIGMA_N_BOND * k10 * z_b10;
             let _ret10 = b10_m.step(fair10, flow10 + noise10);
+        }
+        if t_on {
+            // margin selling as the nominal legs take it; no refuge bid (see `World::tips`)
+            let flow_t = -w.margin * eq_m.stress_idx * t_m.stress_idx
+                + TIPS_REFUGE
+                    * w.refuge
+                    * kt
+                    * eq_stress_for_refuge
+                    * 0.0f64.max(1.0 - t_m.stress_idx);
+            let fair_tv = if w.news_bond > 0.0 {
+                fair_t + slow_t + news_t
+            } else {
+                fair_t + slow_t
+            };
+            let noise_t = SIGMA_N_BOND * kt * z_b10;
+            let _ret_t = t_m.step(fair_tv, flow_t + noise_t);
         }
 
         px[i] = (eq_m.log_p - markdown).exp();
@@ -7338,8 +8078,15 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         if b10_on {
             b10p[i] = b10_m.log_p.exp();
         }
-        ip[i] = infl_press;
-        log_cpi += (pi_base + infl_press) * dt;
+        if t_on {
+            tpx[i] = t_m.log_p.exp();
+            ryv[i] = 100.0 * (y10 + tp_t - e10);
+            eiv[i] = 100.0 * e10;
+            rrv[i] = 100.0 * (rate - e1);
+        }
+        ip[i] = press;
+        // the price level: the pressure's drift, and the level's own noise on its own stream
+        log_cpi += d_cpi;
         cp[i] = log_cpi.exp();
         if ch_on {
             ch.px[i] = eq_m.log_p - markdown;
@@ -7389,6 +8136,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             mc.borrow[i] = borrow;
             mc.rate[i] = rate;
             mc.infl[i] = infl_press;
+            mc.spike[i] = spike;
             mc.log_cpi[i] = log_cpi;
             mc.log_fund[i] = log_vbase;
             mc.log_p[i] = eq_m.log_p;
@@ -7456,6 +8204,10 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         } else {
             Vec::new()
         },
+        tips10: tpx.get(BURN_IN..).map_or_else(Vec::new, <[f64]>::to_vec),
+        real_yield10: ryv.get(BURN_IN..).map_or_else(Vec::new, <[f64]>::to_vec),
+        exp_infl10: eiv.get(BURN_IN..).map_or_else(Vec::new, <[f64]>::to_vec),
+        real_rate: rrv.get(BURN_IN..).map_or_else(Vec::new, <[f64]>::to_vec),
         infl_press: ip[BURN_IN..].to_vec(),
         cpi: cp[BURN_IN..].to_vec(),
         mean_trend_share: w_trend_sum / nf,
@@ -7469,6 +8221,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         pct_bond_stress: bond_stress_hi as f64 / nf,
         duration: w.duration,
         bond10_duration: w.bond10,
+        tips_duration: w.tips,
         mean_crowd_flow: crowd_flow_sum / nf,
         disasters: disaster_count,
         booms: boom_count,
@@ -7911,6 +8664,21 @@ pub struct WorldStats {
     pub bond10_infl: f64,
     /// the leg's log return over the short rate, points a year
     pub bond10_excess: f64,
+    /// THE PRICE LEVEL's rows (item 60; `CPI_BAND_ROWS`, `CPI_CENTURY_ROWS`): the median over
+    /// paths of each, the path's CPI read by 21-session months as the record's by calendar months
+    pub cpi_rows: [f64; 4],
+    pub cpi_century: [f64; 2],
+    /// the year-over-year rate's persistence at twelve months (`CPI_PERSISTENCE_ROW`), the
+    /// median over paths
+    pub cpi_persist: f64,
+    /// THE REAL SIDE's rows (item 60; `real_rows_of_path`): the medians over paths of the real
+    /// yield's and the breakeven's monthly change sd, the TIPS leg's four rows and the ex-post
+    /// real rate's mean and sd, NaN when the leg is off; `real_reported` the reported rows
+    /// (`REAL_REPORTED_ROWS`) the same way
+    pub real_rows: [f64; 10],
+    pub real_reported: [f64; 6],
+    /// the TIPS leg's duration, 0 when off
+    pub tips: f64,
     pub corr_calm: f64,
     pub corr_infl: f64,
     /// kept for parity with the Scala record; not printed
@@ -8179,9 +8947,9 @@ const VAR_RATIO_SLOPE_BANDS: [(usize, usize, f64, f64); 2] =
 impl WorldStats {
     /// These statistics with the 10-year leg's taken from `b`, a read of the same paths' leg
     /// (`PathNeeds::LEG`): what a report reads once the verdict's leg is dropped from its ensemble
-    /// (`drop_bond10`), without measuring the rest again.
+    /// (`drop_legs`), without measuring the rest again.
     #[must_use]
-    pub fn with_bond10_from(&self, b: &WorldStats) -> WorldStats {
+    pub fn with_legs_from(&self, b: &WorldStats) -> WorldStats {
         WorldStats {
             bond10_vol: b.bond10_vol,
             bond10_growth: b.bond10_growth,
@@ -8189,6 +8957,9 @@ impl WorldStats {
             bond10_excess: b.bond10_excess,
             dd_b10_10: b.dd_b10_10,
             bond10: b.bond10,
+            real_rows: b.real_rows,
+            real_reported: b.real_reported,
+            tips: b.tips,
             ..*self
         }
     }
@@ -8208,6 +8979,9 @@ impl WorldStats {
             bond10_growth: b.bond10_growth,
             bond10_infl: b.bond10_infl,
             bond10_excess: b.bond10_excess,
+            real_rows: b.real_rows,
+            real_reported: b.real_reported,
+            tips: b.tips,
             corr_calm: b.corr_calm,
             corr_infl: b.corr_infl,
             mean_bond_stress: b.mean_bond_stress,
@@ -9207,7 +9981,7 @@ pub const BOND_BAND_ROWS: [&str; 1] = ["bond depth vs vol"];
 /// duration at the prior yield, so the record's moving duration cancels session by session; on
 /// the model the leg's over its own -- and its time under water against what its volatility
 /// implies, the bond row's reading on the leg. The record is FRED's DGS10 read as a par bond,
-/// 1962-2026, the same for both sets.
+/// over the set's rate window: 1962-2026 for the S&P set, 1999-2026 for the Nasdaq set.
 pub const BOND10_BAND_ROWS: [&str; 3] = [
     "bond10 vol per duration",
     "bond10 depth vs vol",
@@ -9217,6 +9991,10 @@ pub const BOND10_BAND_ROWS: [&str; 3] = [
 /// The duration the verdict runs the 10-year leg at when the caller leaves it off. The vol row is
 /// per year of duration, so the choice does not move it; 8 is a 10-year Treasury's today.
 pub const VERDICT_BOND10: f64 = 8.0;
+/// The duration the verdict runs the TIPS leg at when the caller leaves it off: the nominal leg's,
+/// the consumer's choice (the three legs alike, the breakeven a comparison of bonds of one
+/// duration); the vol row is per year of duration.
+pub const VERDICT_TIPS: f64 = 8.0;
 // ---- the sector rows -------------------------------------------------------------------------
 
 /// A PANEL OF INDUSTRY PORTFOLIOS read monthly, the record ruler of a sector channel: Ken
@@ -9591,6 +10369,16 @@ pub fn record_band_years(a: Anchors, name: &str) -> usize {
         a.bond10_years
     } else if BOND_BAND_ROWS.contains(&name) {
         a.bond_years
+    } else if CPI_BAND_ROWS.contains(&name) || name == CPI_PERSISTENCE_ROW {
+        a.cpi_years
+    } else if CPI_CENTURY_ROWS.contains(&name) {
+        a.cpi_century_years
+    } else if REAL_YIELD_BAND_ROWS.contains(&name) || BREAKEVEN_BAND_ROWS.contains(&name) {
+        a.real_years
+    } else if TIPS_BAND_ROWS.contains(&name) {
+        a.tips_years
+    } else if REAL_RATE_BAND_ROWS.contains(&name) {
+        a.real_rate_years
     } else if TIMING_ROWS.contains(&name) {
         a.timing_years
     } else if BOND_CRASH_ROWS.contains(&name) {
@@ -9840,6 +10628,404 @@ pub fn bond10_resamples(
     })
 }
 
+/// THE REAL SIDE's banded rows (item 60; `tips-2026-10-11.tsv`), five groups each read on its own
+/// public-domain record and resampled in one-year blocks of its own cadence.
+///
+/// CPI (`cpi_readings`, monthly log changes of CPI-U): mean inflation, the log change a year in
+/// percent; the year-over-year rate's sd, its share below zero and its share at or above 4%, the
+/// rate in simple percent (`yoy_pct`); and the month-to-month sd, the noise an indexation lag
+/// reads. The rate's persistence at twelve months (`CPI_PERSISTENCE_ROW`, `cpi_persistence`;
+/// `cpipersist-2026-10-12.tsv`) is graded as a single-history row, the record's percentile among
+/// the world's histories of the window's length (`EXTREME_TARGETS`), not by a record band: the
+/// statistic straddles a block join in every pair, so the record sits at its own resamples'
+/// edge. It is the row that tells the S&P's window (0.73 on 1954-2026) from the Nasdaq's (0.26
+/// on 1999-2026), whose breakeven rows a world of the earlier persistence cannot hold.
+/// `cpi_reported` carries the negative share and the 4%+ spells' median and longest length in
+/// months (eleven spells in 72 years, the longest one episode).
+pub const CPI_BAND_ROWS: [&str; 4] = [
+    "cpi mean %/yr",
+    "cpi yoy sd pp",
+    "cpi monthly sd pp",
+    "cpi 4%+ share %",
+];
+pub const CPI_PERSISTENCE_ROW: &str = "cpi yoy persistence 12m";
+pub const CPI_REPORTED_ROWS: [&str; 3] = [
+    "cpi yoy negative share %",
+    "cpi 4%+ spell median months",
+    "cpi 4%+ spell max months",
+];
+/// THE CENTURY's CPI rows (`cpi_century_readings`, CPI-U not seasonally adjusted from 1913, the
+/// longest public record): the share of months whose year-over-year rate is below zero -- the
+/// deflation tail, which 1954-2026 holds too little of to band (its own resamples admit none) --
+/// and how often a 4%+ spell STARTS, per hundred years: the row that tells one spell of 300
+/// months from ten of thirty, which a share of months cannot.
+pub const CPI_CENTURY_ROWS: [&str; 2] = [
+    "cpi deflation share % (century)",
+    "cpi 4%+ spells per century",
+];
+/// The 10-year real yield (`real_yield_readings`, month-end DFII10 in percent): the sd of its
+/// month-to-month change, the one row of its record that is not the TIPS era's own. The record
+/// is 2003-2026, a neutral real rate falling from 2.4 to -1.1 and policy held at the floor for
+/// years, where the model's rates anchor on 1954-2026: its level (1.0 against the century's
+/// 2.3) and the sd of its level (one secular hump: a 36-month average carries 0.86 of the 1.01)
+/// are the era's, so `real_yield_reported` carries them with persistence at twelve months and
+/// the lowest and highest month end, and the graded row is the innovation -- 0.22 pp a month, a
+/// random walk within the year (the 12-month change's sd is 0.96 of sqrt(12) times it) that
+/// mean-reverts over years.
+pub const REAL_YIELD_BAND_ROWS: [&str; 1] = ["real yield monthly change sd pp"];
+pub const REAL_YIELD_REPORTED_ROWS: [&str; 5] = [
+    "real yield level %",
+    "real yield sd pp",
+    "real yield persistence 12m",
+    "real yield min %",
+    "real yield max %",
+];
+/// The 10-year breakeven (`breakeven_readings`, month-end T10YIE in percent): the sd of its
+/// month-to-month change, for the same reason -- its level is the era's expectation of the era's
+/// target and the sd of its level (0.39) is one anchored era's, where a 1954-2026 world's
+/// ten-year expectation swings with its regimes -- so `breakeven_reported` carries the level, the
+/// sd and the lowest month end (0.11, Dec 2008), and the graded row is how far the market's
+/// ten-year expectation moves in a month: 0.17 pp, about a tenth of the year-over-year rate's
+/// own move (the record's slope of one on the other is 0.11), and how much of that move is the
+/// breakeven's own: the sd of the change's residual on the year-over-year rate's change, 0.159 --
+/// nine tenths of it, their correlation 0.30 -- which an expectation alone, moving with the prints
+/// at whatever slope the inflation dials give, cannot carry (`World::brk_vol`); and how much of
+/// the breakeven's move is priced into the nominal yield: the correlation of its month-to-month
+/// change with the nominal yield's, 0.51 (with the real yield's -0.17), where a premium the
+/// real yield carries whole reads about 0.15 (`World::brk_nominal`).
+pub const BREAKEVEN_BAND_ROWS: [&str; 3] = [
+    "breakeven monthly change sd pp",
+    "breakeven own change sd pp",
+    "breakeven vs yield corr monthly",
+];
+pub const BREAKEVEN_REPORTED_ROWS: [&str; 3] =
+    ["breakeven level %", "breakeven sd pp", "breakeven min %"];
+/// The TIPS leg (`tips_readings`, a 10-year par TIPS rebought at every DFII10 observation, its
+/// REAL price return -- the model reads its leg deflated by its own CPI): the annualised RMS of
+/// each session's return over the par bond's modified duration at the prior real yield, percent
+/// per year of duration; time under water against what that volatility implies, the bond row's
+/// reading; its daily correlation with the DGS10 par bond; and its correlation with the equity
+/// market over 21-session months (daily, flight-to-quality days make it -0.11 where the months
+/// a ladder's mix is read on make it +0.2), all on the sessions the three trade together.
+pub const TIPS_BAND_ROWS: [&str; 4] = [
+    "tips vol per duration",
+    "tips depth vs vol",
+    "tips vs bond10 corr",
+    "tips vs equity corr monthly",
+];
+/// The short real rate read EX POST (`real_rate_readings`, monthly: the month's mean policy rate
+/// less the next twelve months' CPI-U inflation, in percent): mean and sd. There is no public
+/// record of one-year expected inflation, so the realised rate is the record the model's
+/// `realRate` is set against.
+pub const REAL_RATE_BAND_ROWS: [&str; 2] = ["real rate ex post %", "real rate ex post sd pp"];
+/// THE REAL SIDE's reported rows (`real_rows_of_path`, `Anchors::real_reported`): the TIPS era's
+/// levels beside the model's, never graded (see `REAL_YIELD_BAND_ROWS`), and the leg's worst
+/// twelve months beside the record's 2022 run.
+pub const REAL_REPORTED_ROWS: [&str; 6] = [
+    "real yield level %",
+    "real yield sd pp",
+    "breakeven level %",
+    "breakeven sd pp",
+    "real yield less real rate pp",
+    "tips worst 12-month real return %",
+];
+const MONTHS_PER_YEAR: usize = 12;
+/// A year-over-year rate counts as DEFLATION below this, in percent: the record's early levels
+/// are rounded to a tenth and a year of unchanged prices is exactly zero on the levels, which a
+/// twelve-month sum of log changes returns as a rounding residual either side of zero (nineteen
+/// months of 1913-1940 flipped sign on the sum).
+const DEFLATION_EDGE: f64 = -1e-9;
+/// A monthly record resamples in FIVE-YEAR blocks: a year-over-year rate read across
+/// twelve-month blocks straddles a join in every month, and the 1970s regime that makes the
+/// record's year-over-year sd is longer than any such block.
+const MONTHLY_BLOCK: usize = 60;
+/// The sessions a month holds when a daily series is read by months.
+const SESSIONS_PER_MONTH: usize = 21;
+
+/// The year-over-year rate in simple percent from monthly log changes: each month's twelve-month
+/// log sum, from the twelfth month on.
+fn yoy_pct(dlog: &[f64]) -> Vec<f64> {
+    let mut cum = Vec::with_capacity(dlog.len() + 1);
+    cum.push(0.0f64);
+    for &d in dlog {
+        cum.push(cum[cum.len() - 1] + d);
+    }
+    (MONTHS_PER_YEAR..cum.len())
+        .map(|t| (exp_det(cum[t] - cum[t - MONTHS_PER_YEAR]) - 1.0) * 100.0)
+        .collect()
+}
+
+/// Pearson's correlation of a series with itself `lag` steps later.
+fn lag_corr(x: &[f64], lag: usize) -> f64 {
+    if x.len() <= lag + 2 {
+        return f64::NAN;
+    }
+    pearson_of(&x[..x.len() - lag], &x[lag..])
+}
+
+/// The lengths of the runs of months at or above 4% (`yoy_pct`), in order.
+fn spells_4pct(yoy: &[f64]) -> Vec<f64> {
+    let mut spells = Vec::new();
+    let mut run = 0usize;
+    for &y in yoy {
+        if y >= 4.0 {
+            run += 1;
+        } else if run > 0 {
+            spells.push(run as f64);
+            run = 0;
+        }
+    }
+    if run > 0 {
+        spells.push(run as f64);
+    }
+    spells
+}
+
+/// `CPI_BAND_ROWS` on monthly log changes of a price level.
+#[must_use]
+pub fn cpi_readings(dlog: &[f64]) -> [f64; 4] {
+    let yoy = yoy_pct(dlog);
+    let share = |f: fn(&f64) -> bool| yoy.iter().filter(|y| f(y)).count() as f64 / yoy.len() as f64;
+    [
+        mean_of(dlog) * MONTHS_PER_YEAR as f64 * 100.0,
+        sd1(&yoy),
+        sd1(dlog) * 100.0,
+        share(|y| *y >= 4.0) * 100.0,
+    ]
+}
+
+/// `CPI_PERSISTENCE_ROW` on monthly log changes of a price level: the year-over-year rate's
+/// correlation with itself twelve months on.
+#[must_use]
+pub fn cpi_persistence(dlog: &[f64]) -> f64 {
+    lag_corr(&yoy_pct(dlog), MONTHS_PER_YEAR)
+}
+
+/// `CPI_REPORTED_ROWS` on monthly log changes of a price level.
+#[must_use]
+pub fn cpi_reported(dlog: &[f64]) -> [f64; 3] {
+    let yoy = yoy_pct(dlog);
+    let spells = spells_4pct(&yoy);
+    [
+        deflation_share(&yoy),
+        med(&spells),
+        spells.iter().copied().fold(f64::NAN, f64::max),
+    ]
+}
+
+/// The share of months whose year-over-year rate is below `DEFLATION_EDGE`, in percent.
+fn deflation_share(yoy: &[f64]) -> f64 {
+    yoy.iter().filter(|y| **y < DEFLATION_EDGE).count() as f64 / yoy.len() as f64 * 100.0
+}
+
+/// `record_resamples` on monthly log changes in five-year blocks, read by `cpi_readings`.
+#[must_use]
+pub fn cpi_resamples(dlog: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 4]> {
+    block_resamples_of(dlog, MONTHLY_BLOCK, resamples, seed, cpi_readings)
+}
+
+/// `CPI_CENTURY_ROWS` on monthly log changes of a price level.
+#[must_use]
+pub fn cpi_century_readings(dlog: &[f64]) -> [f64; 2] {
+    let yoy = yoy_pct(dlog);
+    [
+        deflation_share(&yoy),
+        spells_4pct(&yoy).len() as f64 / (dlog.len() as f64 / MONTHS_PER_YEAR as f64) * 100.0,
+    ]
+}
+
+/// `record_resamples` on monthly log changes in five-year blocks, read by `cpi_century_readings`.
+#[must_use]
+pub fn cpi_century_resamples(dlog: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 2]> {
+    block_resamples_of(dlog, MONTHLY_BLOCK, resamples, seed, cpi_century_readings)
+}
+
+/// Each month end's change from the one before.
+fn monthly_changes(x: &[f64]) -> Vec<f64> {
+    x.windows(2).map(|p| p[1] - p[0]).collect()
+}
+
+/// `REAL_YIELD_BAND_ROWS` on month-end levels in percent.
+#[must_use]
+pub fn real_yield_readings(x: &[f64]) -> [f64; 1] {
+    [sd1(&monthly_changes(x))]
+}
+
+/// `REAL_YIELD_REPORTED_ROWS`: the level, its sd, persistence at twelve months, the lowest and
+/// the highest month end.
+#[must_use]
+pub fn real_yield_reported(x: &[f64]) -> [f64; 5] {
+    [
+        mean_of(x),
+        sd1(x),
+        lag_corr(x, MONTHS_PER_YEAR),
+        x.iter().copied().fold(f64::NAN, f64::min),
+        x.iter().copied().fold(f64::NAN, f64::max),
+    ]
+}
+
+/// `record_resamples` of the month-to-month CHANGES in five-year blocks, each read as
+/// `real_yield_readings` reads the levels: resampling the levels would put a jump the size of
+/// two blocks' level difference at every join, and the record then sits at its own resamples'
+/// fifth percentile (0.22 against 0.21-0.34).
+#[must_use]
+pub fn real_yield_resamples(x: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 1]> {
+    block_resamples_of(&monthly_changes(x), MONTHLY_BLOCK, resamples, seed, |d| {
+        [sd1(d)]
+    })
+}
+
+/// `BREAKEVEN_BAND_ROWS` on month-end levels in percent, beside the year-over-year inflation rate
+/// and the nominal ten-year yield at the same month ends in percent: the sd of the breakeven's
+/// month-to-month change, the sd of that change's residual on the rate's change (a flat rate
+/// leaves the change its own), and the change's correlation with the yield's.
+#[must_use]
+pub fn breakeven_readings(x: &[f64], yoy: &[f64], y: &[f64]) -> [f64; 3] {
+    let d = monthly_changes(x);
+    [
+        sd1(&d),
+        own_change(&d, &monthly_changes(yoy)),
+        finite_corr(&d, &monthly_changes(y)),
+    ]
+}
+
+/// Pearson's correlation over the pairs both series hold (a month one lacks is left out); zero
+/// where either has no spread, as `own_change` reads a flat rate.
+fn finite_corr(a: &[f64], b: &[f64]) -> f64 {
+    assert_eq!(a.len(), b.len(), "paired changes");
+    let pairs: Vec<(f64, f64)> = a
+        .iter()
+        .zip(b)
+        .filter(|(x, y)| x.is_finite() && y.is_finite())
+        .map(|(x, y)| (*x, *y))
+        .collect();
+    let xs: Vec<f64> = pairs.iter().map(|p| p.0).collect();
+    let ys: Vec<f64> = pairs.iter().map(|p| p.1).collect();
+    let (mx, my) = (mean_of(&xs), mean_of(&ys));
+    let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0);
+    for (x, y) in xs.iter().zip(&ys) {
+        sxy += (x - mx) * (y - my);
+        sxx += (x - mx) * (x - mx);
+        syy += (y - my) * (y - my);
+    }
+    if sxx > 0.0 && syy > 0.0 {
+        sxy / (sxx * syy).sqrt()
+    } else {
+        0.0
+    }
+}
+
+/// The sd of `d`'s residual on `y` (the least-squares slope through their means; zero where `y`
+/// has no spread): what moves in `d` that `y` does not move.
+fn own_change(d: &[f64], y: &[f64]) -> f64 {
+    assert_eq!(d.len(), y.len(), "paired changes");
+    // a pair with no rate (a month the record's CPI lacks) is left out of both the slope and
+    // the residual
+    let pairs: Vec<(f64, f64)> = d
+        .iter()
+        .zip(y)
+        .filter(|(a, b)| a.is_finite() && b.is_finite())
+        .map(|(a, b)| (*a, *b))
+        .collect();
+    let dd: Vec<f64> = pairs.iter().map(|p| p.0).collect();
+    let yy: Vec<f64> = pairs.iter().map(|p| p.1).collect();
+    let (md, my) = (mean_of(&dd), mean_of(&yy));
+    let mut sxy = 0.0;
+    let mut sxx = 0.0;
+    for (a, b) in dd.iter().zip(&yy) {
+        sxy += (b - my) * (a - md);
+        sxx += (b - my) * (b - my);
+    }
+    let slope = if sxx > 0.0 { sxy / sxx } else { 0.0 };
+    let r: Vec<f64> = dd.iter().zip(&yy).map(|(a, b)| a - slope * b).collect();
+    sd1(&r)
+}
+
+/// `BREAKEVEN_REPORTED_ROWS`: the level, its sd and the lowest month end.
+#[must_use]
+pub fn breakeven_reported(x: &[f64]) -> [f64; 3] {
+    [
+        mean_of(x),
+        sd1(x),
+        x.iter().copied().fold(f64::NAN, f64::min),
+    ]
+}
+
+/// `record_resamples` of the month-to-month changes in five-year blocks, as `real_yield_resamples`,
+/// the breakeven's, the rate's and the yield's changes resampled together.
+#[must_use]
+pub fn breakeven_resamples(
+    x: &[f64],
+    yoy: &[f64],
+    y: &[f64],
+    resamples: usize,
+    seed: u64,
+) -> Vec<[f64; 3]> {
+    let (dx, dr, dv) = (monthly_changes(x), monthly_changes(yoy), monthly_changes(y));
+    block_resamples_triples(
+        [&dx, &dr, &dv],
+        MONTHLY_BLOCK,
+        resamples,
+        seed,
+        |d, r, v| [sd1(d), own_change(d, r), finite_corr(d, v)],
+    )
+}
+
+/// A daily log-return series summed over whole 21-session months, the tail dropped.
+fn monthly_sums(r: &[f64]) -> Vec<f64> {
+    r.chunks_exact(SESSIONS_PER_MONTH)
+        .map(|m| scala_sum(m.iter().copied()))
+        .collect()
+}
+
+/// `TIPS_BAND_ROWS` on the leg's daily real log returns `r`, each session's duration `dur`, and
+/// the nominal 10-year par bond's `rb` and the equity market's `eq` log returns over the same
+/// sessions.
+#[must_use]
+pub fn tips_readings(r: &[f64], dur: &[f64], rb: &[f64], eq: &[f64]) -> [f64; 4] {
+    let vol = (scala_sum(r.iter().zip(dur).map(|(x, d)| (x / d) * (x / d))) / r.len() as f64
+        * DAYS_PER_YEAR as f64)
+        .sqrt()
+        * 100.0;
+    [
+        vol,
+        bond_readings(r)[0],
+        pearson_of(r, rb),
+        pearson_of(&monthly_sums(r), &monthly_sums(eq)),
+    ]
+}
+
+/// `record_resamples` on the leg's four daily series together, read by `tips_readings`: the
+/// session indices are resampled, so every series takes the same blocks.
+#[must_use]
+pub fn tips_resamples(
+    r: &[f64],
+    dur: &[f64],
+    rb: &[f64],
+    eq: &[f64],
+    resamples: usize,
+    seed: u64,
+) -> Vec<[f64; 4]> {
+    let idx: Vec<f64> = (0..r.len()).map(|i| i as f64).collect();
+    block_resamples(&idx, resamples, seed, |x: &[f64]| {
+        let pick = |v: &[f64]| -> Vec<f64> { x.iter().map(|&i| v[i as usize]).collect() };
+        tips_readings(&pick(r), &pick(dur), &pick(rb), &pick(eq))
+    })
+}
+
+/// `REAL_RATE_BAND_ROWS` on the monthly ex-post real rate in percent.
+#[must_use]
+pub fn real_rate_readings(x: &[f64]) -> [f64; 2] {
+    [mean_of(x), sd1(x)]
+}
+
+/// `record_resamples` on the monthly ex-post real rate in five-year blocks, read by
+/// `real_rate_readings`.
+#[must_use]
+pub fn real_rate_resamples(x: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 2]> {
+    block_resamples_of(x, MONTHLY_BLOCK, resamples, seed, real_rate_readings)
+}
+
 /// Moving one-year-block resamples of one daily series, each the series' own length, read by
 /// `read`: every block start is drawn first from one `NumPyRng(seed)`, resample-major, so the
 /// resamples are the same whatever reads them.
@@ -9849,8 +11035,18 @@ fn block_resamples<const N: usize, F: Fn(&[f64]) -> [f64; N] + Sync>(
     seed: u64,
     read: F,
 ) -> Vec<[f64; N]> {
+    block_resamples_of(r, DAYS_PER_YEAR, resamples, seed, read)
+}
+
+/// `block_resamples` with blocks of `l` observations: a year of sessions, or of months.
+fn block_resamples_of<const N: usize, F: Fn(&[f64]) -> [f64; N] + Sync>(
+    r: &[f64],
+    l: usize,
+    resamples: usize,
+    seed: u64,
+    read: F,
+) -> Vec<[f64; N]> {
     let n = r.len();
-    let l = DAYS_PER_YEAR;
     assert!(
         n > l && u32::try_from(n).is_ok(),
         "a record must be longer than one block, and shorter than 2^32 sessions"
@@ -9875,6 +11071,51 @@ fn block_resamples<const N: usize, F: Fn(&[f64]) -> [f64; N] + Sync>(
             }
             x.truncate(n);
             read(&x)
+        })
+        .collect()
+}
+
+/// `block_resamples_of` on three series of one length: the same blocks drawn for all three (the
+/// same draws as one series would get), read together.
+fn block_resamples_triples<const N: usize, F: Fn(&[f64], &[f64], &[f64]) -> [f64; N] + Sync>(
+    series: [&[f64]; 3],
+    l: usize,
+    resamples: usize,
+    seed: u64,
+    read: F,
+) -> Vec<[f64; N]> {
+    let [r, q, v] = series;
+    let n = r.len();
+    assert!(
+        n == q.len() && n == v.len() && n > l && u32::try_from(n).is_ok(),
+        "three records of one length, longer than one block, shorter than 2^32 sessions"
+    );
+    let blocks = n.div_ceil(l);
+    // exact: the assertion bounds it
+    let bound = (n - l + 1) as u32;
+    let mut rng = NumPyRng::new(seed);
+    let starts: Vec<Vec<usize>> = (0..resamples)
+        .map(|_| {
+            (0..blocks)
+                .map(|_| rng.next_bounded_u32(bound) as usize)
+                .collect()
+        })
+        .collect();
+    starts
+        .par_iter()
+        .map(|st| {
+            let mut x = Vec::with_capacity(blocks * l);
+            let mut y = Vec::with_capacity(blocks * l);
+            let mut z = Vec::with_capacity(blocks * l);
+            for &s in st {
+                x.extend_from_slice(&r[s..s + l]);
+                y.extend_from_slice(&q[s..s + l]);
+                z.extend_from_slice(&v[s..s + l]);
+            }
+            x.truncate(n);
+            y.truncate(n);
+            z.truncate(n);
+            read(&x, &y, &z)
         })
         .collect()
 }
@@ -12507,6 +13748,9 @@ struct PathRead {
     bond10_growth: Vec<f64>,
     bond10_infl: Vec<f64>,
     bond10_excess: f64,
+    /// the real side's graded and reported rows (`real_rows_of_path`), NaN when the leg is off
+    real_rows: [f64; 10],
+    real_reported: [f64; 6],
     vol: f64,
     kurt: f64,
     /// the typical year: `year_vol_of`
@@ -12558,6 +13802,122 @@ struct PathRead {
     rate_floor: f64,
     post_rate: f64,
     post_floor: f64,
+    /// the price level's rows (`cpi_readings`, `cpi_century_readings`) on the path's CPI read by
+    /// 21-session months; NaN when not asked for
+    cpi_rows: [f64; 4],
+    cpi_century: [f64; 2],
+    cpi_persist: f64,
+}
+
+/// The price level's rows on a path's daily CPI: the level every 21 sessions, its log changes,
+/// read as the record's months are (`cpi_readings`, `cpi_century_readings`).
+fn cpi_rows_of_path(cpi: &[f64]) -> ([f64; 4], [f64; 2]) {
+    let dlog = cpi_months_of_path(cpi);
+    if dlog.len() < 2 * MONTHS_PER_YEAR {
+        return ([f64::NAN; 4], [f64::NAN; 2]);
+    }
+    (cpi_readings(&dlog), cpi_century_readings(&dlog))
+}
+
+/// A path's daily CPI as monthly log changes: the level every 21 sessions.
+fn cpi_months_of_path(cpi: &[f64]) -> Vec<f64> {
+    (SESSIONS_PER_MONTH..cpi.len())
+        .step_by(SESSIONS_PER_MONTH)
+        .map(|i| ln_det(cpi[i] / cpi[i - SESSIONS_PER_MONTH]))
+        .collect()
+}
+
+/// `CPI_PERSISTENCE_ROW` on a path's daily CPI, read by the months `cpi_rows_of_path` reads;
+/// NaN under two years.
+fn cpi_persistence_of_path(cpi: &[f64]) -> f64 {
+    let dlog = cpi_months_of_path(cpi);
+    if dlog.len() < 2 * MONTHS_PER_YEAR {
+        return f64::NAN;
+    }
+    cpi_persistence(&dlog)
+}
+
+/// THE REAL SIDE's rows on one path (item 60): `REAL_YIELD_BAND_ROWS`, `BREAKEVEN_BAND_ROWS`,
+/// `TIPS_BAND_ROWS` and `REAL_RATE_BAND_ROWS` in that order, then `REAL_REPORTED_ROWS`; NaN
+/// when the TIPS leg is off. Each is read as the record's: the real yield and the expectation
+/// at 21-session month ends; the leg's REAL return (its price deflated by the path's CPI) at the
+/// leg's duration against the nominal leg and the equity; the policy rate's monthly mean less
+/// the next twelve months' realized inflation. The reported rows are the real yield's and the
+/// breakeven's level and sd, the real yield less the ex-post real rate over the months both
+/// hold, and the leg's worst twelve-month real return in percent.
+fn real_rows_of_path(s: &Path) -> ([f64; 10], [f64; 6]) {
+    let none = ([f64::NAN; 10], [f64::NAN; 6]);
+    if s.tips10.is_empty() {
+        return none;
+    }
+    let m = SESSIONS_PER_MONTH;
+    let ends = |v: &[f64]| -> Vec<f64> { (m - 1..v.len()).step_by(m).map(|i| v[i]).collect() };
+    let ry = ends(&s.real_yield10);
+    let be = ends(&s.exp_infl10);
+    let cpi_ends = ends(&s.cpi);
+    if ry.len() < 2 * MONTHS_PER_YEAR + 1 {
+        return none;
+    }
+    let r_cpi = daily_returns(&s.cpi);
+    let r_t: Vec<f64> = daily_returns(&s.tips10)
+        .iter()
+        .zip(&r_cpi)
+        .map(|(a, b)| a - b)
+        .collect();
+    let dur = vec![s.tips_duration; r_t.len()];
+    let rb10 = if s.bond10.is_empty() {
+        vec![f64::NAN; r_t.len()]
+    } else {
+        daily_returns(&s.bond10)
+    };
+    let t = tips_readings(&r_t, &dur, &rb10, &daily_returns(&s.price));
+    // the ex-post real rate by month: the month's mean policy rate in percent less the next
+    // twelve months' inflation off the month-end levels
+    let months = s.rate.len() / m;
+    let rr: Vec<f64> = (0..months.saturating_sub(MONTHS_PER_YEAR))
+        .map(|k| {
+            let mean_rate = scala_sum(s.rate[k * m..(k + 1) * m].iter().copied()) / m as f64;
+            100.0 * mean_rate - 100.0 * ln_det(cpi_ends[k + MONTHS_PER_YEAR] / cpi_ends[k])
+        })
+        .collect();
+    // the leg's worst twelve-month real return, off prefix sums of its real log returns
+    let mut cum = vec![0.0f64; r_t.len() + 1];
+    for (i, r) in r_t.iter().enumerate() {
+        cum[i + 1] = cum[i] + r;
+    }
+    let year = DAYS_PER_YEAR;
+    let worst = (year..cum.len())
+        .map(|i| cum[i] - cum[i - year])
+        .fold(f64::NAN, f64::min);
+    // the year-over-year rate at the month ends from the second year on, the breakeven beside it
+    let yoy: Vec<f64> = (MONTHS_PER_YEAR..cpi_ends.len())
+        .map(|k| 100.0 * ln_det(cpi_ends[k] / cpi_ends[k - MONTHS_PER_YEAR]))
+        .collect();
+    // the nominal yield at the same month ends: the real yield plus the breakeven
+    let y: Vec<f64> = ry.iter().zip(&be).map(|(a, b)| a + b).collect();
+    let be_rows = breakeven_readings(&be[MONTHS_PER_YEAR..], &yoy, &y[MONTHS_PER_YEAR..]);
+    (
+        [
+            real_yield_readings(&ry)[0],
+            be_rows[0],
+            t[0],
+            t[1],
+            t[2],
+            t[3],
+            mean_of(&rr),
+            sd1(&rr),
+            be_rows[1],
+            be_rows[2],
+        ],
+        [
+            mean_of(&ry),
+            sd1(&ry),
+            mean_of(&be),
+            sd1(&be),
+            mean_of(&ry[..rr.len()]) - mean_of(&rr),
+            (exp_det(worst) - 1.0) * 100.0,
+        ],
+    )
 }
 
 /// WHICH FAMILIES OF PER-PATH STATISTICS A READ COMPUTES. A horizon shorter than the ensemble's
@@ -12589,6 +13949,12 @@ pub struct PathNeeds {
     /// everything else `measure` reads: the loss's unbanded rows, the extreme rows' direct
     /// readings, the report
     pub rest: bool,
+    /// the price level's rows (`CPI_BAND_ROWS`, `CPI_CENTURY_ROWS`), read on the path's CPI alone
+    pub cpi: bool,
+    /// the real side's rows (item 60; `REAL_YIELD_BAND_ROWS`, `BREAKEVEN_BAND_ROWS`,
+    /// `TIPS_BAND_ROWS`, `REAL_RATE_BAND_ROWS` and the reported rows), read on the TIPS leg's
+    /// series, the nominal leg, the equity, the rate and the CPI
+    pub real: bool,
 }
 
 impl PathNeeds {
@@ -12601,6 +13967,8 @@ impl PathNeeds {
         bond10: true,
         bond_rest: true,
         rest: true,
+        cpi: true,
+        real: true,
     };
     pub const NONE: PathNeeds = PathNeeds {
         equity: false,
@@ -12611,10 +13979,13 @@ impl PathNeeds {
         bond10: false,
         bond_rest: false,
         rest: false,
+        cpi: false,
+        real: false,
     };
-    /// the 10-year leg's statistics alone (`WorldStats::with_bond10_from`)
+    /// the two legs' statistics alone (`WorldStats::with_legs_from`)
     pub const LEG: PathNeeds = PathNeeds {
         bond10: true,
+        real: true,
         ..PathNeeds::NONE
     };
     /// every statistic a move of the term premium alone can change (`WorldStats::with_bonds_from`)
@@ -12622,6 +13993,7 @@ impl PathNeeds {
         bond: true,
         bond10: true,
         bond_rest: true,
+        real: true,
         ..PathNeeds::NONE
     };
 
@@ -12640,6 +14012,17 @@ impl PathNeeds {
                 nd.bond10 = true;
             } else if BOND_BAND_ROWS.contains(&n) {
                 nd.bond = true;
+            } else if CPI_BAND_ROWS.contains(&n)
+                || CPI_CENTURY_ROWS.contains(&n)
+                || n == CPI_PERSISTENCE_ROW
+            {
+                nd.cpi = true;
+            } else if REAL_YIELD_BAND_ROWS.contains(&n)
+                || BREAKEVEN_BAND_ROWS.contains(&n)
+                || TIPS_BAND_ROWS.contains(&n)
+                || REAL_RATE_BAND_ROWS.contains(&n)
+            {
+                nd.real = true;
             } else if EXTREME_TARGETS.contains(&n) {
                 nd.rest = true;
             } else {
@@ -12740,7 +14123,14 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
             (f64::NAN, f64::NAN),
         )
     };
+    let (real_rows, real_reported) = if nd.real || rest {
+        real_rows_of_path(s)
+    } else {
+        ([f64::NAN; 10], [f64::NAN; 6])
+    };
     PathRead {
+        real_rows,
+        real_reported,
         dd_eq: if eq { depth_shares(&s.price) } else { nan3 },
         dd_bd: if bd { depth_shares(&s.bond) } else { nan3 },
         dd_b10: if s.bond10.is_empty() || !b10 {
@@ -12901,6 +14291,21 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
         rate_floor: rate[1],
         post_rate: post[0],
         post_floor: post[1],
+        cpi_rows: if nd.cpi {
+            cpi_rows_of_path(&s.cpi).0
+        } else {
+            [f64::NAN; 4]
+        },
+        cpi_century: if nd.cpi {
+            cpi_rows_of_path(&s.cpi).1
+        } else {
+            [f64::NAN; 2]
+        },
+        cpi_persist: if nd.cpi {
+            cpi_persistence_of_path(&s.cpi)
+        } else {
+            f64::NAN
+        },
         tail_hedge: if !br {
             f64::NAN
         } else {
@@ -13068,6 +14473,35 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
             .iter()
             .flat_map(|p| p.bond10_infl.iter().copied())
             .collect::<Vec<f64>>()),
+        cpi_rows: [
+            med_by(|p| p.cpi_rows[0]),
+            med_by(|p| p.cpi_rows[1]),
+            med_by(|p| p.cpi_rows[2]),
+            med_by(|p| p.cpi_rows[3]),
+        ],
+        cpi_century: [med_by(|p| p.cpi_century[0]), med_by(|p| p.cpi_century[1])],
+        cpi_persist: med_by(|p| p.cpi_persist),
+        real_rows: [
+            med_by(|p| p.real_rows[0]),
+            med_by(|p| p.real_rows[1]),
+            med_by(|p| p.real_rows[2]),
+            med_by(|p| p.real_rows[3]),
+            med_by(|p| p.real_rows[4]),
+            med_by(|p| p.real_rows[5]),
+            med_by(|p| p.real_rows[6]),
+            med_by(|p| p.real_rows[7]),
+            med_by(|p| p.real_rows[8]),
+            med_by(|p| p.real_rows[9]),
+        ],
+        real_reported: [
+            med_by(|p| p.real_reported[0]),
+            med_by(|p| p.real_reported[1]),
+            med_by(|p| p.real_reported[2]),
+            med_by(|p| p.real_reported[3]),
+            med_by(|p| p.real_reported[4]),
+            med_by(|p| p.real_reported[5]),
+        ],
+        tips: sims[0].tips_duration,
         corr_calm: med_by(|p| p.corr_calm),
         corr_infl: med_by(|p| p.corr_infl),
         mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
@@ -14378,10 +15812,36 @@ pub struct Anchors {
     pub bond_window: &'static str,
     pub bond_years: usize,
     pub bond_depth: f64,
-    /// THE 10-YEAR LEG's record window: FRED's DGS10 as a par bond, the same for both sets
+    /// THE 10-YEAR LEG's record window: FRED's DGS10 as a par bond over the set's rate window
     /// (`bond10_readings`; `bond10-2026-10-05.tsv`)
     pub bond10_window: &'static str,
     pub bond10_years: usize,
+    /// THE PRICE LEVEL's record windows (item 60; `tips-2026-10-11.tsv`): CPI-U over the rate's
+    /// window for the level, spread and share rows, and the century (not seasonally adjusted,
+    /// from 1913) for the deflation share and the spell rate, read on the world's histories of
+    /// `cpi_century_years` -- the paths' own length, the century being longer than any path
+    pub cpi_window: &'static str,
+    pub cpi_years: usize,
+    /// the record's year-over-year persistence at twelve months over `cpi_window`
+    /// (`CPI_PERSISTENCE_ROW`; `cpipersist-2026-10-12.tsv`), graded among the world's
+    /// histories of `cpi_years`
+    pub cpi_persistence: f64,
+    pub cpi_century_window: &'static str,
+    pub cpi_century_years: usize,
+    /// THE REAL SIDE's record windows (item 60; `tips-2026-10-11.tsv`): DFII10 and T10YIE at
+    /// month ends over the TIPS era for the real yield's and the breakeven's rows, the par TIPS
+    /// beside the DGS10 par bond and the market on their common sessions for the leg's, and the
+    /// policy rate less the next year's inflation over the rate's window for the ex-post real
+    /// rate's; `real_reported` the records of `REAL_REPORTED_ROWS` (the TIPS era's levels, which
+    /// a 1954-2026 world is not asked to hold; the worst twelve months is the 2022 run at the
+    /// leg's duration)
+    pub real_window: &'static str,
+    pub real_years: usize,
+    pub tips_window: &'static str,
+    pub tips_years: usize,
+    pub real_rate_window: &'static str,
+    pub real_rate_years: usize,
+    pub real_reported: [f64; 6],
     /// THE BOND CRASH ROWS' record window and records (`BOND_CRASH_ROWS`, growth then inflation):
     /// a 20-year Treasury from FRED's DGS20 over the set's index's declines of 15%+ since 1962 --
     /// the market's for the S&P (`crash-response-1962-2026-10-05.tsv`), Ken French's HiTec for the
@@ -14505,6 +15965,13 @@ pub struct Anchors {
     /// THE REPORTED RECORDS: the set's graded single-history rows read off windows it does not
     /// grade on, each placed among the world's histories of that window's length. Never graded.
     pub reported: &'static [ReportedRecord],
+    /// THE ERA ROWS: the real-side rows this set reports in place of grading them (the
+    /// breakeven's two change rows and the leg's correlation with the nominal leg, which the
+    /// breakeven's movement sets), since its rate window's inflation persistence (0.73 on
+    /// 1954-2026 against the TIPS era's 0.26, `CPI_PERSISTENCE_ROW`) moves the breakeven with the
+    /// prints as the record's era does not. Empty for a set whose rate window is the era's.
+    /// `reported_rows` carries them with the world's reading beside the record's.
+    pub era_rows: &'static [&'static str],
 }
 
 /// A family of single-history rows a `ReportedRecord` is read on.
@@ -14546,6 +16013,15 @@ pub struct ReportedRecord {
 /// THE NASDAQ'S REPORTED RECORDS: CRSP's century (the S&P's timing record), the NDX from 1990
 /// and QQQ, the last two inside the window the consumer's rules were selected on. Records from
 /// `timing-2026-09-30.tsv`, `bubblebust-2026-09-24.tsv` and `multiyear-2026-09-29.tsv`.
+/// THE S&P SET's era rows (`Anchors::era_rows`): the TIPS era's breakeven rows, which its
+/// 1954-2026 inflation persistence cannot hold.
+pub const SP500_ERA_ROWS: [&str; 4] = [
+    "breakeven monthly change sd pp",
+    "breakeven own change sd pp",
+    "breakeven vs yield corr monthly",
+    "tips vs bond10 corr",
+];
+
 const NASDAQ_REPORTED: [ReportedRecord; 5] = [
     ReportedRecord {
         family: RowFamily::Timing,
@@ -14712,9 +16188,13 @@ pub fn verdict_world(a: Anchors, w: &World) -> World {
     if w.macro_panel == 0 {
         v.macro_panel = d.macro_panel;
     }
-    // the 10-year leg runs at `VERDICT_BOND10` where the caller left it off
+    // the 10-year leg runs at `VERDICT_BOND10` where the caller left it off, the TIPS leg at
+    // `VERDICT_TIPS`
     if w.bond10 <= 0.0 {
         v.bond10 = VERDICT_BOND10;
+    }
+    if w.tips <= 0.0 {
+        v.tips = VERDICT_TIPS;
     }
     v.macro_null = 0;
     v
@@ -14802,7 +16282,7 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
 
 /// The S&P set's `RecordBand`s: `recordbands-2026-09-26.tsv`, CRSP total return 1954-2026 and, for
 /// the two clustering rows, the century -- each row on the window the set reads it over.
-const RECORD_BANDS_SP500: [RecordBand; 25] = [
+const RECORD_BANDS_SP500: [RecordBand; 41] = [
     RecordBand {
         name: "equity vol %",
         record: 15.676352,
@@ -15079,10 +16559,186 @@ const RECORD_BANDS_SP500: [RecordBand; 25] = [
         joint_c: 0.481525,
         joint: (-1.374034, 3.064007),
     },
+    RecordBand {
+        name: "cpi mean %/yr",
+        record: 3.472994,
+        q: [
+            1.973952, 2.418333, 2.711631, 2.881076, 3.003486, 3.095929, 3.178072, 3.257325,
+            3.329831, 3.404234, 3.475131, 3.545144, 3.615196, 3.688937, 3.767198, 3.851136,
+            3.936039, 4.032239, 4.148598, 4.300800, 4.542226, 4.968944, 6.228945,
+        ],
+        joint_c: 0.495425,
+        joint: (2.312354, 5.125599),
+    },
+    RecordBand {
+        name: "cpi yoy sd pp",
+        record: 2.755911,
+        q: [
+            0.962118, 1.379075, 1.671452, 1.905027, 2.040042, 2.156665, 2.262169, 2.353302,
+            2.423107, 2.494567, 2.567226, 2.632614, 2.699898, 2.763153, 2.828571, 2.895092,
+            2.964297, 3.040824, 3.122663, 3.224866, 3.371721, 3.618433, 4.047246,
+        ],
+        joint_c: 0.495425,
+        joint: (1.308063, 3.712859),
+    },
+    RecordBand {
+        name: "cpi monthly sd pp",
+        record: 0.309562,
+        q: [
+            0.187019, 0.226198, 0.249440, 0.261886, 0.271023, 0.278000, 0.284196, 0.289548,
+            0.294406, 0.299185, 0.303666, 0.307947, 0.312028, 0.316248, 0.320525, 0.324682,
+            0.329492, 0.334537, 0.340354, 0.348134, 0.358609, 0.376521, 0.425215,
+        ],
+        joint_c: 0.495425,
+        joint: (0.218706, 0.384996),
+    },
+    RecordBand {
+        name: "cpi 4%+ share %",
+        record: 29.569267,
+        q: [
+            0.931315, 11.292200, 16.880093, 19.674040, 21.769499, 23.515716, 24.912689, 26.193248,
+            27.473807, 28.754366, 29.918510, 31.199069, 32.246799, 33.527357, 34.691502, 36.088475,
+            37.485448, 39.115250, 40.977881, 43.538999, 47.147846, 53.667055, 67.869616,
+        ],
+        joint_c: 0.495425,
+        joint: (9.545984, 56.461001),
+    },
+    RecordBand {
+        name: "cpi deflation share % (century)",
+        record: 12.731310,
+        q: [
+            0.962250, 4.293116, 6.365655, 7.623982, 8.512213, 9.252406, 9.992598, 10.584752,
+            11.250925, 11.769060, 12.361214, 12.879349, 13.471503, 14.063657, 14.729830, 15.396003,
+            16.062176, 16.876388, 17.838638, 19.170984, 21.169504, 24.796447, 36.935603,
+        ],
+        joint_c: 0.496325,
+        joint: (3.182828, 26.868986),
+    },
+    RecordBand {
+        name: "cpi 4%+ spells per century",
+        record: 19.383260,
+        q: [
+            7.929515, 12.334802, 14.977974, 16.740088, 17.621145, 18.502203, 19.383260, 20.264317,
+            20.264317, 21.145374, 22.026432, 22.026432, 22.907489, 23.788546, 23.788546, 24.669604,
+            25.550661, 26.431718, 27.312775, 28.193833, 30.837004, 34.361233, 43.171806,
+        ],
+        joint_c: 0.496325,
+        joint: (11.453744, 36.123348),
+    },
+    RecordBand {
+        name: "real yield monthly change sd pp",
+        record: 0.222184,
+        q: [
+            0.144199, 0.165579, 0.182603, 0.191029, 0.196428, 0.201525, 0.205661, 0.209392,
+            0.212523, 0.215477, 0.218343, 0.221074, 0.223869, 0.226999, 0.230165, 0.233120,
+            0.236023, 0.238971, 0.242718, 0.248255, 0.254535, 0.267193, 0.275313,
+        ],
+        joint_c: 0.496875,
+        joint: (0.156582, 0.271156),
+    },
+    RecordBand {
+        name: "breakeven monthly change sd pp",
+        record: 0.167265,
+        q: [
+            0.110829, 0.124122, 0.133143, 0.139256, 0.144690, 0.150348, 0.155841, 0.160615,
+            0.164165, 0.167347, 0.170260, 0.173164, 0.176332, 0.179911, 0.184092, 0.188317,
+            0.192399, 0.196048, 0.200268, 0.206802, 0.216728, 0.232870, 0.259235,
+        ],
+        joint_c: 0.495525,
+        joint: (0.120417, 0.239525),
+    },
+    RecordBand {
+        name: "breakeven own change sd pp",
+        record: 0.160190,
+        q: [
+            0.105208, 0.120397, 0.129614, 0.135542, 0.140869, 0.145430, 0.149511, 0.153476,
+            0.156870, 0.160103, 0.163047, 0.165751, 0.168582, 0.171555, 0.174683, 0.178289,
+            0.181985, 0.185671, 0.189759, 0.195106, 0.203231, 0.217718, 0.244189,
+        ],
+        joint_c: 0.495525,
+        joint: (0.116666, 0.223422),
+    },
+    RecordBand {
+        name: "breakeven vs yield corr monthly",
+        record: 0.508938,
+        q: [
+            0.308599, 0.376495, 0.413627, 0.433299, 0.446070, 0.456432, 0.465951, 0.473617,
+            0.480483, 0.487419, 0.494067, 0.500460, 0.506888, 0.513190, 0.519496, 0.526313,
+            0.533336, 0.541665, 0.550706, 0.562185, 0.579692, 0.614009, 0.703784,
+        ],
+        joint_c: 0.495525,
+        joint: (0.362504, 0.626818),
+    },
+    RecordBand {
+        name: "tips vol per duration",
+        record: 0.818813,
+        q: [
+            0.590716, 0.689115, 0.722727, 0.742065, 0.755669, 0.766717, 0.776544, 0.785688,
+            0.793780, 0.802042, 0.809937, 0.818406, 0.825944, 0.833777, 0.842455, 0.851355,
+            0.860925, 0.871115, 0.883251, 0.899314, 0.924935, 0.970065, 1.095854,
+        ],
+        joint_c: 0.496725,
+        joint: (0.670179, 0.996369),
+    },
+    RecordBand {
+        name: "tips depth vs vol",
+        record: 1.833041,
+        q: [
+            0.000000, 0.058554, 0.306888, 0.526668, 0.716682, 0.885027, 1.055072, 1.214899,
+            1.379288, 1.537199, 1.691934, 1.843931, 1.998868, 2.171196, 2.343074, 2.518900,
+            2.727624, 2.942674, 3.177002, 3.442197, 3.768249, 4.278853, 5.123134,
+        ],
+        joint_c: 0.496725,
+        joint: (0.021500, 4.521267),
+    },
+    RecordBand {
+        name: "tips vs bond10 corr",
+        record: 0.809593,
+        q: [
+            0.737949, 0.766309, 0.778034, 0.784913, 0.789265, 0.792954, 0.796132, 0.798978,
+            0.801675, 0.804178, 0.806724, 0.809092, 0.811531, 0.814251, 0.816977, 0.819758,
+            0.822587, 0.825925, 0.829827, 0.834240, 0.841054, 0.853985, 0.880044,
+        ],
+        joint_c: 0.496725,
+        joint: (0.760045, 0.861322),
+    },
+    RecordBand {
+        name: "tips vs equity corr monthly",
+        record: 0.156093,
+        q: [
+            -0.305399, -0.137703, -0.052911, -0.004278, 0.027694, 0.052373, 0.073806, 0.093715,
+            0.110603, 0.126077, 0.141136, 0.156128, 0.170177, 0.184829, 0.199096, 0.214273,
+            0.229640, 0.248150, 0.269042, 0.292799, 0.330266, 0.393811, 0.506402,
+        ],
+        joint_c: 0.496725,
+        joint: (-0.183329, 0.423674),
+    },
+    RecordBand {
+        name: "real rate ex post %",
+        record: 1.080396,
+        q: [
+            -0.691424, -0.114777, 0.240819, 0.413054, 0.537734, 0.651056, 0.738662, 0.820302,
+            0.898642, 0.972973, 1.046144, 1.119710, 1.190828, 1.267785, 1.347719, 1.426203,
+            1.515552, 1.613046, 1.732329, 1.882805, 2.103983, 2.530460, 3.435033,
+        ],
+        joint_c: 0.496825,
+        joint: (-0.282686, 2.805455),
+    },
+    RecordBand {
+        name: "real rate ex post sd pp",
+        record: 2.983657,
+        q: [
+            1.426506, 1.924486, 2.147227, 2.307651, 2.425718, 2.524352, 2.607065, 2.682536,
+            2.751520, 2.816118, 2.878743, 2.940903, 3.005505, 3.073979, 3.137470, 3.205052,
+            3.273472, 3.352911, 3.447115, 3.559290, 3.729437, 4.043738, 4.827196,
+        ],
+        joint_c: 0.496825,
+        joint: (1.811839, 4.203960),
+    },
 ];
 
 /// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ 1999-03-11..2026-08-20.
-const RECORD_BANDS_NASDAQ: [RecordBand; 25] = [
+const RECORD_BANDS_NASDAQ: [RecordBand; 41] = [
     RecordBand {
         name: "equity vol %",
         record: 26.901577,
@@ -15328,36 +16984,212 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 25] = [
     },
     RecordBand {
         name: "bond10 vol per duration",
-        record: 1.028623,
+        record: 0.917391,
         q: [
-            0.745022, 0.866291, 0.908784, 0.933807, 0.951129, 0.964725, 0.977189, 0.988839,
-            0.999548, 1.009831, 1.01917, 1.029164, 1.039033, 1.048724, 1.059101, 1.070319,
-            1.082067, 1.096044, 1.111658, 1.131763, 1.161695, 1.217523, 1.399679,
+            0.736176, 0.812157, 0.843059, 0.859590, 0.871412, 0.880088, 0.887933, 0.895142,
+            0.901612, 0.907761, 0.913493, 0.919636, 0.925718, 0.931943, 0.938358, 0.944604,
+            0.952172, 0.959785, 0.969576, 0.982151, 1.000189, 1.033216, 1.125761,
         ],
-        joint_c: 0.481525,
-        joint: (0.880103, 1.196692),
+        joint_c: 0.480575,
+        joint: (0.823714, 1.021310),
     },
     RecordBand {
         name: "bond10 depth vs vol",
-        record: 0.538402,
+        record: 0.835123,
         q: [
-            0.014588, 0.098099, 0.186019, 0.248408, 0.29696, 0.33879, 0.379023, 0.417377, 0.451582,
-            0.486341, 0.52212, 0.558168, 0.596334, 0.63865, 0.682208, 0.734126, 0.788801, 0.853616,
-            0.933131, 1.037088, 1.206957, 1.564555, 2.793507,
+            0.000000, 0.050776, 0.152221, 0.242405, 0.319603, 0.394728, 0.464960, 0.534426,
+            0.604178, 0.672261, 0.741513, 0.817335, 0.897501, 0.981241, 1.073277, 1.170242,
+            1.292198, 1.422357, 1.589286, 1.825834, 2.199330, 2.957551, 4.693913,
         ],
-        joint_c: 0.481525,
-        joint: (0.125246, 1.441048),
+        joint_c: 0.480575,
+        joint: (0.079112, 2.654867),
     },
     RecordBand {
         name: "bond10 excess return pts/yr",
-        record: 0.781738,
+        record: 1.139688,
         q: [
-            -3.88258, -1.623677, -0.91835, -0.533359, -0.277844, -0.066187, 0.110474, 0.262406,
-            0.415373, 0.554616, 0.682755, 0.824784, 0.953751, 1.091371, 1.232566, 1.383343,
-            1.539699, 1.720187, 1.908403, 2.177713, 2.577178, 3.320535, 5.53443,
+            -3.724670, -1.626235, -0.678284, -0.143519, 0.188543, 0.452751, 0.676918, 0.879534,
+            1.061728, 1.237239, 1.409135, 1.582164, 1.746973, 1.912429, 2.090653, 2.268483,
+            2.483240, 2.702850, 2.957124, 3.293782, 3.780757, 4.737218, 6.407017,
         ],
-        joint_c: 0.481525,
-        joint: (-1.374034, 3.064007),
+        joint_c: 0.480575,
+        joint: (-1.281079, 4.358022),
+    },
+    RecordBand {
+        name: "cpi mean %/yr",
+        record: 2.572391,
+        q: [
+            1.356249, 1.673244, 1.858695, 1.975097, 2.062205, 2.130393, 2.189594, 2.245721,
+            2.300923, 2.350868, 2.400677, 2.449800, 2.503182, 2.555780, 2.611363, 2.670719,
+            2.734594, 2.808506, 2.885430, 2.993394, 3.158180, 3.442427, 4.102306,
+        ],
+        joint_c: 0.495525,
+        joint: (1.600788, 3.587429),
+    },
+    RecordBand {
+        name: "cpi yoy sd pp",
+        record: 1.718826,
+        q: [
+            0.718989, 0.908126, 1.072549, 1.183114, 1.268365, 1.353111, 1.439310, 1.518412,
+            1.588677, 1.642963, 1.690925, 1.732016, 1.770921, 1.813272, 1.858068, 1.906903,
+            1.960229, 2.016477, 2.076174, 2.138807, 2.226179, 2.386791, 2.669942,
+        ],
+        joint_c: 0.495525,
+        joint: (0.856147, 2.449565),
+    },
+    RecordBand {
+        name: "cpi monthly sd pp",
+        record: 0.300399,
+        q: [
+            0.187573, 0.220091, 0.247223, 0.260304, 0.269950, 0.277259, 0.283608, 0.289199,
+            0.294275, 0.299202, 0.304278, 0.308933, 0.313783, 0.318690, 0.323725, 0.328833,
+            0.334535, 0.340702, 0.347753, 0.356398, 0.369498, 0.391139, 0.436481,
+        ],
+        joint_c: 0.495525,
+        joint: (0.211258, 0.401357),
+    },
+    RecordBand {
+        name: "cpi 4%+ share %",
+        record: 12.852665,
+        q: [
+            0.000000, 0.000000, 2.821317, 4.702194, 6.583072, 7.836991, 8.777429, 9.717868,
+            10.971787, 11.598746, 12.539185, 13.479624, 14.420063, 15.360502, 16.300940, 17.241379,
+            18.495298, 19.749216, 21.316614, 23.197492, 26.018809, 31.347962, 43.887147,
+        ],
+        joint_c: 0.495525,
+        joint: (0.000000, 33.542320),
+    },
+    RecordBand {
+        name: "cpi deflation share % (century)",
+        record: 12.731310,
+        q: [
+            0.962250, 4.293116, 6.365655, 7.623982, 8.512213, 9.252406, 9.992598, 10.584752,
+            11.250925, 11.769060, 12.361214, 12.879349, 13.471503, 14.063657, 14.729830, 15.396003,
+            16.062176, 16.876388, 17.838638, 19.170984, 21.169504, 24.796447, 36.935603,
+        ],
+        joint_c: 0.496325,
+        joint: (3.182828, 26.868986),
+    },
+    RecordBand {
+        name: "cpi 4%+ spells per century",
+        record: 19.383260,
+        q: [
+            7.929515, 12.334802, 14.977974, 16.740088, 17.621145, 18.502203, 19.383260, 20.264317,
+            20.264317, 21.145374, 22.026432, 22.026432, 22.907489, 23.788546, 23.788546, 24.669604,
+            25.550661, 26.431718, 27.312775, 28.193833, 30.837004, 34.361233, 43.171806,
+        ],
+        joint_c: 0.496325,
+        joint: (11.453744, 36.123348),
+    },
+    RecordBand {
+        name: "real yield monthly change sd pp",
+        record: 0.222184,
+        q: [
+            0.144199, 0.165579, 0.182603, 0.191029, 0.196428, 0.201525, 0.205661, 0.209392,
+            0.212523, 0.215477, 0.218343, 0.221074, 0.223869, 0.226999, 0.230165, 0.233120,
+            0.236023, 0.238971, 0.242718, 0.248255, 0.254535, 0.267193, 0.275313,
+        ],
+        joint_c: 0.496875,
+        joint: (0.156582, 0.271156),
+    },
+    RecordBand {
+        name: "breakeven monthly change sd pp",
+        record: 0.167265,
+        q: [
+            0.110829, 0.124122, 0.133143, 0.139256, 0.144690, 0.150348, 0.155841, 0.160615,
+            0.164165, 0.167347, 0.170260, 0.173164, 0.176332, 0.179911, 0.184092, 0.188317,
+            0.192399, 0.196048, 0.200268, 0.206802, 0.216728, 0.232870, 0.259235,
+        ],
+        joint_c: 0.495525,
+        joint: (0.120417, 0.239525),
+    },
+    RecordBand {
+        name: "breakeven own change sd pp",
+        record: 0.160190,
+        q: [
+            0.105208, 0.120397, 0.129614, 0.135542, 0.140869, 0.145430, 0.149511, 0.153476,
+            0.156870, 0.160103, 0.163047, 0.165751, 0.168582, 0.171555, 0.174683, 0.178289,
+            0.181985, 0.185671, 0.189759, 0.195106, 0.203231, 0.217718, 0.244189,
+        ],
+        joint_c: 0.495525,
+        joint: (0.116666, 0.223422),
+    },
+    RecordBand {
+        name: "breakeven vs yield corr monthly",
+        record: 0.508938,
+        q: [
+            0.308599, 0.376495, 0.413627, 0.433299, 0.446070, 0.456432, 0.465951, 0.473617,
+            0.480483, 0.487419, 0.494067, 0.500460, 0.506888, 0.513190, 0.519496, 0.526313,
+            0.533336, 0.541665, 0.550706, 0.562185, 0.579692, 0.614009, 0.703784,
+        ],
+        joint_c: 0.495525,
+        joint: (0.362504, 0.626818),
+    },
+    RecordBand {
+        name: "tips vol per duration",
+        record: 0.818813,
+        q: [
+            0.590716, 0.689115, 0.722727, 0.742065, 0.755669, 0.766717, 0.776544, 0.785688,
+            0.793780, 0.802042, 0.809937, 0.818406, 0.825944, 0.833777, 0.842455, 0.851355,
+            0.860925, 0.871115, 0.883251, 0.899314, 0.924935, 0.970065, 1.095854,
+        ],
+        joint_c: 0.496725,
+        joint: (0.670179, 0.996369),
+    },
+    RecordBand {
+        name: "tips depth vs vol",
+        record: 1.833041,
+        q: [
+            0.000000, 0.058554, 0.306888, 0.526668, 0.716682, 0.885027, 1.055072, 1.214899,
+            1.379288, 1.537199, 1.691934, 1.843931, 1.998868, 2.171196, 2.343074, 2.518900,
+            2.727624, 2.942674, 3.177002, 3.442197, 3.768249, 4.278853, 5.123134,
+        ],
+        joint_c: 0.496725,
+        joint: (0.021500, 4.521267),
+    },
+    RecordBand {
+        name: "tips vs bond10 corr",
+        record: 0.809593,
+        q: [
+            0.737949, 0.766309, 0.778034, 0.784913, 0.789265, 0.792954, 0.796132, 0.798978,
+            0.801675, 0.804178, 0.806724, 0.809092, 0.811531, 0.814251, 0.816977, 0.819758,
+            0.822587, 0.825925, 0.829827, 0.834240, 0.841054, 0.853985, 0.880044,
+        ],
+        joint_c: 0.496725,
+        joint: (0.760045, 0.861322),
+    },
+    RecordBand {
+        name: "tips vs equity corr monthly",
+        record: 0.156093,
+        q: [
+            -0.305399, -0.137703, -0.052911, -0.004278, 0.027694, 0.052373, 0.073806, 0.093715,
+            0.110603, 0.126077, 0.141136, 0.156128, 0.170177, 0.184829, 0.199096, 0.214273,
+            0.229640, 0.248150, 0.269042, 0.292799, 0.330266, 0.393811, 0.506402,
+        ],
+        joint_c: 0.496725,
+        joint: (-0.183329, 0.423674),
+    },
+    RecordBand {
+        name: "real rate ex post %",
+        record: -0.467852,
+        q: [
+            -2.653762, -1.834923, -1.561096, -1.406623, -1.297431, -1.215078, -1.145709, -1.080214,
+            -1.020671, -0.962551, -0.900663, -0.844312, -0.789355, -0.735906, -0.678087, -0.615759,
+            -0.547378, -0.473877, -0.391147, -0.280921, -0.130742, 0.154895, 0.679747,
+        ],
+        joint_c: 0.496825,
+        joint: (-1.993585, 0.314453),
+    },
+    RecordBand {
+        name: "real rate ex post sd pp",
+        record: 2.575057,
+        q: [
+            0.718797, 1.273466, 1.546380, 1.709717, 1.813800, 1.895823, 1.975132, 2.050961,
+            2.126953, 2.207573, 2.283839, 2.351520, 2.418515, 2.480020, 2.541579, 2.602988,
+            2.669883, 2.748029, 2.845122, 2.955557, 3.096696, 3.378844, 3.899292,
+        ],
+        joint_c: 0.496825,
+        joint: (1.084052, 3.518588),
     },
 ];
 
@@ -15405,6 +17237,18 @@ const SP500_ANCHORS: Anchors = Anchors {
     bond_depth: 1.029058,
     bond10_window: "DGS10 par bond, 1962-2026",
     bond10_years: 64,
+    cpi_window: "CPI-U, 1954-2026",
+    cpi_years: 72,
+    cpi_persistence: 0.730419,
+    cpi_century_window: "CPI-U not seasonally adjusted, 1913-2026",
+    cpi_century_years: 100,
+    real_window: "DFII10 and T10YIE month ends, 2003-2026",
+    real_years: 23,
+    tips_window: "par TIPS on DFII10 and CPI-U beside the DGS10 par bond, 2003-2026",
+    tips_years: 23,
+    real_rate_window: "DFF less the next year's CPI-U, 1954-2025",
+    real_rate_years: 71,
+    real_reported: [0.980530, 1.012438, 2.108834, 0.394310, 1.789, -18.9],
     bond_crash_window: "DGS20 over the market's declines, 1962-2026",
     bond_crash_years: 64,
     bond_crash: [9.533898, -6.282178],
@@ -15498,6 +17342,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     sector_market_sd: 0.052916,
     channel_dials: SP500_CHANNEL_DIALS,
     reported: &[],
+    era_rows: &SP500_ERA_ROWS,
 };
 
 /// The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full history,
@@ -15563,8 +17408,20 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bond_window: "clean TLT, 24y",
     bond_years: 24,
     bond_depth: 1.029058,
-    bond10_window: "DGS10 par bond, 1962-2026",
-    bond10_years: 64,
+    bond10_window: "DGS10 par bond, 1999-2026",
+    bond10_years: 27,
+    cpi_window: "CPI-U, 1999-2026",
+    cpi_years: 27,
+    cpi_persistence: 0.258078,
+    cpi_century_window: "CPI-U not seasonally adjusted, 1913-2026",
+    cpi_century_years: 100,
+    real_window: "DFII10 and T10YIE month ends, 2003-2026",
+    real_years: 23,
+    tips_window: "par TIPS on DFII10 and CPI-U beside the DGS10 par bond, 2003-2026",
+    tips_years: 23,
+    real_rate_window: "DFF less the next year's CPI-U, 1999-2025",
+    real_rate_years: 26,
+    real_reported: [0.980530, 1.012438, 2.108834, 0.394310, 1.789, -18.9],
     bond_crash_window: "DGS20 over HiTec's declines, 1962-2026",
     bond_crash_years: 64,
     bond_crash: [3.762295, -3.328767],
@@ -15650,6 +17507,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     sector_market_sd: 0.052916,
     channel_dials: NASDAQ_CHANNEL_DIALS,
     reported: &NASDAQ_REPORTED,
+    era_rows: &[],
 };
 
 pub fn anchors_named(spec: &str) -> Anchors {
@@ -15676,8 +17534,9 @@ fn band_record(a: Anchors, name: &str) -> f64 {
     clippy::too_many_lines,
     reason = "one row per fidelity target, and the target list is the contract"
 )]
-/// Every fidelity row `fitness` scores for an anchor set: name, reading, target, weight.
-pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
+/// Every fidelity row `fitness` scores for an anchor set before its era rows are set aside
+/// (`fit_targets`): name, reading, target, weight.
+fn fit_targets_all(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
     let mut rows = vec![
         (
             "equity vol %",
@@ -15875,6 +17734,116 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             BOND10_BAND_ROWS[2],
             (|st: &WorldStats| st.bond10_excess) as StatFn,
             band_record(a, BOND10_BAND_ROWS[2]),
+            0.0,
+        ),
+        // THE PRICE LEVEL (item 60): its mean, year-over-year and monthly spread and 4%+ share
+        // against CPI-U over the rate's window, its deflation share and 4%+ spell rate against the
+        // century; each judged by its band, none priced
+        (
+            CPI_BAND_ROWS[0],
+            (|st: &WorldStats| st.cpi_rows[0]) as StatFn,
+            band_record(a, CPI_BAND_ROWS[0]),
+            0.0,
+        ),
+        (
+            CPI_BAND_ROWS[1],
+            (|st: &WorldStats| st.cpi_rows[1]) as StatFn,
+            band_record(a, CPI_BAND_ROWS[1]),
+            0.0,
+        ),
+        (
+            CPI_BAND_ROWS[2],
+            (|st: &WorldStats| st.cpi_rows[2]) as StatFn,
+            band_record(a, CPI_BAND_ROWS[2]),
+            0.0,
+        ),
+        (
+            CPI_BAND_ROWS[3],
+            (|st: &WorldStats| st.cpi_rows[3]) as StatFn,
+            band_record(a, CPI_BAND_ROWS[3]),
+            0.0,
+        ),
+        (
+            CPI_CENTURY_ROWS[0],
+            (|st: &WorldStats| st.cpi_century[0]) as StatFn,
+            band_record(a, CPI_CENTURY_ROWS[0]),
+            0.0,
+        ),
+        (
+            CPI_CENTURY_ROWS[1],
+            (|st: &WorldStats| st.cpi_century[1]) as StatFn,
+            band_record(a, CPI_CENTURY_ROWS[1]),
+            0.0,
+        ),
+        // the rate's persistence at twelve months: the record's percentile among the world's
+        // histories of the CPI window's length (`EXTREME_TARGETS`), never priced
+        (
+            CPI_PERSISTENCE_ROW,
+            (|st: &WorldStats| st.cpi_persist) as StatFn,
+            a.cpi_persistence,
+            0.0,
+        ),
+        // THE REAL SIDE (item 60): the real yield's and the breakeven's monthly change, the TIPS
+        // leg's volatility, depth and correlations, the ex-post real rate's mean and sd; each
+        // judged by its band, none priced
+        (
+            REAL_YIELD_BAND_ROWS[0],
+            (|st: &WorldStats| st.real_rows[0]) as StatFn,
+            band_record(a, REAL_YIELD_BAND_ROWS[0]),
+            0.0,
+        ),
+        (
+            BREAKEVEN_BAND_ROWS[0],
+            (|st: &WorldStats| st.real_rows[1]) as StatFn,
+            band_record(a, BREAKEVEN_BAND_ROWS[0]),
+            0.0,
+        ),
+        (
+            TIPS_BAND_ROWS[0],
+            (|st: &WorldStats| st.real_rows[2]) as StatFn,
+            band_record(a, TIPS_BAND_ROWS[0]),
+            0.0,
+        ),
+        (
+            TIPS_BAND_ROWS[1],
+            (|st: &WorldStats| st.real_rows[3]) as StatFn,
+            band_record(a, TIPS_BAND_ROWS[1]),
+            0.0,
+        ),
+        (
+            TIPS_BAND_ROWS[2],
+            (|st: &WorldStats| st.real_rows[4]) as StatFn,
+            band_record(a, TIPS_BAND_ROWS[2]),
+            0.0,
+        ),
+        (
+            TIPS_BAND_ROWS[3],
+            (|st: &WorldStats| st.real_rows[5]) as StatFn,
+            band_record(a, TIPS_BAND_ROWS[3]),
+            0.0,
+        ),
+        (
+            REAL_RATE_BAND_ROWS[0],
+            (|st: &WorldStats| st.real_rows[6]) as StatFn,
+            band_record(a, REAL_RATE_BAND_ROWS[0]),
+            0.0,
+        ),
+        (
+            REAL_RATE_BAND_ROWS[1],
+            (|st: &WorldStats| st.real_rows[7]) as StatFn,
+            band_record(a, REAL_RATE_BAND_ROWS[1]),
+            0.0,
+        ),
+        (
+            BREAKEVEN_BAND_ROWS[1],
+            (|st: &WorldStats| st.real_rows[8]) as StatFn,
+            band_record(a, BREAKEVEN_BAND_ROWS[1]),
+            0.0,
+        ),
+        (
+            BREAKEVEN_BAND_ROWS[2],
+            (|st: &WorldStats| st.real_rows[9]) as StatFn,
+            band_record(a, BREAKEVEN_BAND_ROWS[2]),
             0.0,
         ),
         // The leverage effect, graded by the one statistic that survives close-only data:
@@ -16139,15 +18108,63 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
     rows
 }
 
-/// THE ROWS THE MULTI-YEAR ROWS REPLACED, reported and not graded: name, the world's reading,
-/// the record. The run-up and the calm stretch are one number from one history each; the 20%
-/// rung's fund relation reads the index itself at 2.3.
-pub fn reported_rows(a: Anchors, st: &WorldStats) -> [(&'static str, f64, f64); 3] {
-    [
+/// Every fidelity row `fitness` scores for an anchor set: `fit_targets_all` less the set's era
+/// rows (`Anchors::era_rows`), which `reported_rows` carries.
+pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
+    let mut rows = fit_targets_all(a);
+    rows.retain(|(n, _, _, _)| !a.era_rows.contains(n));
+    rows
+}
+
+/// THE ROWS REPORTED AND NOT GRADED: name, the world's reading, the record. The rows the
+/// multi-year rows replaced (the run-up and the calm stretch are one number from one history
+/// each; the 20% rung's fund relation reads the index itself at 2.3), the TIPS era's levels, and
+/// the set's era rows (`Anchors::era_rows`).
+pub fn reported_rows(a: Anchors, st: &WorldStats) -> Vec<(&'static str, f64, f64)> {
+    let mut rows = vec![
         ("largest 3y run-up", st.run_up_3y, a.run_up_3y),
         ("longest calm stretch", st.calm_stretch, a.calm_stretch),
         ("equity d20 vs real", st.eq_d20_vs_real(), 1.0),
-    ]
+        // THE REAL SIDE's era rows (item 60; `REAL_REPORTED_ROWS`): the TIPS era's levels beside
+        // the model's, and the leg's worst twelve months beside the record's 2022 run
+        (
+            REAL_REPORTED_ROWS[0],
+            st.real_reported[0],
+            a.real_reported[0],
+        ),
+        (
+            REAL_REPORTED_ROWS[1],
+            st.real_reported[1],
+            a.real_reported[1],
+        ),
+        (
+            REAL_REPORTED_ROWS[2],
+            st.real_reported[2],
+            a.real_reported[2],
+        ),
+        (
+            REAL_REPORTED_ROWS[3],
+            st.real_reported[3],
+            a.real_reported[3],
+        ),
+        (
+            REAL_REPORTED_ROWS[4],
+            st.real_reported[4],
+            a.real_reported[4],
+        ),
+        (
+            REAL_REPORTED_ROWS[5],
+            st.real_reported[5],
+            a.real_reported[5],
+        ),
+    ];
+    let all = fit_targets_all(a);
+    rows.extend(a.era_rows.iter().filter_map(|&n| {
+        all.iter()
+            .find(|t| t.0 == n)
+            .map(|(_, get, real, _)| (n, get(st), *real))
+    }));
+    rows
 }
 
 /// Each `MULTI_YEAR_ROWS` statistic off a `WorldStats`, row for row.
@@ -16233,6 +18250,7 @@ const EXTREME_TARGETS: &[&str] = &[
     "market sign12 trend %/mo",
     "bond growth-crash",
     "bond infl-crash",
+    "cpi yoy persistence 12m",
 ];
 
 /// Whether a row is graded among the world's single histories with a joint band: a multi-year
@@ -16442,6 +18460,7 @@ fn extreme_reading(nm: &str, p: &Path) -> Option<f64> {
             })
         }
         "bubble coupling 3y" => Some(bubble_coupling_of(&daily_returns(&p.price))),
+        CPI_PERSISTENCE_ROW => Some(cpi_persistence_of_path(&p.cpi)),
         _ => None,
     }
 }
@@ -18285,7 +20304,7 @@ pub type Getter = fn(&World) -> f64;
         reason = "the rule is read by the tests, never by the search"
     )
 )]
-const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "divYield"];
+const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "tips", "divYield"];
 
 /// THE ORDER IS A CROSS-TWIN CONTRACT, restated here so a reorder fails a build rather than a
 /// diff. `-calibrate` draws one uniform per dial from a single stream in table order, so a
@@ -18295,7 +20314,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 81] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 89] = [
     "depth",
     "trendShare",
     "drift",
@@ -18377,6 +20396,14 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 81] = [
     "recessCredit",
     "recessInfl",
     "termPremium",
+    "cpiNoise",
+    "deflProb",
+    "deflSize",
+    "spikeRate",
+    "spikeSize",
+    "termVol",
+    "brkVol",
+    "brkNominal",
 ];
 
 /// THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration search
@@ -18960,6 +20987,55 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             0.30,
             |w, x| w.term_premium = x,
             |w| w.term_premium,
+        ),
+        // the real side (item 60): the price level's noise, the deflation side and the spikes
+        (
+            "cpiNoise",
+            0.0,
+            0.03,
+            |w, x| w.cpi_noise = x,
+            |w| w.cpi_noise,
+        ),
+        (
+            "deflProb",
+            0.0,
+            0.40,
+            |w, x| w.defl_prob = x,
+            |w| w.defl_prob,
+        ),
+        (
+            "deflSize",
+            0.0,
+            0.10,
+            |w, x| w.defl_size = x,
+            |w| w.defl_size,
+        ),
+        (
+            "spikeRate",
+            0.0,
+            1.0,
+            |w, x| w.spike_rate = x,
+            |w| w.spike_rate,
+        ),
+        (
+            "spikeSize",
+            0.0,
+            0.08,
+            |w, x| w.spike_size = x,
+            |w| w.spike_size,
+        ),
+        // the term state's innovation (item 60): 0.0069 is the record's 0.22 pp a month
+        ("termVol", 0.0, 0.02, |w, x| w.term_vol = x, |w| w.term_vol),
+        // the breakeven premium's innovation (item 60): 0.0055 is the record's 0.159 pp a month
+        ("brkVol", 0.0, 0.02, |w, x| w.brk_vol = x, |w| w.brk_vol),
+        // the share of it priced into the nominal yield (item 60): the record's breakeven moves
+        // half with the nominal yield
+        (
+            "brkNominal",
+            0.0,
+            1.0,
+            |w, x| w.brk_nominal = x,
+            |w| w.brk_nominal,
         ),
     ]
 }
@@ -19880,7 +21956,7 @@ const EQUITY_TARGETS: [&str; 44] = [
         reason = "the partition contract is read by the tests, never by a report"
     )
 )]
-const BOND_TARGETS: [&str; 12] = [
+const BOND_TARGETS: [&str; 29] = [
     "bond vol % (24y)",
     "bond growth-crash",
     "bond infl-crash",
@@ -19888,11 +21964,28 @@ const BOND_TARGETS: [&str; 12] = [
     "bond10 vol per duration",
     "bond10 depth vs vol",
     "bond10 excess return pts/yr",
+    "real yield monthly change sd pp",
+    "breakeven monthly change sd pp",
+    "breakeven own change sd pp",
+    "breakeven vs yield corr monthly",
+    "tips vol per duration",
+    "tips depth vs vol",
+    "tips vs bond10 corr",
+    "tips vs equity corr monthly",
+    "real rate ex post %",
+    "real rate ex post sd pp",
     "tail hedge corr",
     "short rate %",
     "rate floor share %",
     "post-trough rate %",
     "post-trough floor share %",
+    "cpi mean %/yr",
+    "cpi yoy sd pp",
+    "cpi monthly sd pp",
+    "cpi 4%+ share %",
+    "cpi deflation share % (century)",
+    "cpi 4%+ spells per century",
+    "cpi yoy persistence 12m",
 ];
 
 /// Bisection bracket for the depth solve, and how many halvings. Ten steps over this bracket
@@ -20268,7 +22361,11 @@ fn anchor_groups(a: Anchors) -> Vec<(&'static str, usize, Vec<&'static str>)> {
 }
 
 /// `anchor_groups` before the set's own fit targets filter it.
-fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 12] {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one group per record window, each listed in full where its rows are named"
+)]
+fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 19] {
     [
         (
             a.equity_window,
@@ -20382,6 +22479,17 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
                 "bond10 excess return pts/yr",
             ],
         ),
+        // The price level's two records (item 60): CPI-U over the rate's window, and the century.
+        (a.cpi_window, a.cpi_years, &CPI_BAND_ROWS),
+        (a.cpi_window, a.cpi_years, &[CPI_PERSISTENCE_ROW]),
+        (a.cpi_century_window, a.cpi_century_years, &CPI_CENTURY_ROWS),
+        // The real side's four records (item 60): the real yield and the breakeven at month ends
+        // over the TIPS era, the par TIPS beside the nominal par bond and the market, and the
+        // policy rate less the next year's inflation over the rate's window.
+        (a.real_window, a.real_years, &REAL_YIELD_BAND_ROWS),
+        (a.real_window, a.real_years, &BREAKEVEN_BAND_ROWS),
+        (a.tips_window, a.tips_years, &TIPS_BAND_ROWS),
+        (a.real_rate_window, a.real_rate_years, &REAL_RATE_BAND_ROWS),
     ]
 }
 
@@ -21772,6 +23880,13 @@ pub fn as_callers_paths(w: &World, sims: &mut [Path]) {
             p.bond10 = Vec::new();
             p.bond10_duration = 0.0;
         }
+        if w.tips <= 0.0 {
+            p.tips10 = Vec::new();
+            p.real_yield10 = Vec::new();
+            p.exp_infl10 = Vec::new();
+            p.real_rate = Vec::new();
+            p.tips_duration = 0.0;
+        }
         if !ch_on {
             p.chan_k = 0.0;
             p.chan_k_sat = 0.0;
@@ -21782,12 +23897,17 @@ pub fn as_callers_paths(w: &World, sims: &mut [Path]) {
     }
 }
 
-/// Each path as its world without the 10-year leg simulates it: the leg's own series is all it
-/// adds.
-pub fn drop_bond10(sims: &mut [Path]) {
+/// Each path as its world without the 10-year and TIPS legs simulates it: the legs' own series
+/// are all they add.
+pub fn drop_legs(sims: &mut [Path]) {
     for p in sims {
         p.bond10 = Vec::new();
         p.bond10_duration = 0.0;
+        p.tips10 = Vec::new();
+        p.real_yield10 = Vec::new();
+        p.exp_infl10 = Vec::new();
+        p.real_rate = Vec::new();
+        p.tips_duration = 0.0;
     }
 }
 
@@ -21924,6 +24044,9 @@ fn channel_columns(p: &Path) -> Vec<&'static str> {
     if !p.bond10.is_empty() {
         cols.push("bond10");
     }
+    if !p.tips10.is_empty() {
+        cols.extend(["tips10", "realYield10", "expInfl10", "realRate"]);
+    }
     if !p.sat.is_empty() {
         cols.push("logSat");
     }
@@ -22034,6 +24157,12 @@ pub fn emit_table(p: &Path) -> Vec<EmitColumn<'_>> {
         .collect();
     if !p.bond10.is_empty() {
         t.push(held("bond10", &p.bond10));
+    }
+    if !p.tips10.is_empty() {
+        t.push(held("tips10", &p.tips10));
+        t.push(held("realYield10", &p.real_yield10));
+        t.push(held("expInfl10", &p.exp_infl10));
+        t.push(held("realRate", &p.real_rate));
     }
     if !p.sat.is_empty() {
         t.push(logged("logSat", &p.sat));
@@ -22411,7 +24540,16 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("panic", num(w.panic)),
         ("duration", num(w.duration)),
         ("bond10", num(w.bond10)),
+        ("tips", num(w.tips)),
         ("termPremium", num(w.term_premium)),
+        ("cpiNoise", num(w.cpi_noise)),
+        ("deflProb", num(w.defl_prob)),
+        ("deflSize", num(w.defl_size)),
+        ("spikeRate", num(w.spike_rate)),
+        ("spikeSize", num(w.spike_size)),
+        ("termVol", num(w.term_vol)),
+        ("brkVol", num(w.brk_vol)),
+        ("brkNominal", num(w.brk_nominal)),
         ("easing", num(w.easing)),
         ("unwind", num(w.unwind)),
         ("floorhold", num(w.floorhold)),
@@ -22818,6 +24956,11 @@ fn verdict_series_of(gate_st: &WorldStats, gate_w: &World) -> Vec<String> {
     if gate_st.bond10 > 0.0 {
         verdict_series.push("bond10".to_string());
     }
+    if gate_st.tips > 0.0 {
+        for c in ["tips10", "realYield10", "expInfl10"] {
+            verdict_series.push(c.to_string());
+        }
+    }
     if gate_st.sat.is_some() {
         verdict_series.push("logSat".to_string());
     }
@@ -22902,6 +25045,11 @@ fn gate_scope_lines(
             "\"bond10\": {{ \"bond10\": {}, \"source\": {} }}",
             num(gate_w.bond10),
             source(w.bond10 > 0.0)
+        ),
+        format!(
+            "\"tips\": {{ \"tips\": {}, \"source\": {} }}",
+            num(gate_w.tips),
+            source(w.tips > 0.0)
         ),
         format!(
             "\"dividends\": {{ \"divYield\": {}, \"source\": {} }}",
@@ -23869,7 +26017,16 @@ pub fn main() {
     let mut rate_mean = dw.rate_mean;
     let mut duration = dw.duration;
     let mut bond10 = dw.bond10;
+    let mut tips = dw.tips;
     let mut term_premium = dw.term_premium;
+    let mut cpi_noise = dw.cpi_noise;
+    let mut defl_prob = dw.defl_prob;
+    let mut defl_size = dw.defl_size;
+    let mut spike_rate = dw.spike_rate;
+    let mut spike_size = dw.spike_size;
+    let mut term_vol = dw.term_vol;
+    let mut brk_vol = dw.brk_vol;
+    let mut brk_nominal = dw.brk_nominal;
     let mut easing = dw.easing;
     let mut unwind = dw.unwind;
     let mut floorhold = dw.floorhold;
@@ -24091,7 +26248,16 @@ pub fn main() {
             "-ratemean" => rate_mean = req_f64(&mut it, "-ratemean"),
             "-duration" => duration = req_f64(&mut it, "-duration"),
             "-bond10" => bond10 = req_f64(&mut it, "-bond10"),
+            "-tips" => tips = req_f64(&mut it, "-tips"),
             "-termpremium" => term_premium = req_f64(&mut it, "-termpremium"),
+            "-cpinoise" => cpi_noise = req_f64(&mut it, "-cpinoise"),
+            "-deflprob" => defl_prob = req_f64(&mut it, "-deflprob"),
+            "-deflsize" => defl_size = req_f64(&mut it, "-deflsize"),
+            "-spikerate" => spike_rate = req_f64(&mut it, "-spikerate"),
+            "-spikesize" => spike_size = req_f64(&mut it, "-spikesize"),
+            "-termvol" => term_vol = req_f64(&mut it, "-termvol"),
+            "-brkvol" => brk_vol = req_f64(&mut it, "-brkvol"),
+            "-brknominal" => brk_nominal = req_f64(&mut it, "-brknominal"),
             "-easing" => easing = req_f64(&mut it, "-easing"),
             "-unwind" => unwind = req_f64(&mut it, "-unwind"),
             "-floorhold" => floorhold = req_f64(&mut it, "-floorhold"),
@@ -24241,7 +26407,18 @@ pub fn main() {
         positive("-depth", depth);
         positive("-duration", duration);
         non_neg("-bond10", bond10);
+        non_neg("-tips", tips);
         non_neg("-termpremium", term_premium);
+        non_neg("-cpinoise", cpi_noise);
+        share("-deflprob", defl_prob);
+        non_neg("-deflsize", defl_size);
+        non_neg("-spikerate", spike_rate);
+        non_neg("-spikesize", spike_size);
+        non_neg("-termvol", term_vol);
+        non_neg("-brkvol", brk_vol);
+        if !(0.0..=1.0).contains(&brk_nominal) {
+            cli_die("-brknominal is a share in [0, 1]");
+        }
         non_neg("-stress", stress);
         non_neg("-beta", beta);
         non_neg("-volofvol", vol_of_vol);
@@ -24643,7 +26820,16 @@ pub fn main() {
         panic: panic_k,
         duration,
         bond10,
+        tips,
         term_premium,
+        cpi_noise,
+        defl_prob,
+        defl_size,
+        spike_rate,
+        spike_size,
+        term_vol,
+        brk_vol,
+        brk_nominal,
         easing,
         unwind,
         floorhold,
@@ -24887,10 +27073,11 @@ pub fn main() {
         as_callers_paths(&w, &mut sims);
         let leg_only = World {
             bond10: run_w.bond10,
+            tips: run_w.tips,
             ..w
         } == run_w;
         if leg_only {
-            run_st.with_bond10_from(&measure_needs(&sims, years, PathNeeds::LEG))
+            run_st.with_legs_from(&measure_needs(&sims, years, PathNeeds::LEG))
         } else {
             measure_for(anchors, &sims, years)
         }
@@ -25102,13 +27289,29 @@ pub fn main() {
             jfs(st.bond10_excess, 2)
         );
     }
+    if st.tips > 0.0 {
+        println!(
+            "  TIPS leg               duration {}   real vol {} per year of duration   depth vs vol {}   corr with bond10 {}   with equity (monthly) {}   real yield moves {} pp/month   breakeven moves {} pp/month ({} its own, {} with the yield)   real rate ex post {}% sd {}",
+            jf(st.tips, 0, 1),
+            jf(st.real_rows[2], 0, 3),
+            jf(st.real_rows[3], 0, 3),
+            jf(st.real_rows[4], 0, 2),
+            jf(st.real_rows[5], 0, 2),
+            jf(st.real_rows[0], 0, 3),
+            jf(st.real_rows[1], 0, 3),
+            jf(st.real_rows[8], 0, 3),
+            jf(st.real_rows[9], 0, 2),
+            jf(st.real_rows[6], 0, 2),
+            jf(st.real_rows[7], 0, 2)
+        );
+    }
     println!(
         "  stock-bond correlation calm {}   inflation regime {}",
         jfs(st.corr_calm, 2),
         jfs(st.corr_infl, 2)
     );
     println!(
-        "  realized inflation     {}%/yr median (deterministic from regime pressure; no draws consumed)",
+        "  realized inflation     {}%/yr median (the regime's pressure, the spikes and the level's noise; the CPI rows below grade it)",
         jf(st.infl_ann, 0, 2)
     );
     // The channel readings the gate rows grade, printed so a channel FAIL can be sized; absent
@@ -26029,9 +28232,9 @@ mod emit_sidecar_tests {
     /// wrote the file, and an edit to the world block's fields moves it visibly, here.
     #[test]
     fn the_world_digest_is_pinned_across_the_twins() {
-        assert_eq!(world_digest(&default_world()), "517685b907e693d8");
+        assert_eq!(world_digest(&default_world()), "81e97a018e91c5f7");
         let (nq, _) = named_world("0.24.5-nasdaq").expect("recipe");
-        assert_eq!(world_digest(&nq), "5186010bf57e2f5a");
+        assert_eq!(world_digest(&nq), "fe3b17da8cbe6065");
     }
 
     /// One ulp in one dial moves the digest, where the sidecar's six significant digits cannot.
@@ -26535,7 +28738,7 @@ mod contract_tests {
             .chain(BOND_TARGETS.iter())
             .copied()
             .collect();
-        let mut actual: Vec<&str> = fit_targets(SP500_ANCHORS)
+        let mut actual: Vec<&str> = fit_targets_all(SP500_ANCHORS)
             .into_iter()
             .map(|(n, _, _, _)| n)
             .collect();
@@ -26559,8 +28762,9 @@ mod contract_tests {
         // was reached. Both are the silent-shrinkage failure the partition tests guard against, on
         // the ASSET axis — which only exists because 0.21.0 made the asset a parameter.
         // A set may grade fewer rows only by REPORTING them (`Anchors::reported`): the Nasdaq's
-        // equity-window multi-year rows, read against QQQ there.
-        let reference: Vec<&str> = fit_targets(SP500_ANCHORS)
+        // equity-window multi-year rows, read against QQQ there; and its era rows
+        // (`Anchors::era_rows`), banded rows `reported_rows` carries instead.
+        let reference: Vec<&str> = fit_targets_all(SP500_ANCHORS)
             .into_iter()
             .map(|(n, _, _, _)| n)
             .collect();
@@ -26570,7 +28774,16 @@ mod contract_tests {
                 .iter()
                 .copied()
                 .filter(|n| a.multi_year.is_some() || !MULTI_YEAR_ROWS.contains(n))
+                .filter(|n| !a.era_rows.contains(n))
                 .collect();
+            for n in a.era_rows {
+                assert!(
+                    a.record_bands.iter().any(|b| b.name == *n) && reference.contains(n),
+                    "[{}] era row [{n}] must be a banded fidelity target",
+                    a.name
+                );
+                assert!(!got.contains(n), "[{}] era row [{n}] is graded", a.name);
+            }
             assert_eq!(
                 got, want,
                 "anchor set [{}] grades a different set of targets than SP500_ANCHORS does",
@@ -26757,7 +28970,8 @@ mod contract_tests {
                 assert!(r.history_band.is_none(), "[{}]", r.name);
                 assert_eq!(r.aggregation(), "ensemble-extreme");
                 assert_eq!(
-                    r.horizon_years, a.tail_years,
+                    r.horizon_years,
+                    anchor_horizon(a, r.name),
                     "[{}]'s percentile must be read at its own anchor's horizon, which for the                      tail is its own window and NOT the equity window",
                     r.name
                 );
@@ -27698,8 +29912,10 @@ mod contract_tests {
             vw.bond10, VERDICT_BOND10,
             "the verdict runs the 10-year leg"
         );
+        assert_eq!(vw.tips, VERDICT_TIPS, "and the TIPS leg");
         let mut back = with_channel_dials(vw, ChannelDials::of(&d));
         back.bond10 = d.bond10;
+        back.tips = d.tips;
         assert_eq!(back, d);
         assert_eq!(
             ChannelDials::of(&verdict_world(NASDAQ_ANCHORS, &d)),
@@ -27718,7 +29934,9 @@ mod contract_tests {
         // the channel recipe's verdict world is the recipe itself, but for the 10-year leg
         let mut vsp = verdict_world(SP500_ANCHORS, &sp);
         assert_eq!(vsp.bond10, VERDICT_BOND10);
+        assert_eq!(vsp.tips, VERDICT_TIPS);
         vsp.bond10 = sp.bond10;
+        vsp.tips = sp.tips;
         assert_eq!(vsp, sp);
     }
 
@@ -28782,6 +31000,259 @@ mod episode_anchor_tests {
 ///
 /// The Scala twin carries the same checks in `BondCrashSuite`, against the same file.
 #[cfg(test)]
+mod real_side_tests {
+    use super::*;
+
+    fn near(a: f64, b: f64, tol: f64) -> bool {
+        (a - b).abs() <= tol
+    }
+
+    /// THE REAL SIDE's record readings (`CPI_BAND_ROWS` and kin, `tips-2026-10-11.tsv`) on series
+    /// whose rows are known in closed form. The Scala twin carries the same checks in
+    /// `RealSideSuite`; the fixture itself is the twins' byte-for-byte comparison on the records.
+    #[test]
+    fn the_cpi_rows_read_a_constant_rate() {
+        let dlog = vec![0.003f64; 120];
+        let r = cpi_readings(&dlog);
+        assert!(near(r[0], 3.6, 1e-9), "mean {}", r[0]);
+        assert!(
+            near(r[1], 0.0, 1e-9) && near(r[2], 0.0, 1e-9),
+            "sds {} {}",
+            r[1],
+            r[2]
+        );
+        assert!(r[3] == 0.0, "4%+ share {}", r[3]);
+        let rep = cpi_reported(&dlog);
+        assert!(
+            rep[0] == 0.0 && rep[1].is_nan() && rep[2].is_nan(),
+            "no deflation, no spells: {rep:?}"
+        );
+    }
+
+    #[test]
+    fn the_cpi_rows_read_an_alternating_month_and_a_4pct_spell() {
+        let dlog: Vec<f64> = (0..48)
+            .map(|i| if i % 2 == 0 { 0.01 } else { -0.01 })
+            .collect();
+        let r = cpi_readings(&dlog);
+        assert!(
+            near(r[0], 0.0, 1e-9) && near(r[1], 0.0, 1e-9) && near(r[3], 0.0, 1e-9),
+            "{r:?}"
+        );
+        assert!(
+            near(r[2], 0.01 * (48.0f64 / 47.0).sqrt() * 100.0, 1e-9),
+            "monthly sd {}",
+            r[2]
+        );
+        let spell: Vec<f64> = [vec![0.0; 36], vec![0.005; 24], vec![0.0; 36]].concat();
+        let rep = cpi_reported(&spell);
+        // 4%+ for the months whose trailing year holds eight or more of the 0.5% months (eight
+        // make 4.08%, seven 3.56%): one spell of 21 months
+        assert_eq!(rep[1], 21.0);
+        assert_eq!(rep[2], 21.0);
+    }
+
+    /// A year of 0.4% months then a year of flat ones, repeated: the year-over-year rate is a
+    /// triangle wave of period 24, its own mirror twelve months on.
+    #[test]
+    fn the_cpi_persistence_reads_a_mirrored_rate_as_minus_one() {
+        let dlog: Vec<f64> = (0..96)
+            .map(|m| if (m / 12) % 2 == 0 { 0.004 } else { 0.0 })
+            .collect();
+        // the rate is simple percent of a log sum, which bends the triangle by a part in 10^4
+        let p = cpi_persistence(&dlog);
+        assert!(near(p, -1.0, 1e-3), "persistence {p}");
+        assert!(cpi_persistence(&dlog[..14]).is_nan(), "under two years");
+    }
+
+    /// THE CPI PERSISTENCE ROW's anchors are `cpipersist-2026-10-12.tsv`'s records, one per set,
+    /// read on the world's histories of the set's CPI window.
+    #[test]
+    fn the_cpi_persistence_anchors_are_the_fixtures_records() {
+        let lines: Vec<Vec<String>> =
+            std::fs::read_to_string("../test-data/equity-anchors/cpipersist-2026-10-12.tsv")
+                .expect("fixture")
+                .lines()
+                .filter(|l| !(l.starts_with('#') || l.trim().is_empty() || l.starts_with("set\t")))
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect();
+        assert_eq!(lines.len(), 2, "one row per set");
+        for (set, a) in [("sp500", SP500_ANCHORS), ("nasdaq", NASDAQ_ANCHORS)] {
+            let f = lines
+                .iter()
+                .find(|f| f[0] == set && f[1] == CPI_PERSISTENCE_ROW)
+                .unwrap_or_else(|| panic!("fixture row [{set}] missing"));
+            let rec: f64 = f[5].parse().expect("number");
+            assert!(
+                (a.cpi_persistence - rec).abs() < 1e-6,
+                "{set}: {} against the record's {rec}",
+                a.cpi_persistence
+            );
+            assert_eq!(record_band_years(a, CPI_PERSISTENCE_ROW), a.cpi_years);
+            assert!(EXTREME_TARGETS.contains(&CPI_PERSISTENCE_ROW));
+        }
+    }
+
+    #[test]
+    fn the_century_rows_count_deflation_months_and_spell_starts() {
+        // ten years: a year of -0.5% a month, then two spells of 0.5% a month a year apart
+        let dlog: Vec<f64> = [
+            vec![0.0; 12],
+            vec![-0.005; 12],
+            vec![0.0; 24],
+            vec![0.005; 12],
+            vec![0.0; 12],
+            vec![0.005; 12],
+            vec![0.0; 36],
+        ]
+        .concat();
+        let r = cpi_century_readings(&dlog);
+        // the year-over-year rate is below zero from the first negative month to a year after
+        // the last, 23 months of the 109 the rate exists
+        assert!(
+            near(r[0], 23.0 / 109.0 * 100.0, 1e-9),
+            "deflation share {}",
+            r[0]
+        );
+        assert!(
+            near(r[1], 2.0 / 10.0 * 100.0, 1e-9),
+            "spell starts per century {}",
+            r[1]
+        );
+    }
+
+    #[test]
+    fn the_real_yield_rows_read_a_line_and_a_sawtooth() {
+        let x: Vec<f64> = (0..36).map(|i| 1.0 + 0.1 * i as f64).collect();
+        let r = real_yield_readings(&x);
+        assert!(
+            near(r[0], 0.0, 1e-9),
+            "a line's monthly change has no spread: {}",
+            r[0]
+        );
+        let rep = real_yield_reported(&x);
+        assert!(
+            near(rep[0], 2.75, 1e-9)
+                && near(rep[1], sd1(&x), 1e-12)
+                && near(rep[2], 1.0, 1e-12)
+                && rep[3] == 1.0
+                && near(rep[4], 4.5, 1e-9),
+            "{rep:?}"
+        );
+        // a sawtooth: every change is +0.3 or -0.3, so their sd is 0.3 times sqrt(n / (n - 1))
+        let saw: Vec<f64> = (0..37)
+            .map(|i| if i % 2 == 0 { 1.0 } else { 1.3 })
+            .collect();
+        let want = 0.3 * (36.0f64 / 35.0).sqrt();
+        assert!(
+            near(real_yield_readings(&saw)[0], want, 1e-12)
+                && near(
+                    breakeven_readings(&saw, &vec![2.0; 37], &saw)[0],
+                    want,
+                    1e-12
+                )
+                && near(
+                    breakeven_readings(&saw, &vec![2.0; 37], &saw)[1],
+                    want,
+                    1e-12
+                )
+                && near(breakeven_readings(&saw, &saw, &saw)[1], 0.0, 1e-12)
+                && near(
+                    breakeven_readings(&saw, &vec![2.0; 37], &saw)[2],
+                    1.0,
+                    1e-12
+                ),
+            "sawtooth {:?}",
+            real_yield_readings(&saw)
+        );
+        let be = breakeven_reported(&saw);
+        assert!(
+            near(be[0], 1.0 + 0.3 * 18.0 / 37.0, 1e-12) && be[2] == 1.0,
+            "{be:?}"
+        );
+    }
+
+    #[test]
+    fn the_tips_rows_read_an_alternating_leg() {
+        let r: Vec<f64> = (0..252)
+            .map(|i| if i % 2 == 0 { 0.001 } else { -0.001 })
+            .collect();
+        let dur = vec![8.0f64; 252];
+        let eq: Vec<f64> = r.iter().map(|v| -v).collect();
+        let t = tips_readings(&r, &dur, &r, &eq);
+        assert!(
+            near(t[0], 0.001 / 8.0 * 252.0f64.sqrt() * 100.0, 1e-9),
+            "vol per duration {}",
+            t[0]
+        );
+        assert!(
+            t[1].is_nan(),
+            "never under water and a volatility that implies no depth: {}",
+            t[1]
+        );
+        assert!(
+            near(t[2], 1.0, 1e-9) && near(t[3], -1.0, 1e-9),
+            "correlations {} {}",
+            t[2],
+            t[3]
+        );
+    }
+
+    /// THE PRICE LEVEL'S NOISE reaches nothing but the price level: on its own stream, it leaves
+    /// the price, the rate, the bonds and the pressure bit-identical.
+    #[test]
+    fn the_cpi_noise_leaves_every_other_series_bit_identical() {
+        let (w, _) = named_world("0.24.6-sp500").expect("recipe");
+        let off = simulate(&w, 5, DEFAULT_SEED);
+        let mut on_w = w;
+        on_w.cpi_noise = 0.01;
+        let on = simulate(&on_w, 5, DEFAULT_SEED);
+        assert!(off.price == on.price && off.rate == on.rate && off.bond == on.bond);
+        assert!(off.infl_press == on.infl_press && off.liq == on.liq);
+        assert!(off.cpi != on.cpi, "the level itself moves");
+    }
+
+    /// THE DEFLATION SIDE AND THE SPIKES read on the CPI rows: deflation regimes put months below
+    /// zero where none were, and spikes start 4%+ spells where the regime alone starts a handful
+    /// a century; each off consumes no draw, so a world with both at zero is the recipe's own.
+    #[test]
+    fn the_deflation_side_and_the_spikes_show_in_the_cpi_rows() {
+        let (w, _) = named_world("0.24.6-sp500").expect("recipe");
+        let base = cpi_rows_of_path(&simulate(&w, 100, DEFAULT_SEED).cpi);
+        let mut d = w;
+        d.defl_prob = 1.0;
+        d.defl_size = 0.08;
+        let defl = cpi_rows_of_path(&simulate(&d, 100, DEFAULT_SEED).cpi);
+        assert_eq!(base.1[0], 0.0, "no deflation without the side");
+        assert!(defl.1[0] > 5.0, "deflation share {}", defl.1[0]);
+        let mut s = w;
+        s.spike_rate = 1.0;
+        s.spike_size = 0.05;
+        let spiked = cpi_rows_of_path(&simulate(&s, 100, DEFAULT_SEED).cpi);
+        assert!(
+            spiked.1[1] > base.1[1] + 10.0,
+            "spell starts a century {} against {}",
+            spiked.1[1],
+            base.1[1]
+        );
+        let mut z = w;
+        z.defl_prob = 0.0;
+        z.spike_rate = 0.0;
+        z.cpi_noise = 0.0;
+        assert!(simulate(&z, 5, DEFAULT_SEED).price == simulate(&w, 5, DEFAULT_SEED).price);
+    }
+
+    #[test]
+    fn the_real_rate_rows_read_a_mean_and_a_sample_sd() {
+        let r = real_rate_readings(&[1.0, 2.0, 3.0, 4.0]);
+        assert!(
+            near(r[0], 2.5, 1e-9) && near(r[1], (5.0f64 / 3.0).sqrt(), 1e-9),
+            "{r:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod bond10_tests {
     use super::*;
 
@@ -28809,6 +31280,168 @@ mod bond10_tests {
         assert!(pearson(&rb, &r10) > 0.8, "the leg moves with the bond");
     }
 
+    /// THE TIPS LEG (item 60) reaches no other series either, with the inflation form on or off:
+    /// a world with it on is bit-identical to the same world with it off on every column but its
+    /// four; its real return moves with the nominal leg's; its real yield is the nominal leg's
+    /// yield less the expectation, so the breakeven is the expectation to the bit; and the
+    /// replay under another premium carries it (`a_term_premium_replay_is_the_full_simulation_to_the_bit`).
+    #[test]
+    fn the_tips_leg_leaves_every_other_series_bit_identical() {
+        let (mut w, _) = named_world("0.24.6-sp500").expect("recipe");
+        w.bond10 = VERDICT_BOND10;
+        for form in [false, true] {
+            if form {
+                w.spike_rate = 0.4;
+                w.spike_size = 0.03;
+                w.cpi_noise = 0.006;
+                w.defl_prob = 0.2;
+                w.defl_size = 0.035;
+            }
+            let off = simulate(&w, 5, DEFAULT_SEED);
+            let mut on_w = w;
+            on_w.tips = VERDICT_TIPS;
+            let on = simulate(&on_w, 5, DEFAULT_SEED);
+            assert!(
+                off.tips10.is_empty()
+                    && off.real_yield10.is_empty()
+                    && off.exp_infl10.is_empty()
+                    && off.real_rate.is_empty(),
+                "off emits no real side"
+            );
+            assert_eq!(on.tips10.len(), on.bond.len());
+            assert_eq!(on.real_yield10.len(), on.bond.len());
+            assert!(off.price == on.price && off.bond == on.bond && off.rate == on.rate);
+            assert!(off.bond10 == on.bond10 && off.cpi == on.cpi && off.bliq == on.bliq);
+            assert!(off.infl_press == on.infl_press && off.fundamental == on.fundamental);
+            let r_t: Vec<f64> = daily_returns(&on.tips10)
+                .iter()
+                .zip(daily_returns(&on.cpi))
+                .map(|(a, b)| a - b)
+                .collect();
+            let r10 = daily_returns(&on.bond10);
+            assert!(
+                pearson(&r_t, &r10) > 0.6,
+                "the leg's real return moves with the nominal leg's (form {form})"
+            );
+            // the real yield is the nominal leg's yield less the expectation, in percent
+            let tp = on_w.term_premium / 100.0 * on_w.tips;
+            for i in (0..on.rate.len()).step_by(97) {
+                let want = 100.0 * (on.rate[i] + tp - on.exp_infl10[i] / 100.0);
+                assert!(
+                    (on.real_yield10[i] - want).abs() < 1e-9,
+                    "session {i}: real yield {} against {want}",
+                    on.real_yield10[i]
+                );
+            }
+            let (rows, reported) = real_rows_of_path(&on);
+            assert!(
+                rows.iter().all(|x| x.is_finite()) && reported.iter().all(|x| x.is_finite()),
+                "{rows:?} {reported:?}"
+            );
+            assert!(
+                real_rows_of_path(&off).0.iter().all(|x| x.is_nan()),
+                "no leg, no rows"
+            );
+        }
+    }
+
+    /// THE TERM STATE (item 60; `World::term_vol`) re-marks the two ten-year legs and nothing
+    /// else: with it on, the price, the long bond, the rate, the CPI and every expectation are
+    /// bit-identical to the world without it, and both legs move; the real yield is still the
+    /// nominal leg's yield less the expectation.
+    #[test]
+    fn the_term_state_moves_the_two_legs_and_nothing_else() {
+        let (mut w, _) = named_world("0.24.6-sp500").expect("recipe");
+        w.bond10 = VERDICT_BOND10;
+        w.tips = VERDICT_TIPS;
+        let off = simulate(&w, 5, DEFAULT_SEED);
+        let mut on_w = w;
+        on_w.term_vol = 0.007;
+        let on = simulate(&on_w, 5, DEFAULT_SEED);
+        assert!(off.price == on.price && off.bond == on.bond && off.rate == on.rate);
+        assert!(off.cpi == on.cpi && off.bliq == on.bliq && off.infl_press == on.infl_press);
+        assert!(off.exp_infl10 == on.exp_infl10 && off.real_rate == on.real_rate);
+        assert!(
+            off.bond10 != on.bond10
+                && off.tips10 != on.tips10
+                && off.real_yield10 != on.real_yield10
+        );
+        // the legs' yield no longer carries the overnight rate's session noise
+        let dm = |v: &[f64]| {
+            sd1(&monthly_changes(
+                &(20..v.len())
+                    .step_by(21)
+                    .map(|i| v[i])
+                    .collect::<Vec<f64>>(),
+            ))
+        };
+        assert!(
+            dm(&on.real_yield10) < dm(&off.real_yield10),
+            "term state {} against the overnight rate {}",
+            dm(&on.real_yield10),
+            dm(&off.real_yield10)
+        );
+    }
+
+    /// THE BREAKEVEN PREMIUM (item 60; `World::brk_vol`) moves the TIPS leg, the breakeven and
+    /// the real yield and nothing else: the price, the long bond, the ten-year leg, the rate, the
+    /// CPI and the ex-post real rate are bit-identical to the world without it.
+    #[test]
+    fn the_breakeven_premium_moves_the_tips_leg_and_nothing_else() {
+        let (mut w, _) = named_world("0.24.6-sp500").expect("recipe");
+        w.bond10 = VERDICT_BOND10;
+        w.tips = VERDICT_TIPS;
+        w.term_vol = 0.007;
+        let off = simulate(&w, 5, DEFAULT_SEED);
+        let mut on_w = w;
+        on_w.brk_vol = 0.005;
+        let on = simulate(&on_w, 5, DEFAULT_SEED);
+        assert!(off.price == on.price && off.bond == on.bond && off.rate == on.rate);
+        assert!(off.bond10 == on.bond10 && off.cpi == on.cpi && off.real_rate == on.real_rate);
+        assert!(
+            off.tips10 != on.tips10
+                && off.exp_infl10 != on.exp_infl10
+                && off.real_yield10 != on.real_yield10
+        );
+        for i in 0..on.real_yield10.len() {
+            let be = on.exp_infl10[i] - off.exp_infl10[i];
+            assert!(
+                ((on.real_yield10[i] - off.real_yield10[i]) + be).abs() < 1e-9,
+                "the premium moves the real yield and the breakeven by opposite amounts"
+            );
+        }
+    }
+
+    /// THE NOMINAL SHARE (item 60; `World::brk_nominal`): at 1 the premium's state is the nominal
+    /// yield's alone, so the nominal leg moves and the real yield is the world's without the
+    /// premium; the price, the long bond, the rate and the CPI never move.
+    #[test]
+    fn the_nominal_share_moves_the_nominal_leg_and_spares_the_real_yield() {
+        let (mut w, _) = named_world("0.24.6-sp500").expect("recipe");
+        w.bond10 = VERDICT_BOND10;
+        w.tips = VERDICT_TIPS;
+        w.term_vol = 0.007;
+        let none = simulate(&w, 5, DEFAULT_SEED);
+        w.brk_vol = 0.005;
+        let real = simulate(&w, 5, DEFAULT_SEED);
+        w.brk_nominal = 1.0;
+        let nominal = simulate(&w, 5, DEFAULT_SEED);
+        assert!(none.price == nominal.price && none.bond == nominal.bond);
+        assert!(none.rate == nominal.rate && none.cpi == nominal.cpi);
+        assert!(real.bond10 == none.bond10 && nominal.bond10 != none.bond10);
+        assert!(
+            nominal.exp_infl10 == real.exp_infl10,
+            "the breakeven is the same state"
+        );
+        for i in 0..none.real_yield10.len() {
+            assert!(
+                (nominal.real_yield10[i] - none.real_yield10[i]).abs() < 1e-9,
+                "the real yield keeps none of it"
+            );
+        }
+        assert!(real.real_yield10 != none.real_yield10);
+    }
+
     /// ONE ENSEMBLE SERVES THE REPORT AND THE VERDICT where the 10-year leg is all that separates
     /// them: the recipe's report runs with the verdict's leg on, and with the leg dropped its paths
     /// and statistics are the recipe's own to the bit.
@@ -28824,16 +31457,20 @@ mod bond10_tests {
         );
         assert!(
             verdict_world(a, &w) == run_w,
-            "the leg is all that separates the two"
+            "the legs are all that separate the two"
         );
+        assert_eq!(run_w.tips, VERDICT_TIPS, "and the TIPS leg");
         assert!(
             report_world(a, &w, at, (3, 30)) == w,
             "another horizon is the verdict's own ensemble"
         );
         let off = sim_paths(&w, at.0, at.1, DEFAULT_SEED);
         let mut on = sim_paths(&run_w, at.0, at.1, DEFAULT_SEED);
-        assert!(on.iter().all(|p| !p.bond10.is_empty()));
-        drop_bond10(&mut on);
+        assert!(
+            on.iter()
+                .all(|p| !p.bond10.is_empty() && !p.tips10.is_empty())
+        );
+        drop_legs(&mut on);
         assert_eq!(
             format!("{on:?}"),
             format!("{off:?}"),
@@ -28848,7 +31485,7 @@ mod bond10_tests {
         assert_eq!(
             format!(
                 "{:?}",
-                run_st.with_bond10_from(&measure_needs(&on, at.1, PathNeeds::LEG))
+                run_st.with_legs_from(&measure_needs(&on, at.1, PathNeeds::LEG))
             ),
             format!("{:?}", measure_for(a, &off, at.1)),
             "the leg read again is the whole read again"
@@ -28930,6 +31567,13 @@ mod bond10_tests {
         for name in ["0.24.6-sp500", "0.24.6-nasdaq", "0.24.4-sp500-channels"] {
             let (mut w, _) = named_world(name).expect("recipe");
             w.bond10 = VERDICT_BOND10;
+            w.tips = VERDICT_TIPS;
+            w.spike_rate = 0.4;
+            w.spike_size = 0.03;
+            w.cpi_noise = 0.006;
+            w.term_vol = 0.007;
+            w.brk_vol = 0.004;
+            w.brk_nominal = 0.7;
             w.macro_panel = 1;
             for seed in [DEFAULT_SEED, 7] {
                 let (taped, tape) = simulate_taped(&w, 12, seed);
@@ -28984,7 +31628,9 @@ mod bond10_tests {
             let a = anchors_named(set);
             let w = named_world(name).expect("recipe").0;
             let vw = verdict_world(a, &w);
-            let (paths, years, seed) = (6, 70, 11);
+            // as long as the longest bond-row record (the ex-post real rate's 71 years), or the
+            // reread refuses
+            let (paths, years, seed) = (6, 72, 11);
             let (sims, tapes): (Vec<Path>, Vec<BondTape>) =
                 sim_paths_taped(&vw, paths, years, seed).into_iter().unzip();
             let st = measure(&sims, years);
@@ -29893,6 +32539,7 @@ mod record_band_tests {
         out.extend(read("rateafter-2026-09-30.tsv").into_iter().skip(1));
         out.extend(read("volexit-2026-10-03.tsv").into_iter().skip(1));
         out.extend(read("bond10-2026-10-05.tsv").into_iter().skip(1));
+        out.extend(read("tips-2026-10-11.tsv").into_iter().skip(1));
         out
     }
 
@@ -29980,11 +32627,17 @@ mod record_band_tests {
                 .chain(RATE_AFTER_ROWS.iter())
                 .chain(VOL_EXIT_ROWS.iter())
                 .chain(BOND10_BAND_ROWS.iter())
+                .chain(CPI_BAND_ROWS.iter())
+                .chain(CPI_CENTURY_ROWS.iter())
+                .chain(REAL_YIELD_BAND_ROWS.iter())
+                .chain(BREAKEVEN_BAND_ROWS.iter())
+                .chain(TIPS_BAND_ROWS.iter())
+                .chain(REAL_RATE_BAND_ROWS.iter())
                 .copied()
                 .collect();
             assert_eq!(
                 names, expect,
-                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS, VOL_EXIT_ROWS, BOND10_BAND_ROWS"
+                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS, VOL_EXIT_ROWS, BOND10_BAND_ROWS, CPI_BAND_ROWS, CPI_CENTURY_ROWS, REAL_YIELD_BAND_ROWS, BREAKEVEN_BAND_ROWS, TIPS_BAND_ROWS, REAL_RATE_BAND_ROWS"
             );
             for b in a.record_bands {
                 let r = row(set, b.name);
@@ -30858,6 +33511,17 @@ mod record_band_tests {
                 let window = line.split('\t').nth(3).expect("window");
                 let (from, to) = window.split_once("..").expect("a from..to window");
                 let year = |d: &str| d[..4].parse::<usize>().expect("a year");
+                if CPI_CENTURY_ROWS.contains(&b.name) {
+                    // rates per unit time read on the paths' own length: the century is longer
+                    // than any path, and a share of months or a count a century does not depend
+                    // on the window it is read over
+                    assert!(
+                        record_band_years(a, b.name) <= year(to) - year(from),
+                        "{set} {}: read within {window}",
+                        b.name
+                    );
+                    continue;
+                }
                 assert_eq!(
                     record_band_years(a, b.name),
                     year(to) - year(from),
@@ -30932,9 +33596,10 @@ mod record_band_tests {
             for b in a.record_bands {
                 let (lo, hi) = b.band();
                 assert!(hi > lo, "{} {}: a band with no width", a.name, b.name);
-                // a band row with no reading would cost four sd on every candidate
+                // a band row with no reading would cost four sd on every candidate; an era row
+                // is reported
                 assert!(
-                    targets.contains(&b.name),
+                    targets.contains(&b.name) || a.era_rows.contains(&b.name),
                     "{} {}: no reading",
                     a.name,
                     b.name
@@ -32965,7 +35630,7 @@ mod basket_ruler_tests {
             // `0.24.5-sp500` is the channels recipe under its re-solve, and carries its basket
             if !n.ends_with("basket")
                 && !n.ends_with("channels")
-                && !["0.24.5-sp500", "0.24.6-sp500"].contains(&n)
+                && !["0.24.5-sp500", "0.24.6-sp500", "0.25.0-sp500"].contains(&n)
             {
                 assert!(w.basket == 0, "recipe {n}");
             }
@@ -33339,6 +36004,7 @@ mod sector_channel_tests {
                 "0.24.5-nasdaq-basket",
                 "0.24.6-nasdaq-basket",
                 "0.24.6-sp500",
+                "0.25.0-sp500",
             ]
             .contains(&n);
             assert_eq!(w.sectors > 0, carries, "recipe {n}");

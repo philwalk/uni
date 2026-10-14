@@ -3803,7 +3803,10 @@ mod watch_tests {
         assert!(seed_obj.gap.is_empty() && seed_obj.watch == graded);
         let r = one_read(&w, anchors, paths, years, seed, &seed_obj);
 
-        let main = ms::sim_paths(&w, paths, years, seed);
+        // the verdict world's paths, as the seed read simulates them: a banded row at a horizon
+        // under the paths' length is cut from them, and the legs' rows read NaN off paths without
+        // the legs
+        let main = ms::sim_paths(&ms::verdict_world(anchors, &w), paths, years, seed);
         let st = ms::measure(&main, years);
         let verdict = ms::fidelity_rows(anchors, &st, Some(&main), years, paths, seed, &w);
         let want: Vec<&'static str> = graded

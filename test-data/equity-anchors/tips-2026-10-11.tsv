@@ -1,0 +1,116 @@
+# THE REAL SIDE's record bands (2026-10-11, item 60, the TIPS-ladder consumer's request): sixteen
+# graded rows in six groups, each read on a public-domain record and resampled in one-year blocks
+# of its own cadence (252 sessions for a daily record, FIVE YEARS of months for a monthly one: a
+# year-over-year rate straddles a join in every month of a twelve-month block, and the 1970s regime
+# that makes the record's year-over-year sd outlasts one), each group under its own joint band at
+# its share of the mode's sixteen rows (`-of 16`, alpha 0.10). No licensed series: the TIPS index a
+# consumer would grade a fund on is replaced by a par TIPS built from FRED's DFII10 and CPI-U.
+# THE ERA RULE: the TIPS records begin in 2003, the model's rates anchor on each set's rate window,
+# and the 2003-2026 LEVELS (a real yield of 1.0 against the century's 2.3, a breakeven at the era's
+# target, the sd of each level over one secular hump) are that era's, not a statistic a 1954-2026
+# world can hold; they are REPORTED beside the model's, and the graded rows are era-free: each
+# month-end series' month-to-month change, the leg's volatility, depth and correlations, and the
+# ex-post real rate over the rate's own window. THE CPI AND REAL-RATE ROWS FOLLOW THE SET'S RATE
+# WINDOW: the S&P set's on 1954-2026 (DFF 1954-2026), the Nasdaq set's on 1999-2026 (DFF 1999-2026):
+# a 2.1% policy rate under 1954-2026's 3.5% inflation is a real rate near -1, which no dial can
+# hold at the 71-year record's +1.1; on its own era the Nasdaq's rows read 2.57% inflation, a
+# year-over-year sd of 1.72 and an ex-post real rate of -0.47 (sd 2.58). THE S&P SET REPORTS THE
+# BREAKEVEN'S THREE ROWS AND THE LEG'S CORRELATION WITH THE NOMINAL LEG (its era rows): the
+# year-over-year rate's persistence at twelve months is 0.73 on 1954-2026 against the TIPS era's
+# 0.26 (`cpipersist-2026-10-12.tsv`), and a market whose inflation regimes last moves its
+# breakeven with the prints as the era's market did not; the Nasdaq set, on 1999-2026, grades them.
+#   CPI (`cpi_readings`, CPI-U 1954-01..2026-08, monthly log changes; CPIAUCSL):
+#     cpi mean %/yr           the log change a year, percent
+#     cpi yoy sd pp           sd of the year-over-year rate in simple percent
+#     cpi monthly sd pp       sd of the month-to-month log change, percent: what an indexation lag reads
+#     cpi 4%+ share %         months at or above 4%: eleven spells, median 6 months, longest 117 (1973-82)
+#     the year-over-year persistence at 12 months (0.7304 on 1954-2026, 0.2581 on 1999-2026) is
+#     graded as a single-history row in `cpipersist-2026-10-12.tsv`: the statistic straddles a
+#     block join in every pair, so it cannot be banded here
+#     reported, not graded: the negative-year-over-year share 2.56% (1954-2026 holds too little
+#     deflation to band: its own resamples admit none), spell median 6, max 117
+#   CPI, THE CENTURY (`cpi_century_readings`, CPI-U not seasonally adjusted 1913-01..2026-08, read
+#     whole; CPIAUCNS, the longest public record):
+#     cpi deflation share % (century)  months whose year-over-year rate is below zero: 1921-23,
+#                             1926-29, 1930-33, 1938-39, 1949-50, 1954-55, 2009, 2015 (a year of
+#                             unchanged rounded prices is zero, not deflation: below -1e-9)
+#     cpi 4%+ spells per century  how often a 4%+ spell STARTS per hundred years (22 in 113): the
+#                             row that tells one spell of 300 months from ten of thirty
+#   REAL YIELD (`real_yield_readings`, DFII10 month ends 2003-01-31..2026-07-31; the resamples are of
+#     the month-to-month changes, since a resample of the levels puts a jump at every block join):
+#     real yield monthly change sd pp  sd of the month-end to month-end change: a random walk within
+#                             the year (the 12-month change's sd is 0.96 of sqrt(12) times it),
+#                             mean reversion over years
+#     reported: level 0.9805, sd 1.0124, persistence at 12 months 0.7311, min -1.16 (Jul 2021),
+#     max 3.14 (Oct 2008); the level less the ex-post real rate over their 271 common months 1.789
+#   BREAKEVEN (`breakeven_readings`, T10YIE month ends, the same window, resampled the same way):
+#     breakeven monthly change sd pp  how far the market's ten-year breakeven moves in a month
+#                             (the record's slope on the year-over-year rate's change is 0.11)
+#     breakeven own change sd pp  the sd of that change's residual on the year-over-year rate's
+#                             change at the same month ends (CPI-U; a month the CPI lacks, October
+#                             2025, leaves that pair out): nine tenths of the move is the
+#                             breakeven's own (their correlation 0.30), a premium over the
+#                             expectation, which an expectation moving with the prints cannot
+#                             carry at any slope; the pairs are resampled together
+#     breakeven vs yield corr monthly  the correlation of that change with the DGS10 month-end
+#                             change (the same month ends): 0.51, with the real yield's change
+#                             -0.17, so half of the breakeven's move is expected-inflation news
+#                             the nominal yield carries and the real yield does not; a premium
+#                             the real yield carries whole reads about 0.15 (`-brknominal`)
+#     reported: level 2.1088, sd 0.3943, lowest 0.11 (Dec 2008)
+#   TIPS (`tips_readings`, a 10-year par TIPS rebought at every DFII10 observation, its REAL price return,
+#     the DGS10 par bond and Ken French's daily market (Mkt-RF + RF) on the 5888 sessions all three trade,
+#     2003-01-06..2026-08-03, each compounded across the sessions the others skip):
+#     tips vol per duration   annualised RMS of each session's return over the par bond's modified
+#                             duration at the prior real yield, percent per year of duration
+#     tips depth vs vol       share of sessions more than 10% under the running peak over what the
+#                             volatility implies (`0.0397 x vol - 0.0785`), the bond row's reading
+#     tips vs bond10 corr     daily correlation with the DGS10 par bond
+#     tips vs equity corr monthly  correlation with the market over 21-session months (daily it is -0.11:
+#                             flight-to-quality days; the months a ladder's mix is read on make it +0.16)
+#     reported: the 2022 real return, Dec 2021 - Oct 2022, -22.87% at the par bond's own duration (about
+#     10 at a -1% real yield; -18.9% at duration 8); the consumer's -12% was a fund's nominal 2022 return
+#   REAL RATE EX POST (`real_rate_readings`, DFF's monthly mean less the next twelve months' CPI-U
+#     inflation, 1954-07..2025-08): mean and sd. No public record of one-year expected inflation exists,
+#     so the realised rate is what the model's `realRate` is set against.
+# Each row carries the record's reading and its spread over 20,000 moving block resamples. The sets
+# share every record but the CPI and real-rate windows. FRED's series and the French market are
+# public; the files are not shipped.
+#
+# Generated by `rust/src/bin/record_bands.rs -tips` (twin: `jsrc/recordBands.sc -tips`, byte-identical):
+#   record_bands -tips -cpi CPIAUCSL.csv -cpicentury CPIAUCNS.csv -real DFII10.csv -breakeven T10YIE.csv
+#       -nominal DGS10.csv -fred DFF.csv -french F-F_Research_Data_Factors_daily.csv -set sp500|nasdaq
+#       -from 2003-01-02 -to 2026-08-03 -cpifrom 1954-01-01|1999-01-01 -cpito 2026-08-01 -of 16 [-header]
+set	row	series	window	n	resamples	record	p0	p1	p5	p10	p15	p20	p25	p30	p35	p40	p45	p50	p55	p60	p65	p70	p75	p80	p85	p90	p95	p99	p100	jointC	jointLo	jointHi
+sp500	cpi mean %/yr	CPIAUCSL	1954-01-01..2026-08-01	870	20000	3.472994	1.973952	2.418333	2.711631	2.881076	3.003486	3.095929	3.178072	3.257325	3.329831	3.404234	3.475131	3.545144	3.615196	3.688937	3.767198	3.851136	3.936039	4.032239	4.148598	4.300800	4.542226	4.968944	6.228945	0.495425	2.312354	5.125599
+sp500	cpi yoy sd pp	CPIAUCSL	1954-01-01..2026-08-01	870	20000	2.755911	0.962118	1.379075	1.671452	1.905027	2.040042	2.156665	2.262169	2.353302	2.423107	2.494567	2.567226	2.632614	2.699898	2.763153	2.828571	2.895092	2.964297	3.040824	3.122663	3.224866	3.371721	3.618433	4.047246	0.495425	1.308063	3.712859
+sp500	cpi monthly sd pp	CPIAUCSL	1954-01-01..2026-08-01	870	20000	0.309562	0.187019	0.226198	0.249440	0.261886	0.271023	0.278000	0.284196	0.289548	0.294406	0.299185	0.303666	0.307947	0.312028	0.316248	0.320525	0.324682	0.329492	0.334537	0.340354	0.348134	0.358609	0.376521	0.425215	0.495425	0.218706	0.384996
+sp500	cpi 4%+ share %	CPIAUCSL	1954-01-01..2026-08-01	870	20000	29.569267	0.931315	11.292200	16.880093	19.674040	21.769499	23.515716	24.912689	26.193248	27.473807	28.754366	29.918510	31.199069	32.246799	33.527357	34.691502	36.088475	37.485448	39.115250	40.977881	43.538999	47.147846	53.667055	67.869616	0.495425	9.545984	56.461001
+sp500	cpi deflation share % (century)	CPIAUCNS	1913-01-01..2026-08-01	1362	20000	12.731310	0.962250	4.293116	6.365655	7.623982	8.512213	9.252406	9.992598	10.584752	11.250925	11.769060	12.361214	12.879349	13.471503	14.063657	14.729830	15.396003	16.062176	16.876388	17.838638	19.170984	21.169504	24.796447	36.935603	0.496325	3.182828	26.868986
+sp500	cpi 4%+ spells per century	CPIAUCNS	1913-01-01..2026-08-01	1362	20000	19.383260	7.929515	12.334802	14.977974	16.740088	17.621145	18.502203	19.383260	20.264317	20.264317	21.145374	22.026432	22.026432	22.907489	23.788546	23.788546	24.669604	25.550661	26.431718	27.312775	28.193833	30.837004	34.361233	43.171806	0.496325	11.453744	36.123348
+sp500	real yield monthly change sd pp	DFII10	2003-01-31..2026-07-31	283	20000	0.222184	0.144199	0.165579	0.182603	0.191029	0.196428	0.201525	0.205661	0.209392	0.212523	0.215477	0.218343	0.221074	0.223869	0.226999	0.230165	0.233120	0.236023	0.238971	0.242718	0.248255	0.254535	0.267193	0.275313	0.496875	0.156582	0.271156
+sp500	breakeven monthly change sd pp	T10YIE	2003-01-31..2026-07-31	283	20000	0.167265	0.110829	0.124122	0.133143	0.139256	0.144690	0.150348	0.155841	0.160615	0.164165	0.167347	0.170260	0.173164	0.176332	0.179911	0.184092	0.188317	0.192399	0.196048	0.200268	0.206802	0.216728	0.232870	0.259235	0.495525	0.120417	0.239525
+sp500	breakeven own change sd pp	T10YIE	2003-01-31..2026-07-31	283	20000	0.160190	0.105208	0.120397	0.129614	0.135542	0.140869	0.145430	0.149511	0.153476	0.156870	0.160103	0.163047	0.165751	0.168582	0.171555	0.174683	0.178289	0.181985	0.185671	0.189759	0.195106	0.203231	0.217718	0.244189	0.495525	0.116666	0.223422
+sp500	breakeven vs yield corr monthly	T10YIE	2003-01-31..2026-07-31	283	20000	0.508938	0.308599	0.376495	0.413627	0.433299	0.446070	0.456432	0.465951	0.473617	0.480483	0.487419	0.494067	0.500460	0.506888	0.513190	0.519496	0.526313	0.533336	0.541665	0.550706	0.562185	0.579692	0.614009	0.703784	0.495525	0.362504	0.626818
+sp500	tips vol per duration	DFII10	2003-01-06..2026-08-03	5888	20000	0.818813	0.590716	0.689115	0.722727	0.742065	0.755669	0.766717	0.776544	0.785688	0.793780	0.802042	0.809937	0.818406	0.825944	0.833777	0.842455	0.851355	0.860925	0.871115	0.883251	0.899314	0.924935	0.970065	1.095854	0.496725	0.670179	0.996369
+sp500	tips depth vs vol	DFII10	2003-01-06..2026-08-03	5888	20000	1.833041	0.000000	0.058554	0.306888	0.526668	0.716682	0.885027	1.055072	1.214899	1.379288	1.537199	1.691934	1.843931	1.998868	2.171196	2.343074	2.518900	2.727624	2.942674	3.177002	3.442197	3.768249	4.278853	5.123134	0.496725	0.021500	4.521267
+sp500	tips vs bond10 corr	DFII10	2003-01-06..2026-08-03	5888	20000	0.809593	0.737949	0.766309	0.778034	0.784913	0.789265	0.792954	0.796132	0.798978	0.801675	0.804178	0.806724	0.809092	0.811531	0.814251	0.816977	0.819758	0.822587	0.825925	0.829827	0.834240	0.841054	0.853985	0.880044	0.496725	0.760045	0.861322
+sp500	tips vs equity corr monthly	DFII10	2003-01-06..2026-08-03	5888	20000	0.156093	-0.305399	-0.137703	-0.052911	-0.004278	0.027694	0.052373	0.073806	0.093715	0.110603	0.126077	0.141136	0.156128	0.170177	0.184829	0.199096	0.214273	0.229640	0.248150	0.269042	0.292799	0.330266	0.393811	0.506402	0.496725	-0.183329	0.423674
+sp500	real rate ex post %	DFF	1954-07..2025-08	853	20000	1.080396	-0.691424	-0.114777	0.240819	0.413054	0.537734	0.651056	0.738662	0.820302	0.898642	0.972973	1.046144	1.119710	1.190828	1.267785	1.347719	1.426203	1.515552	1.613046	1.732329	1.882805	2.103983	2.530460	3.435033	0.496825	-0.282686	2.805455
+sp500	real rate ex post sd pp	DFF	1954-07..2025-08	853	20000	2.983657	1.426506	1.924486	2.147227	2.307651	2.425718	2.524352	2.607065	2.682536	2.751520	2.816118	2.878743	2.940903	3.005505	3.073979	3.137470	3.205052	3.273472	3.352911	3.447115	3.559290	3.729437	4.043738	4.827196	0.496825	1.811839	4.203960
+nasdaq	cpi mean %/yr	CPIAUCSL	1999-01-01..2026-08-01	330	20000	2.572391	1.356249	1.673244	1.858695	1.975097	2.062205	2.130393	2.189594	2.245721	2.300923	2.350868	2.400677	2.449800	2.503182	2.555780	2.611363	2.670719	2.734594	2.808506	2.885430	2.993394	3.158180	3.442427	4.102306	0.495525	1.600788	3.587429
+nasdaq	cpi yoy sd pp	CPIAUCSL	1999-01-01..2026-08-01	330	20000	1.718826	0.718989	0.908126	1.072549	1.183114	1.268365	1.353111	1.439310	1.518412	1.588677	1.642963	1.690925	1.732016	1.770921	1.813272	1.858068	1.906903	1.960229	2.016477	2.076174	2.138807	2.226179	2.386791	2.669942	0.495525	0.856147	2.449565
+nasdaq	cpi monthly sd pp	CPIAUCSL	1999-01-01..2026-08-01	330	20000	0.300399	0.187573	0.220091	0.247223	0.260304	0.269950	0.277259	0.283608	0.289199	0.294275	0.299202	0.304278	0.308933	0.313783	0.318690	0.323725	0.328833	0.334535	0.340702	0.347753	0.356398	0.369498	0.391139	0.436481	0.495525	0.211258	0.401357
+nasdaq	cpi 4%+ share %	CPIAUCSL	1999-01-01..2026-08-01	330	20000	12.852665	0.000000	0.000000	2.821317	4.702194	6.583072	7.836991	8.777429	9.717868	10.971787	11.598746	12.539185	13.479624	14.420063	15.360502	16.300940	17.241379	18.495298	19.749216	21.316614	23.197492	26.018809	31.347962	43.887147	0.495525	0.000000	33.542320
+nasdaq	cpi deflation share % (century)	CPIAUCNS	1913-01-01..2026-08-01	1362	20000	12.731310	0.962250	4.293116	6.365655	7.623982	8.512213	9.252406	9.992598	10.584752	11.250925	11.769060	12.361214	12.879349	13.471503	14.063657	14.729830	15.396003	16.062176	16.876388	17.838638	19.170984	21.169504	24.796447	36.935603	0.496325	3.182828	26.868986
+nasdaq	cpi 4%+ spells per century	CPIAUCNS	1913-01-01..2026-08-01	1362	20000	19.383260	7.929515	12.334802	14.977974	16.740088	17.621145	18.502203	19.383260	20.264317	20.264317	21.145374	22.026432	22.026432	22.907489	23.788546	23.788546	24.669604	25.550661	26.431718	27.312775	28.193833	30.837004	34.361233	43.171806	0.496325	11.453744	36.123348
+nasdaq	real yield monthly change sd pp	DFII10	2003-01-31..2026-07-31	283	20000	0.222184	0.144199	0.165579	0.182603	0.191029	0.196428	0.201525	0.205661	0.209392	0.212523	0.215477	0.218343	0.221074	0.223869	0.226999	0.230165	0.233120	0.236023	0.238971	0.242718	0.248255	0.254535	0.267193	0.275313	0.496875	0.156582	0.271156
+nasdaq	breakeven monthly change sd pp	T10YIE	2003-01-31..2026-07-31	283	20000	0.167265	0.110829	0.124122	0.133143	0.139256	0.144690	0.150348	0.155841	0.160615	0.164165	0.167347	0.170260	0.173164	0.176332	0.179911	0.184092	0.188317	0.192399	0.196048	0.200268	0.206802	0.216728	0.232870	0.259235	0.495525	0.120417	0.239525
+nasdaq	breakeven own change sd pp	T10YIE	2003-01-31..2026-07-31	283	20000	0.160190	0.105208	0.120397	0.129614	0.135542	0.140869	0.145430	0.149511	0.153476	0.156870	0.160103	0.163047	0.165751	0.168582	0.171555	0.174683	0.178289	0.181985	0.185671	0.189759	0.195106	0.203231	0.217718	0.244189	0.495525	0.116666	0.223422
+nasdaq	breakeven vs yield corr monthly	T10YIE	2003-01-31..2026-07-31	283	20000	0.508938	0.308599	0.376495	0.413627	0.433299	0.446070	0.456432	0.465951	0.473617	0.480483	0.487419	0.494067	0.500460	0.506888	0.513190	0.519496	0.526313	0.533336	0.541665	0.550706	0.562185	0.579692	0.614009	0.703784	0.495525	0.362504	0.626818
+nasdaq	tips vol per duration	DFII10	2003-01-06..2026-08-03	5888	20000	0.818813	0.590716	0.689115	0.722727	0.742065	0.755669	0.766717	0.776544	0.785688	0.793780	0.802042	0.809937	0.818406	0.825944	0.833777	0.842455	0.851355	0.860925	0.871115	0.883251	0.899314	0.924935	0.970065	1.095854	0.496725	0.670179	0.996369
+nasdaq	tips depth vs vol	DFII10	2003-01-06..2026-08-03	5888	20000	1.833041	0.000000	0.058554	0.306888	0.526668	0.716682	0.885027	1.055072	1.214899	1.379288	1.537199	1.691934	1.843931	1.998868	2.171196	2.343074	2.518900	2.727624	2.942674	3.177002	3.442197	3.768249	4.278853	5.123134	0.496725	0.021500	4.521267
+nasdaq	tips vs bond10 corr	DFII10	2003-01-06..2026-08-03	5888	20000	0.809593	0.737949	0.766309	0.778034	0.784913	0.789265	0.792954	0.796132	0.798978	0.801675	0.804178	0.806724	0.809092	0.811531	0.814251	0.816977	0.819758	0.822587	0.825925	0.829827	0.834240	0.841054	0.853985	0.880044	0.496725	0.760045	0.861322
+nasdaq	tips vs equity corr monthly	DFII10	2003-01-06..2026-08-03	5888	20000	0.156093	-0.305399	-0.137703	-0.052911	-0.004278	0.027694	0.052373	0.073806	0.093715	0.110603	0.126077	0.141136	0.156128	0.170177	0.184829	0.199096	0.214273	0.229640	0.248150	0.269042	0.292799	0.330266	0.393811	0.506402	0.496725	-0.183329	0.423674
+nasdaq	real rate ex post %	DFF	1999-01..2025-08	319	20000	-0.467852	-2.653762	-1.834923	-1.561096	-1.406623	-1.297431	-1.215078	-1.145709	-1.080214	-1.020671	-0.962551	-0.900663	-0.844312	-0.789355	-0.735906	-0.678087	-0.615759	-0.547378	-0.473877	-0.391147	-0.280921	-0.130742	0.154895	0.679747	0.496825	-1.993585	0.314453
+nasdaq	real rate ex post sd pp	DFF	1999-01..2025-08	319	20000	2.575057	0.718797	1.273466	1.546380	1.709717	1.813800	1.895823	1.975132	2.050961	2.126953	2.207573	2.283839	2.351520	2.418515	2.480020	2.541579	2.602988	2.669883	2.748029	2.845122	2.955557	3.096696	3.378844	3.899292	0.496825	1.084052	3.518588

@@ -106,7 +106,20 @@ const USAGE: &str =
   -bond10       print the 10-year leg's rows (`BOND10_BAND_ROWS`) of a -yahoo window instead -- FRED's
                 DGS10 as a par bond, with -fred DFF as the short rate its excess return is read
                 over: the record by `bond10_readings`, its resamples by `bond10_resamples`, their
-                own joint band over the three rows";
+                own joint band over the three rows
+  -tips         THE REAL SIDE's rows (item 60), a mode of its own: -cpi CPIAUCSL -cpicentury
+                CPIAUCNS -real DFII10 -breakeven T10YIE -nominal DGS10 -fred DFF -french <daily
+                factors> -set S [-from -to] (the real window) [-cpifrom -cpito] (the CPI and
+                real-rate window; the century file is read whole) [-resamples -seed -joint -of
+                -header]; six groups (`CPI_BAND_ROWS`, `CPI_CENTURY_ROWS`, `REAL_YIELD_BAND_ROWS`,
+                `BREAKEVEN_BAND_ROWS`, `TIPS_BAND_ROWS`, `REAL_RATE_BAND_ROWS`), each on its own
+                record with its own joint band at the mode's share of -of (default 16, the mode's
+                graded rows); the reported rows (`CPI_REPORTED_ROWS`, `REAL_YIELD_REPORTED_ROWS`,
+                the 2022 TIPS real return) go to stderr
+  -cpipersist   THE CPI PERSISTENCE ROW (`CPI_PERSISTENCE_ROW`, `cpi_persistence`) of -cpi over
+                [-cpifrom -cpito] for -set, the rows of `cpipersist-2026-10-12.tsv`: the record's
+                own reading, no resampling (the statistic straddles a block join in every pair),
+                graded among the world's single histories of the window's length [-header]";
 
 fn usage(msg: &str) -> ! {
     if !msg.is_empty() {
@@ -424,7 +437,8 @@ fn par_price(c: f64, y: f64, t: f64) -> f64 {
         return 1.0;
     }
     let v = ms::exp_det(-2.0 * t * ms::ln_det(1.0 + y / 2.0));
-    if y > 0.0 {
+    // the closed form holds for a negative yield too (a real yield below zero); only zero divides
+    if y != 0.0 {
         (c / y) * (1.0 - v) + v
     } else {
         1.0 + c * t
@@ -857,6 +871,498 @@ fn basket_mode(args: &[String]) -> bool {
     true
 }
 
+/// `(date, value)` of every row of a FRED `observation_date,SERIES` file whose value is a
+/// number, as published: levels, or percent.
+fn fred_series(file: &str) -> Vec<(String, f64)> {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    text.lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(',').map(str::trim).collect();
+            let v: f64 = f.get(1)?.parse().ok()?;
+            Some((f[0].to_string(), v))
+        })
+        .collect()
+}
+
+/// The series name a FRED file's header carries.
+fn fred_name(file: &str) -> String {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    let head: Vec<&str> = text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    match head.as_slice() {
+        ["observation_date", h] => (*h).to_string(),
+        _ => usage(&format!("{file}: not a FRED observation_date,SERIES file")),
+    }
+}
+
+/// Each month's last observation of a dated series, keyed by the month: `YYYY-MM -> (date, v)`.
+fn month_ends_of(obs: &[(String, f64)]) -> Vec<(String, String, f64)> {
+    let mut out: Vec<(String, String, f64)> = Vec::new();
+    for (d, v) in obs {
+        let m = d[..7].to_string();
+        match out.last_mut() {
+            Some(last) if last.0 == m => *last = (m, d.clone(), *v),
+            _ => out.push((m, d.clone(), *v)),
+        }
+    }
+    out
+}
+
+/// `YYYY-MM` plus `k` months.
+fn month_add(key: &str, k: usize) -> String {
+    let y: usize = key[..4].parse().unwrap_or(0);
+    let m: usize = key[5..7].parse().unwrap_or(1);
+    let t = y * 12 + (m - 1) + k;
+    format!("{:04}-{:02}", t / 12, t % 12 + 1)
+}
+
+/// The returns of dated log-return series over the sessions ALL of them trade, each compounded
+/// across the sessions the others skip: cumulative logs differenced at the common dates, from the
+/// second common date on.
+fn join_returns(series: &[&[(String, f64)]], from: &str, to: &str) -> (Vec<String>, Vec<Vec<f64>>) {
+    use std::collections::BTreeMap;
+    use std::collections::HashMap;
+    let cums: Vec<HashMap<&str, f64>> = series
+        .iter()
+        .map(|s| {
+            let mut acc = 0.0f64;
+            s.iter()
+                .map(|(d, r)| {
+                    acc += r;
+                    (d.as_str(), acc)
+                })
+                .collect()
+        })
+        .collect();
+    let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    for s in series {
+        for (d, _) in *s {
+            if d.as_str() >= from && d.as_str() <= to {
+                *count.entry(d.as_str()).or_default() += 1;
+            }
+        }
+    }
+    let dates: Vec<&str> = count
+        .iter()
+        .filter(|(_, c)| **c == series.len())
+        .map(|(d, _)| *d)
+        .collect();
+    let rets: Vec<Vec<f64>> = cums
+        .iter()
+        .map(|c| {
+            (1..dates.len())
+                .map(|i| c[dates[i]] - c[dates[i - 1]])
+                .collect()
+        })
+        .collect();
+    (dates[1..].iter().map(|d| (*d).to_string()).collect(), rets)
+}
+
+/// One row group of `-tips`: its names, record, resamples and the series and window they were
+/// read on.
+struct TipsGroup<const N: usize> {
+    names: &'static [&'static str; N],
+    series: String,
+    window: String,
+    n: usize,
+    record: [f64; N],
+    reads: Vec<[f64; N]>,
+}
+
+/// `-tips`'s settings: the set, the two windows, and the resampling.
+#[derive(Clone)]
+struct TipsOpts {
+    set: String,
+    from: String,
+    to: String,
+    cpi_from: String,
+    cpi_to: String,
+    resamples: usize,
+    seed: u64,
+    joint: f64,
+    of: usize,
+}
+
+impl TipsOpts {
+    fn alpha(&self, k: usize) -> f64 {
+        self.joint * k as f64 / self.of as f64
+    }
+
+    /// Prints one group: the record, its resamples' quantiles and the group's own joint band at
+    /// the group's share of the mode's rows.
+    fn print_group<const N: usize>(&self, g: &TipsGroup<N>) {
+        let ks: Vec<usize> = (0..N).collect();
+        let (c, edges) = ms::record_band_joint(&g.reads, &ks, self.alpha(N));
+        for (k, name) in g.names.iter().enumerate() {
+            let col: Vec<f64> = g.reads.iter().map(|x| x[k]).collect();
+            let qs: Vec<String> = ms::record_band_quantiles(&col)
+                .iter()
+                .map(|v| format!("{v:.6}"))
+                .collect();
+            let (lo, hi) = edges[k];
+            println!(
+                "{}\t{name}\t{}\t{}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
+                self.set,
+                g.series,
+                g.window,
+                g.n,
+                g.reads.len(),
+                g.record[k],
+                qs.join("\t")
+            );
+        }
+    }
+
+    /// The monthly log changes of a FRED level file over the CPI window, with the levels and
+    /// the window.
+    fn cpi_changes(&self, file: &str) -> (Vec<(String, f64)>, Vec<f64>, String) {
+        let cpi: Vec<(String, f64)> = fred_series(file)
+            .into_iter()
+            .filter(|(d, _)| {
+                d.as_str() >= self.cpi_from.as_str() && d.as_str() <= self.cpi_to.as_str()
+            })
+            .collect();
+        if cpi.len() < 25 {
+            usage(&format!("{file}: {} months in the CPI window", cpi.len()));
+        }
+        let dlog: Vec<f64> = (1..cpi.len())
+            .map(|i| ms::ln_det(cpi[i].1 / cpi[i - 1].1))
+            .collect();
+        let window = format!("{}..{}", cpi[0].0, cpi[cpi.len() - 1].0);
+        (cpi, dlog, window)
+    }
+
+    /// The CPI group (`CPI_BAND_ROWS`) and the century group (`CPI_CENTURY_ROWS`, the century
+    /// file read whole); returns the CPI window's levels for the real-rate group.
+    fn cpi_groups(&self, cpi_file: &str, century_file: &str) -> Vec<(String, f64)> {
+        let (cpi, dlog, window) = self.cpi_changes(cpi_file);
+        let record = ms::cpi_readings(&dlog);
+        eprintln!(
+            "{}: {} monthly changes {window}; {}; reported {}; {} resamples, seed {}",
+            fred_name(cpi_file),
+            dlog.len(),
+            row_list(&ms::CPI_BAND_ROWS, &record),
+            row_list(&ms::CPI_REPORTED_ROWS, &ms::cpi_reported(&dlog)),
+            self.resamples,
+            self.seed
+        );
+        self.print_group(&TipsGroup {
+            names: &ms::CPI_BAND_ROWS,
+            series: fred_name(cpi_file),
+            window,
+            n: dlog.len(),
+            record,
+            reads: ms::cpi_resamples(&dlog, self.resamples, self.seed),
+        });
+        let whole = TipsOpts {
+            cpi_from: String::new(),
+            cpi_to: "9999".to_string(),
+            ..self.clone()
+        };
+        let (_, cdlog, c_window) = whole.cpi_changes(century_file);
+        let record = ms::cpi_century_readings(&cdlog);
+        eprintln!(
+            "{}: {} monthly changes {c_window}; {}",
+            fred_name(century_file),
+            cdlog.len(),
+            row_list(&ms::CPI_CENTURY_ROWS, &record)
+        );
+        self.print_group(&TipsGroup {
+            names: &ms::CPI_CENTURY_ROWS,
+            series: fred_name(century_file),
+            window: c_window,
+            n: cdlog.len(),
+            record,
+            reads: ms::cpi_century_resamples(&cdlog, self.resamples, self.seed),
+        });
+        cpi
+    }
+
+    /// A FRED file's month-end levels over the real window, each with its month, and the window.
+    fn month_levels(&self, file: &str) -> (Vec<(String, f64)>, String) {
+        let ends: Vec<(String, String, f64)> = month_ends_of(&fred_series(file))
+            .into_iter()
+            .filter(|(_, d, _)| d.as_str() >= self.from.as_str() && d.as_str() <= self.to.as_str())
+            .collect();
+        if ends.len() < 25 {
+            usage(&format!(
+                "{file}: {} month ends in the real window",
+                ends.len()
+            ));
+        }
+        let window = format!("{}..{}", ends[0].1, ends[ends.len() - 1].1);
+        (ends.into_iter().map(|(m, _, v)| (m, v)).collect(), window)
+    }
+
+    /// The real-yield group (`REAL_YIELD_BAND_ROWS`) and the breakeven group
+    /// (`BREAKEVEN_BAND_ROWS`), each on its file's month ends; the real yield's month ends are
+    /// returned for the real-rate group's reported difference.
+    fn level_groups(
+        &self,
+        real_file: &str,
+        bei_file: &str,
+        nom_file: &str,
+        cpi: &[(String, f64)],
+    ) -> Vec<(String, f64)> {
+        let (ry_months, window) = self.month_levels(real_file);
+        let ry: Vec<f64> = ry_months.iter().map(|(_, v)| *v).collect();
+        let record = ms::real_yield_readings(&ry);
+        eprintln!(
+            "{}: {} month ends {window}; {}; reported {}",
+            fred_name(real_file),
+            ry.len(),
+            row_list(&ms::REAL_YIELD_BAND_ROWS, &record),
+            row_list(&ms::REAL_YIELD_REPORTED_ROWS, &ms::real_yield_reported(&ry))
+        );
+        self.print_group(&TipsGroup {
+            names: &ms::REAL_YIELD_BAND_ROWS,
+            series: fred_name(real_file),
+            window,
+            n: ry.len(),
+            record,
+            reads: ms::real_yield_resamples(&ry, self.resamples, self.seed),
+        });
+        let (bei_months, window) = self.month_levels(bei_file);
+        let bei: Vec<f64> = bei_months.iter().map(|(_, v)| *v).collect();
+        // the year-over-year rate of the CPI window's months, beside each breakeven month end
+        let cpi_by_month: std::collections::HashMap<String, f64> =
+            cpi.iter().map(|(d, v)| (d[..7].to_string(), *v)).collect();
+        let yoy: Vec<f64> = bei_months
+            .iter()
+            .map(|(m, _)| {
+                let year_ago = format!(
+                    "{:04}-{}",
+                    m[..4].parse::<usize>().unwrap_or(1) - 1,
+                    &m[5..7]
+                );
+                let (now, year_ago) = (cpi_by_month.get(m), cpi_by_month.get(&year_ago));
+                // a month the CPI lacks (October 2025 was never published) leaves no rate
+                match (now, year_ago) {
+                    (Some(a), Some(b)) => 100.0 * ms::ln_det(a / b),
+                    _ => f64::NAN,
+                }
+            })
+            .collect();
+        // the nominal ten-year yield at the breakeven's month ends
+        let nom_by_month: std::collections::HashMap<String, f64> =
+            self.month_levels(nom_file).0.into_iter().collect();
+        let y: Vec<f64> = bei_months
+            .iter()
+            .map(|(m, _)| nom_by_month.get(m).copied().unwrap_or(f64::NAN))
+            .collect();
+        let record = ms::breakeven_readings(&bei, &yoy, &y);
+        eprintln!(
+            "{}: {} month ends {window}; {}; reported {}",
+            fred_name(bei_file),
+            bei.len(),
+            row_list(&ms::BREAKEVEN_BAND_ROWS, &record),
+            row_list(&ms::BREAKEVEN_REPORTED_ROWS, &ms::breakeven_reported(&bei))
+        );
+        self.print_group(&TipsGroup {
+            names: &ms::BREAKEVEN_BAND_ROWS,
+            series: fred_name(bei_file),
+            window,
+            n: bei.len(),
+            record,
+            reads: ms::breakeven_resamples(&bei, &yoy, &y, self.resamples, self.seed),
+        });
+        ry_months
+    }
+
+    /// The TIPS group (`TIPS_BAND_ROWS`): a 10-year par TIPS on the real-yield file, the 10-year
+    /// par bond on the nominal file and the market on the daily French factors, on the sessions
+    /// all three trade.
+    fn leg_group(&self, real_file: &str, nom_file: &str, french_file: &str) {
+        let real_text = std::fs::read_to_string(real_file)
+            .unwrap_or_else(|e| usage(&format!("{real_file}: {e}")));
+        let nom_text = std::fs::read_to_string(nom_file)
+            .unwrap_or_else(|e| usage(&format!("{nom_file}: {e}")));
+        let tips_daily = read_treasury(&real_text, 10.0);
+        let durs = treasury_durations(&real_text, 10.0);
+        let nom_daily = read_treasury(&nom_text, 10.0);
+        let eq_daily: Vec<(String, f64)> = read_french(french_file)
+            .into_iter()
+            .map(|(d, v)| (d, ms::ln_det(1.0 + v / 100.0)))
+            .collect();
+        let (dates, rets) =
+            join_returns(&[&tips_daily, &nom_daily, &eq_daily], &self.from, &self.to);
+        if dates.len() < 2 * 252 {
+            usage(&format!(
+                "{real_file}: {} common sessions in the real window",
+                dates.len()
+            ));
+        }
+        let dur: Vec<f64> = dates
+            .iter()
+            .map(|d| {
+                durs.get(d)
+                    .unwrap_or_else(|| usage(&format!("{real_file}: no duration for {d}")))
+                    .0
+            })
+            .collect();
+        let window = format!("{}..{}", dates[0], dates[dates.len() - 1]);
+        let record = ms::tips_readings(&rets[0], &dur, &rets[1], &rets[2]);
+        let r2022: f64 = tips_daily
+            .iter()
+            .filter(|(d, _)| d.as_str() > "2021-12-31" && d.as_str() <= "2022-10-31")
+            .map(|(_, r)| *r)
+            .sum();
+        eprintln!(
+            "{} par TIPS: {} common sessions {window}; {}; reported 2022 real return (Dec 2021 - Oct 2022) {:.2}%",
+            fred_name(real_file),
+            dates.len(),
+            row_list(&ms::TIPS_BAND_ROWS, &record),
+            (ms::exp_det(r2022) - 1.0) * 100.0
+        );
+        self.print_group(&TipsGroup {
+            names: &ms::TIPS_BAND_ROWS,
+            series: fred_name(real_file),
+            window,
+            n: dates.len(),
+            record,
+            reads: ms::tips_resamples(
+                &rets[0],
+                &dur,
+                &rets[1],
+                &rets[2],
+                self.resamples,
+                self.seed,
+            ),
+        });
+    }
+
+    /// The real-rate group (`REAL_RATE_BAND_ROWS`): each month's mean of the daily policy rate
+    /// less the next twelve months' inflation on the CPI window's levels.
+    /// The real-rate group (`REAL_RATE_BAND_ROWS`) on the policy file and the CPI, and the
+    /// reported difference of the real yield over the ex-post real rate on the months both hold.
+    fn real_rate_group(
+        &self,
+        dff_file: &str,
+        cpi_name: &str,
+        cpi: &[(String, f64)],
+        ry: &[(String, f64)],
+    ) {
+        let mut dff_months: Vec<(String, f64, usize)> = Vec::new();
+        for (d, v) in fred_series(dff_file) {
+            let m = &d[..7];
+            match dff_months.last_mut() {
+                Some(last) if last.0 == m => {
+                    last.1 += v;
+                    last.2 += 1;
+                }
+                _ => dff_months.push((m.to_string(), v, 1)),
+            }
+        }
+        let cpi_by_month: std::collections::HashMap<String, f64> =
+            cpi.iter().map(|(d, v)| (d[..7].to_string(), *v)).collect();
+        let rr: Vec<(String, f64)> = dff_months
+            .iter()
+            .filter_map(|(m, sum, n)| {
+                let now = cpi_by_month.get(m)?;
+                let next = cpi_by_month.get(&month_add(m, 12))?;
+                Some((m.clone(), sum / *n as f64 - ms::ln_det(next / now) * 100.0))
+            })
+            .collect();
+        if rr.len() < 25 {
+            usage(&format!(
+                "{dff_file}: {} months with a year of CPI ahead",
+                rr.len()
+            ));
+        }
+        let window = format!("{}..{}", rr[0].0, rr[rr.len() - 1].0);
+        let x: Vec<f64> = rr.iter().map(|(_, v)| *v).collect();
+        let record = ms::real_rate_readings(&x);
+        let rr_by_month: std::collections::HashMap<&str, f64> =
+            rr.iter().map(|(m, v)| (m.as_str(), *v)).collect();
+        let both: Vec<(f64, f64)> = ry
+            .iter()
+            .filter_map(|(m, v)| rr_by_month.get(m.as_str()).map(|r| (*v, *r)))
+            .collect();
+        let nb = both.len() as f64;
+        let over = both.iter().map(|(y, _)| y).sum::<f64>() / nb
+            - both.iter().map(|(_, r)| r).sum::<f64>() / nb;
+        eprintln!(
+            "{} less the next year's {cpi_name}: {} months {window}; {}; reported real yield less the ex-post real rate over their {} common months {over:.3}",
+            fred_name(dff_file),
+            x.len(),
+            row_list(&ms::REAL_RATE_BAND_ROWS, &record),
+            both.len()
+        );
+        self.print_group(&TipsGroup {
+            names: &ms::REAL_RATE_BAND_ROWS,
+            series: fred_name(dff_file),
+            window,
+            n: x.len(),
+            record,
+            reads: ms::real_rate_resamples(&x, self.resamples, self.seed),
+        });
+    }
+}
+
+/// `-tips`: THE REAL SIDE's six row groups (item 60), each on a public-domain record -- CPI-U
+/// monthly and its century, DFII10 and T10YIE at month ends, a 10-year par TIPS rebought at every
+/// DFII10 observation beside the DGS10 par bond and the equity market on their common sessions,
+/// and the policy rate less the next year's realised inflation -- resampled in one-year blocks of
+/// each record's own cadence, each group under its own joint band at the mode's share of `-of`.
+fn tips_mode(args: &[String]) -> bool {
+    if !args.iter().any(|a| a == "-tips") {
+        return false;
+    }
+    let opt = |flag: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let need = |flag: &str| opt(flag).unwrap_or_else(|| usage(&format!("-tips wants {flag} FILE")));
+    let (cpi_file, century_file) = (need("-cpi"), need("-cpicentury"));
+    let (real_file, bei_file) = (need("-real"), need("-breakeven"));
+    let (nom_file, dff_file, french_file) = (need("-nominal"), need("-fred"), need("-french"));
+    let o = TipsOpts {
+        set: opt("-set").unwrap_or_else(|| usage("-tips wants -set")),
+        from: opt("-from").unwrap_or_default(),
+        to: opt("-to").unwrap_or_else(|| "9999".to_string()),
+        cpi_from: opt("-cpifrom").unwrap_or_default(),
+        cpi_to: opt("-cpito").unwrap_or_else(|| "9999".to_string()),
+        resamples: opt("-resamples").map_or(20_000, |v| num(&v, "-resamples wants an integer")),
+        seed: opt("-seed").map_or(20_260_918, |v| {
+            num(&v, "-seed wants a non-negative integer")
+        }),
+        joint: opt("-joint").map_or(0.10, |v| num(&v, "-joint wants a share in (0, 1)")),
+        of: opt("-of").map_or(16, |v| num(&v, "-of wants a row count")),
+    };
+    if args.iter().any(|a| a == "-header") {
+        let pcts: Vec<String> = ms::RECORD_BAND_PCTS
+            .iter()
+            .map(|p| format!("p{p}"))
+            .collect();
+        println!(
+            "set\trow\tseries\twindow\tn\tresamples\trecord\t{}\tjointC\tjointLo\tjointHi",
+            pcts.join("\t")
+        );
+    }
+    let cpi = o.cpi_groups(&cpi_file, &century_file);
+    let ry = o.level_groups(&real_file, &bei_file, &nom_file, &cpi);
+    o.leg_group(&real_file, &nom_file, &french_file);
+    o.real_rate_group(&dff_file, &fred_name(&cpi_file), &cpi, &ry);
+    true
+}
+
+/// `name value, name value, ...` for a summary line.
+fn row_list(names: &[&str], values: &[f64]) -> String {
+    names
+        .iter()
+        .zip(values)
+        .map(|(n, v)| format!("{n} {v:.4}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn sector_mode(args: &[String]) -> bool {
     let Some(k) = args.iter().position(|a| a == "-sectors") else {
         return false;
@@ -878,6 +1384,44 @@ fn sector_mode(args: &[String]) -> bool {
     true
 }
 
+/// `-cpipersist`: THE CPI PERSISTENCE ROW (`CPI_PERSISTENCE_ROW`) of -cpi over the CPI window for
+/// -set, the record's own reading: a single-history row, not resampled.
+fn cpi_persist_mode(args: &[String]) -> bool {
+    if !args.iter().any(|a| a == "-cpipersist") {
+        return false;
+    }
+    let opt = |flag: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let cpi_file = opt("-cpi").unwrap_or_else(|| usage("-cpipersist wants -cpi FILE"));
+    let o = TipsOpts {
+        set: opt("-set").unwrap_or_else(|| usage("-cpipersist wants -set")),
+        from: String::new(),
+        to: "9999".to_string(),
+        cpi_from: opt("-cpifrom").unwrap_or_default(),
+        cpi_to: opt("-cpito").unwrap_or_else(|| "9999".to_string()),
+        resamples: 0,
+        seed: 0,
+        joint: 0.0,
+        of: 0,
+    };
+    let (_, dlog, window) = o.cpi_changes(&cpi_file);
+    if args.iter().any(|a| a == "-header") {
+        println!("set\trow\tseries\twindow\tn\trecord");
+    }
+    println!(
+        "{}\t{}\t{}\t{window}\t{}\t{:.6}",
+        o.set,
+        ms::CPI_PERSISTENCE_ROW,
+        fred_name(&cpi_file),
+        dlog.len(),
+        ms::cpi_persistence(&dlog)
+    );
+    true
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one dispatch over the modes, read once, mirroring the Scala twin's main"
@@ -887,7 +1431,13 @@ fn main() {
     fast_alloc::reuse_freed_memory();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // a mode that reads its own arguments runs and is done
-    if basket_mode(&args) || sector_mode(&args) || timing_mode(&args) || volexit_mode(&args) {
+    if basket_mode(&args)
+        || sector_mode(&args)
+        || timing_mode(&args)
+        || volexit_mode(&args)
+        || cpi_persist_mode(&args)
+        || tips_mode(&args)
+    {
         return;
     }
     let o = parse_args(&args);
@@ -1125,7 +1675,7 @@ fn treasury_durations(text: &str, years: f64) -> std::collections::HashMap<Strin
     (1..obs.len())
         .map(|i| {
             let y = obs[i - 1].1;
-            let d = if y > 0.0 {
+            let d = if y != 0.0 {
                 (1.0 - ms::exp_det(-2.0 * years * ms::ln_det(1.0 + y / 2.0))) / y
             } else {
                 years

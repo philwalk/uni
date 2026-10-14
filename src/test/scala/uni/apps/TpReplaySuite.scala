@@ -19,8 +19,10 @@ class TpReplaySuite extends munit.FunSuite:
 
   test("a term-premium replay is the full simulation to the bit") {
     for name <- Vector("0.24.6-sp500", "0.24.6-nasdaq", "0.24.4-sp500-channels") do
-      val w = MarketSim.namedWorld(name).map(_._1).getOrElse(fail("recipe"))
-        .copy(bond10 = MarketSim.VerdictBond10, macroPanel = 1)
+      val base = MarketSim.namedWorld(name).map(_._1).getOrElse(fail("recipe"))
+      val w = base.copy(bond10 = MarketSim.VerdictBond10, macroPanel = 1,
+                        ext = base.ext.copy(tips = MarketSim.VerdictTips, spikeRate = 0.4, spikeSize = 0.03, cpiNoise = 0.006,
+                                            termVol = 0.007, brkVol = 0.004, brkNominal = 0.7))
       for seed <- Vector(MarketSim.DefaultSeed, 7L) do
         val (taped, tape) = MarketSim.simulateTaped(w, 12, seed)
         assertEquals(bits(taped), bits(MarketSim.simulate(w, 12, seed)), s"$name: taping changes nothing")
@@ -40,7 +42,8 @@ class TpReplaySuite extends munit.FunSuite:
       val a  = MarketSim.anchorsNamed(set)
       val w  = MarketSim.namedWorld(name).map(_._1).getOrElse(fail("recipe"))
       val vw = MarketSim.verdictWorld(a, w)
-      val (paths, years, seed) = (6, 70, 11L)
+      // as long as the longest bond-row record (the ex-post real rate's 71 years), or the reread refuses
+      val (paths, years, seed) = (6, 72, 11L)
       val taped = MarketSim.simPathsTaped(vw, paths, years, seed)
       val sims  = taped.map(_._1)
       val st    = MarketSim.measure(sims, years)

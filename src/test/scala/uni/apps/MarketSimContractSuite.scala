@@ -110,7 +110,7 @@ class MarketSimContractSuite extends FunSuite:
     // this replaces caught renames but not ADDITIONS: a new equity target would simply never
     // appear in the equity section, and a shorter table reads as a shorter list of concerns.
     val expected = (MarketSim.EquityTargets ++ MarketSim.BondTargets).sorted
-    val actual   = MarketSim.fitTargets(MarketSim.SP500Anchors).map(_._1).sorted
+    val actual   = MarketSim.fitTargetsAll(MarketSim.SP500Anchors).map(_._1).sorted
     assertEquals(actual, expected,
       "the fidelity targets and EquityTargets + BondTargets are no longer the same set. A target " +
       "was added, removed or renamed: classify it in one list (and only one) so the equity " +
@@ -135,10 +135,15 @@ class MarketSimContractSuite extends FunSuite:
     // Both are the silent-shrinkage failure the partition tests above guard against, on the ASSET
     // axis -- which only exists because 0.21.0 made the asset a parameter.
     // A set may grade fewer rows only by REPORTING them (`Anchors.reported`): the Nasdaq's
-    // equity-window multi-year rows, read against QQQ there.
-    val reference = MarketSim.fitTargets(MarketSim.SP500Anchors).map(_._1)
+    // equity-window multi-year rows, read against QQQ there; and its era rows (`Anchors.eraRows`),
+    // banded rows `reportedRows` carries instead.
+    val reference = MarketSim.fitTargetsAll(MarketSim.SP500Anchors).map(_._1)
     for a <- MarketSim.AnchorSets do
       val want = reference.filter(n => a.multiYear.isDefined || !MarketSim.MultiYearRows.contains(n))
+        .filterNot(a.eraRows.contains)
+      for n <- a.eraRows do
+        assert(a.recordBands.exists(_.name == n) && reference.contains(n),
+          s"[${a.name}] era row [$n] must be a banded fidelity target")
       assertEquals(MarketSim.fitTargets(a).map(_._1), want,
         s"anchor set [${a.name}] grades a different set of targets than SP500Anchors does. " +
         "Every set must cover the same rows, or the loss means something different depending " +
@@ -338,7 +343,7 @@ class MarketSimContractSuite extends FunSuite:
         else
           assert(r.historyBand.isEmpty, s"[${r.name}]")
           assertEquals(r.aggregation, "ensemble-extreme")
-          assertEquals(r.horizonYears, a.tailYears,
+          assertEquals(r.horizonYears, MarketSim.anchorHorizons(a)(r.name),
             s"[${r.name}]'s percentile must be read at its own anchor's horizon, which for the " +
             "tail is its own window and NOT the equity window")
       else
@@ -925,8 +930,10 @@ class MarketSimContractSuite extends FunSuite:
                          rangeDown = c.rangeDown, volIdio = c.volIdio, overnight = c.overnight,
                          divYield = c.divYield,
                          sectors = c.sectors, sectorIdio = c.sectorIdio, sectorDriftSd = c.sectorDriftSd,
-                         sectorDriftHalf = c.sectorDriftHalf, macroPanel = c.macroPanel, bond10 = d.bond10), d)
+                         sectorDriftHalf = c.sectorDriftHalf, macroPanel = c.macroPanel, bond10 = d.bond10,
+                         ext = vw.ext.copy(tips = d.ext.tips)), d)
     assertEquals(vw.bond10, MarketSim.VerdictBond10, "the verdict runs the 10-year leg")
+    assertEquals(vw.ext.tips, MarketSim.VerdictTips, "and the TIPS leg")
     assertEquals(MarketSim.ChannelDials.of(MarketSim.verdictWorld(MarketSim.NasdaqAnchors, d)),
                  MarketSim.NasdaqChannelDials)
     val w = d.copy(satBeta = 1.5, satIdio = 0.5, macroPanel = 1, macroNull = 1)
@@ -936,7 +943,8 @@ class MarketSimContractSuite extends FunSuite:
     // the channel recipe's verdict world is the recipe itself, but for the 10-year leg
     val vsp = MarketSim.verdictWorld(MarketSim.SP500Anchors, sp)
     assertEquals(vsp.bond10, MarketSim.VerdictBond10)
-    assertEquals(vsp.copy(bond10 = sp.bond10), sp)
+    assertEquals(vsp.ext.tips, MarketSim.VerdictTips)
+    assertEquals(vsp.copy(bond10 = sp.bond10, ext = vsp.ext.copy(tips = sp.ext.tips)), sp)
   }
 
   test("the boom regime is absent at zero and releases inherit that") {
@@ -1169,7 +1177,7 @@ class MarketSimContractSuite extends FunSuite:
     for (v, w) <- MarketSim.Releases do assert(w.sectors == 0, s"release $v")
     for (n, w, _) <- MarketSim.Recipes do
       assertEquals(w.sectors > 0,
-                   Set("0.24.5-sp500", "0.24.5-nasdaq-basket", "0.24.6-nasdaq-basket", "0.24.6-sp500").contains(n),
+                   Set("0.24.5-sp500", "0.24.5-nasdaq-basket", "0.24.6-nasdaq-basket", "0.24.6-sp500", "0.25.0-sp500").contains(n),
                    s"recipe $n")
     val chans = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, basket = 8, basketBeta = 1.56,
                                         basketSector = 1.1, basketIdio = 0.9, basketGaps = 6.0)

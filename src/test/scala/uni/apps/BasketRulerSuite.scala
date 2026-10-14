@@ -217,7 +217,7 @@ class BasketRulerSuite extends FunSuite:
     assert(on.price.sameElements(off.price) && on.fundamental.sameElements(off.fundamental), "the names are observational")
     for (v, w) <- MarketSim.Releases do assertEquals(w.basket, 0, s"release $v")
     for (n, w, _) <- MarketSim.Recipes
-        if !n.endsWith("basket") && !n.endsWith("channels") && !Set("0.24.5-sp500", "0.24.6-sp500").contains(n) do
+        if !n.endsWith("basket") && !n.endsWith("channels") && !Set("0.24.5-sp500", "0.24.6-sp500", "0.25.0-sp500").contains(n) do
       assertEquals(w.basket, 0, s"recipe $n")
     assertEquals(MarketSim.Defaults.basket, 0)
     val chans = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, rangeScale = 0.63, rangeDown = 0.09)

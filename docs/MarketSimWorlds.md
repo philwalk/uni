@@ -44,7 +44,7 @@ Two checks, with different jobs and different lifetimes. Use both.
 exit 0. Nothing to parse, so a caller can assert on it without depending on any other output:
 
 ```
-[ "$(market_sim.exe -version)" = "0.24.7" ] || { echo "wrong simulator" >&2; exit 1; }
+[ "$(market_sim.exe -version)" = "0.25.0" ] || { echo "wrong simulator" >&2; exit 1; }
 ```
 
 This catches the wrong binary, and it is the only check available *before* you spend the run. It
@@ -59,7 +59,7 @@ written as its bit pattern, so it sees a change the block's six significant digi
 twins print the same digest.
 
 ```
-market_sim.exe -atrelease 0.24.5-nasdaq -digest      # 5186010bf57e2f5a
+market_sim.exe -atrelease 0.24.5-nasdaq -digest      # fe3b17da8cbe6065
 ```
 
 **After the fact — the sidecar.** `-emit F` writes a sidecar beside the TSV — `F` with its
@@ -212,8 +212,8 @@ place, so a failed reinstall silently leaves the previous one there. Install to 
 invoke the absolute path, so the path itself carries the assertion:
 
 ```
-cargo install vastblue-uni@0.24.7 --root ~/.local/uni-0.24.7
-~/.local/uni-0.24.7/bin/market_sim.exe -version
+cargo install vastblue-uni@0.25.0 --root ~/.local/uni-0.25.0
+~/.local/uni-0.25.0/bin/market_sim.exe -version
 ```
 
 Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
@@ -300,9 +300,10 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 `worstRow` are that objective's readings. Every member of the three older sets starts at fair
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
-was searched under it. **The 0.24.6 sets** are the two to draw from now: `0.24.6-nasdaq.json` and
-`0.24.6-sp500.json`, 30 members each, member 0 the recipe itself (the 0.24.5 sets, which ran low on
-return per vol, stay as published). The members sample what the record leaves uncertain: one
+was searched under it. **The 0.25.0 sets** are the two to draw from now: `0.25.0-nasdaq.json` and
+`0.25.0-sp500.json`, 30 members each, member 0 the recipe itself, built as the 0.24.6 sets were and
+scored against them under the release rule (the CHANGELOG has the numbers); the 0.24.6 sets (and the
+0.24.5 sets, which ran low on return per vol) stay as published. The members sample what the record leaves uncertain: one
 history pins the long-run drift, the term premium and the inflation regime only to its own sampling
 width, and a set whose members shared one value would tell a consumer it is known exactly. Members
 1-29 are drawn from a Markov-chain sample over every searched dial under the membership rule and the
@@ -1227,8 +1228,17 @@ with it.
 | `-easing` | **cap** on the policy rate cut under equity stress, in rate points — an anchor, re-solved to the BOTTOM of the real easing-cycle range (2007-08 ran 5.1 points): higher fails the shipped duration's depth band, lower drops the `-crossasset` short rung through its floor | 0.052 |
 | `-unwind` | how fast that cut is withdrawn, per year (0.35 is a ~2-year half-life) | 0.35 |
 | `-refuge` | flight-to-quality bid into the bond, scaled by its duration | 0.115 |
-| `-bond10` | THE 10-YEAR LEG: a second bond at this duration in years, on the same rate, credit and stress state as the bond and every flow the bond takes (carry and the rate move, the term premium, news, the slow repricing, the refuge bid and margin selling), each at the leg's duration over 13.5, its noise on its own stream, so every other series is bit-identical with it on or off. `-emit` gains `bond10`. Graded against FRED's DGS10 read as a par bond, 1962–2026 (`bond10-2026-10-05.tsv`): `bond10 vol per duration` (each session's return over the duration it was bought at; the leg's over its own), `bond10 depth vs vol`, and `bond10 excess return pts/yr` (the log return over the short rate, against DGS10 over DFF). The verdict runs the leg at duration 8 when the caller leaves it off; the vol row does not depend on that choice | 0 (off) |
+| `-bond10` | THE 10-YEAR LEG: a second bond at this duration in years, on the same rate, credit and stress state as the bond and every flow the bond takes (carry and the rate move, the term premium, news, the slow repricing, the refuge bid and margin selling), each at the leg's duration over 13.5, its noise on its own stream, so every other series is bit-identical with it on or off. `-emit` gains `bond10`. Graded against FRED's DGS10 read as a par bond over the set's rate window, 1962–2026 for the S&P set and 1999–2026 for the Nasdaq set (`bond10-2026-10-05.tsv`): `bond10 vol per duration` (each session's return over the duration it was bought at; the leg's over its own), `bond10 depth vs vol`, and `bond10 excess return pts/yr` (the log return over the short rate, against DGS10 over DFF). The verdict runs the leg at duration 8 when the caller leaves it off; the vol row does not depend on that choice | 0 (off) |
+| `-tips` | THE TIPS LEG: a third bond at this duration in years, the nominal leg's state and flows at its scale on its own stream (carry, the news and slow legs, margin selling; no refuge bid, since the record's TIPS fall with equities in a flight to quality), marked to the nominal leg's yield LESS the market's ten-year inflation expectation (the market's own estimates of the regime's pressure and the spike's pulse, averaged over ten years at their decay speeds, the 2.5% base beyond: the market does not see the states, it filters them from the price level's noisy session changes with the steady-state Kalman filter of the model's own process, whose gains the inflation dials set and nothing else) and its principal indexed to the model's CPI session by session (the consumer applies its own reference lag). `-emit` gains `tips10` (the price), `realYield10` (the yield the leg is marked to, percent), `expInfl10` (the ten-year breakeven, percent: the market's expectation plus the breakeven premium, the leg's yield plus it being the nominal leg's by construction) and `realRate` (the policy rate less the one-year expectation, percent). Graded against a par TIPS built from FRED's DFII10 and CPI-U beside the DGS10 par bond and the market, 2003–2026 (`tips-2026-10-11.tsv`): `real yield monthly change sd pp`, `breakeven monthly change sd pp`, `breakeven own change sd pp` (the change's residual on the year-over-year inflation change: the premium's own move), `breakeven vs yield corr monthly` (the change's correlation with the nominal yield's, 0.51: half of the breakeven's move is expected-inflation news the nominal yield carries, `-brknominal`), `tips vol per duration`, `tips depth vs vol`, `tips vs bond10 corr`, `tips vs equity corr monthly`, and `real rate ex post %` / `real rate ex post sd pp` against DFF less the next year's CPI-U over the set's rate window (1954–2025 for the S&P set, 1999–2025 for the Nasdaq set, whose four CPI rows and three `bond10` rows read the same window: a 2.1% policy rate under 1954–2026's 3.5% inflation is a real rate no dial holds at the 71-year record's +1.1, and a ten-year bond's depth against its volatility is the era's carry, 0.84 over 1999–2026 against 0.54 over 1962–2026). The TIPS era's levels (a real yield of 1.0, a breakeven of 2.1, the sd of each over one secular hump) are reported beside the model's, never graded: the model's rates anchor on 1954–2026, whose real yield is the century's (about 2.5), and a 2003–2026 level is that era's. The year-over-year rate's persistence at twelve months (`cpi yoy persistence 12m`, `cpipersist-2026-10-12.tsv`) is graded per set as a single-history row, the record's percentile among the world's histories of the window's length (0.73 on 1954–2026, 0.26 on 1999–2026); the S&P set reports the breakeven's three rows and `tips vs bond10 corr` instead of grading them (its era rows), since its inflation persistence moves the breakeven with the prints as the TIPS era's market did not, and the Nasdaq set grades them. The verdict runs the leg at duration 8 when the caller leaves it off | 0 (off) |
+| `-termvol` | THE TERM STATE: the sd per sqrt-year, decimal, of the innovation of the premium the two ten-year legs' yield carries over the market's expected average short rate. At 0 both legs (`-bond10`, `-tips`) are marked to the overnight rate, as every release before 0.25.0 marked them, bit-identical. Above 0 they are marked to a ten-year yield: the expectation `macroYield10` uses, on the market's own estimates (the policy rate's long-run mean as the market has seen it, the regime and the spike, accommodation and the rate's gap at their decay speeds, less the panel's premium constant; anchored on the neutral rate instead, which the policy sits below on average, the yield carried a 1.3-point premium and `bond10 excess return pts/yr` read 2.1 against 0.78) plus this premium, an OU state reverting at 0.2 a year on its own stream. The record's ten-year real yield moves 0.22 pp a month as a random walk within the year and reverts over years, which an overnight rate's noise cannot give a ten-year yield (`real yield monthly change sd pp` read 0.39 off the overnight marking); 0.009 reads 0.27. The two legs take one Treasury session draw, each at its own scale (`tips vs bond10 corr`). The long bond keeps the short rate | 0 (off) |
+| `-brkvol` | THE BREAKEVEN PREMIUM: the sd per sqrt-year, decimal, of the innovation of the premium the market's ten-year breakeven carries over its inflation expectation, an OU state reverting at 1.4 a year (a half-life of six months: the record's breakeven level has a 12-month persistence of 0.24) on its own stream. At 0 the breakeven is the expectation alone, bit-identical. Above 0 the TIPS leg is marked to the nominal yield less the breakeven, so the premium moves the TIPS leg, `realYield10` and `expInfl10` and nothing else; the nominal leg and the one-year expectation behind `realRate` keep nothing of it. The record's breakeven moves 0.167 pp a month, of which 0.159 is its own: the change's slope on the year-over-year inflation change is 0.11 and their correlation 0.30, so a breakeven that is the expectation alone, however the inflation dials sit, moves with the prints and not on its own (`breakeven own change sd pp`); `-brknominal` is the share of the state priced into the nominal yield | 0 (off) |
+| `-brknominal` | THE NOMINAL SHARE of the breakeven premium: the share of `-brkvol`'s state priced into the ten-year yield both legs are marked to, as expected-inflation news the real yield does not carry; the rest is a premium the real yield carries. The record's breakeven change correlates 0.51 with the nominal yield's and −0.17 with the real yield's (`breakeven vs yield corr monthly`), where a premium the real yield carries whole reads about 0.15 and −0.5. At 0 the whole state is the real yield's, bit-identical; at 1 the real yield keeps none of it. Only with `-brkvol` above 0 | 0 |
 | `-termpremium` | THE TERM PREMIUM, points a year per year of duration: every bond leg carries the short rate plus this times its duration; without it a bond earns the short rate and climbs out of its drawdowns too slowly for its volatility. 0.10 puts the 10-year leg's log return over the short rate at the record's 0.78 a year (DGS10 over DFF, 1962–2026, whose start and end near a 4% yield let realised excess estimate the average premium). The record pins it only to about ±0.11, so the sets sample it (search range 0–0.30) rather than fix it | 0.10 (0 in every frozen world) |
+| `-cpinoise` | THE PRICE LEVEL'S NOISE: the sd of a year of log CPI changes beyond the regime's pressure, on its own stream, so every other series is bit-identical with it on or off. Without it the CPI is deterministic from the pressure and an indexation lag reads nothing. Graded by `cpi monthly sd pp` against CPI-U 1954–2026 (`tips-2026-10-11.tsv`), whose 0.31% a month is 1.07 a year | 0 (off) |
+| `-deflprob` | THE DEFLATION SIDE: at a regime switch that draws no inflation regime, the chance of a deflation regime instead, its target a half-normal of `-deflsize` below zero under the inflation side's cap; policy then chases a target below its floor and holds at zero. No draw is consumed at 0. Graded by `cpi deflation share % (century)`, the share of months whose year-over-year rate is below zero on CPI-U from 1913 (12.7%: 1921–23, 1926–29, 1930–33, 1938–39, 1949–50, 1954–55, 2009, 2015) | 0 (off) |
+| `-deflsize` | the deflation regimes' size, in pressure units: the record's troughs are mostly one to four points below zero where the inflation regimes' peaks are five to twenty above, so the two sides have their own scales | 0 |
+| `-spikerate` | THE INFLATION SPIKES: Poisson arrivals a year, on their own stream, of a pressure pulse a half-normal of `-spikesize` high that decays to a third in half a year. The short sharp inflations the slow regime cannot make (1951, 2008, 2021–22) and the sharp rate rises and bond sell-off runs that follow them. Graded by `cpi 4%+ spells per century` (the century's 4%+ spells start 19 times a hundred years, median length five months; the regime alone starts one to four) and, with the regime, by `cpi yoy sd pp` and `cpi 4%+ share %` | 0 (off) |
+| `-spikesize` | the spikes' size, in pressure units: 0.04 is four points of inflation at the peak | 0 |
 | `-refugedays` | half-life in sessions of the settled stress the refuge bid reads — excludes the current session, which kills the same-day stock-bond coupling while the crisis rally keeps the level; 0 reads live stress | 1 |
 | `-satbeta` | the satellite equity leg (the Nasdaq to the default world's S&P): beta on the primary's OBSERVED return, plus idio noise riding the primary's full vol state — which is what keeps the pair's correlation state-flat, as the record's is. When on, `-emit` adds a `logSat` column. Anchored 1.2 on SPY–QQQ 1999–2026; NOT searchable, like `-duration` | 0 (off) |
 | `-satidio` | the leg's idiosyncratic vol as a FRACTION of the primary's realized volatility, riding the primary's vol state; the anchored 0.77 lands correlation 0.853 and vol ratio 1.41 on the default world, on the `-anchors nasdaq` recipe, and on a kurtosis-61 world alike | 0 |
@@ -2289,6 +2299,20 @@ and sits 0.51 closer to the record in summed distance a seed (t −5.2); `0.24.6
 rows a seed against 1.50 (better on 13 seeds, worse on 2; sign test p 0.007), the coupling on 21
 seeds against 17 and the 10-year rows on one against 17. Each is member 0 of its `0.24.6` set, and
 the worlds to pin in place of the 0.24.5 recipes.
+
+**`0.25.0-sp500` and `0.25.0-nasdaq`** are the 0.24.6 recipes re-solved on the real side (the
+inflation form, the term state, the breakeven premium and every other dial searched under each set's
+own conventions, the outgoing recipe the no-regression reference), each the closing archive's best
+member that passes every class on eight fresh seeds at 200 × 100. The S&P's holds the seven dials read
+off the record where 0.24.6 held them and with them `brkVol` 0.0055 and `brkNominal` 0.68, read off the
+TIPS era's record, since the set reports the breakeven rows; no row misses on any seed. The Nasdaq's
+grades the breakeven rows on its own era, so the premium and its share were free (0.0020 and 0.62);
+no row misses on more than one seed, and the century's deflation share, which 0.24.6 never held, is
+inside. The reads are in the CHANGELOG. Each is member 0 of its `0.25.0` set, and the worlds to pin in
+place of the 0.24.6 recipes. The sets are Markov-chain samples of every searched dial under the
+membership rule and the record's return per vol, as the 0.24.6 sets were, and both score significantly
+better than them under the release rule (S&P 46.4 → 32.9, Nasdaq 59.8 → 39.9 summed CRPS in the record's
+yardstick).
 
 ## The deleveraging — `-delevrate`
 

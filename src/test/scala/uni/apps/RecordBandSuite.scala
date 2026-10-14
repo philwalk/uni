@@ -17,7 +17,8 @@ class RecordBandSuite extends FunSuite:
     * the same columns) without their header */
   private lazy val lines: Vector[String] =
     fixtureLines("recordbands-2026-09-26.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
-      fixtureLines("volexit-2026-10-03.tsv").drop(1) ++ fixtureLines("bond10-2026-10-05.tsv").drop(1)
+      fixtureLines("volexit-2026-10-03.tsv").drop(1) ++ fixtureLines("bond10-2026-10-05.tsv").drop(1) ++
+      fixtureLines("tips-2026-10-11.tsv").drop(1)
 
   private def row(set: String, name: String): Vector[Double] =
     lines.map(_.split('\t').toVector).find(r => r(0) == set && r(1) == name)
@@ -53,8 +54,9 @@ class RecordBandSuite extends FunSuite:
     for (set, a) <- sets do
       assertEquals(a.recordBands.map(_.name),
         MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows ++ MarketSim.RateAfterRows ++
-          MarketSim.VolExitRows ++ MarketSim.Bond10BandRows,
-        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows, Bond10BandRows")
+          MarketSim.VolExitRows ++ MarketSim.Bond10BandRows ++ MarketSim.CpiBandRows ++ MarketSim.CpiCenturyRows ++
+          MarketSim.RealYieldBandRows ++ MarketSim.BreakevenBandRows ++ MarketSim.TipsBandRows ++ MarketSim.RealRateBandRows,
+        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows, Bond10BandRows, CpiBandRows, CpiCenturyRows, RealYieldBandRows, BreakevenBandRows, TipsBandRows, RealRateBandRows")
       for b <- a.recordBands do
         val r = row(set, b.name)
         assertEquals(b.record, r.head, s"$set ${b.name}: record")
@@ -408,8 +410,12 @@ class RecordBandSuite extends FunSuite:
       val r = lines.map(_.split('\t').toVector).find(r => r(0) == set && r(1) == b.name)
         .getOrElse(fail(s"fixture row [$set ${b.name}] missing"))
       val years = r(3).split("\\.\\.").map(_.take(4).toInt)
-      assertEquals(MarketSim.recordBandYears(a, b.name), years(1) - years(0),
-        s"$set ${b.name}: read over ${r(3)}")
+      if MarketSim.CpiCenturyRows.contains(b.name) then
+        // rates per unit time read on the paths' own length: the century is longer than any path
+        assert(MarketSim.recordBandYears(a, b.name) <= years(1) - years(0), s"$set ${b.name}: read within ${r(3)}")
+      else
+        assertEquals(MarketSim.recordBandYears(a, b.name), years(1) - years(0),
+          s"$set ${b.name}: read over ${r(3)}")
   }
 
   test("a row's distance from its record is its band sd or its fitness term") {
@@ -458,8 +464,8 @@ class RecordBandSuite extends FunSuite:
       for b <- a.recordBands do
         val (lo, hi) = b.band
         assert(hi > lo, s"$set ${b.name}: a band with no width")
-        // a band row with no reading would cost four sd on every candidate
-        assert(targets.contains(b.name), s"$set ${b.name}: no reading")
+        // a band row with no reading would cost four sd on every candidate; an era row is reported
+        assert(targets.contains(b.name) || a.eraRows.contains(b.name), s"$set ${b.name}: no reading")
       val b = a.recordBands(3)
       def term(x: Double): Double = MarketSim.recordBandTerms(a, Map(b.name -> x))(3)._2
       // past the joint band's edge, in the row's own p5-p95 sd
@@ -521,6 +527,21 @@ class RecordBandSuite extends FunSuite:
     val fit = MarketSim.fitTargets(MarketSim.NasdaqAnchors).map(_._1).toSet
     assert(MarketSim.MultiYearRows.forall(n => !fit.contains(n)), "the Nasdaq's QQQ window is reported, not graded")
     assert(MarketSim.MultiYearLongRows.forall(fit.contains))
+  }
+
+  // THE CPI PERSISTENCE ROW's anchors are `cpipersist-2026-10-12.tsv`'s records, one per set, read
+  // on the world's histories of the set's CPI window
+  test("the CPI persistence anchors are the fixture's records") {
+    val rows = Paths.get("test-data/equity-anchors/cpipersist-2026-10-12.tsv").lines.toVector
+      .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set\t"))
+      .map(_.split('\t').toVector)
+    assertEquals(rows.length, 2, "one row per set")
+    for (set, a) <- sets do
+      val f = rows.find(f => f(0) == set && f(1) == MarketSim.CpiPersistenceRow)
+        .getOrElse(fail(s"fixture row [$set] missing"))
+      assertEqualsDouble(a.cpiPersistence, f(5).toDouble, 1e-6, s"$set against the record's")
+      assertEquals(MarketSim.recordBandYears(a, MarketSim.CpiPersistenceRow), a.cpiYears)
+      assert(MarketSim.ExtremeTargets.contains(MarketSim.CpiPersistenceRow))
   }
 
   // THE TIMING ROWS' anchors are the fixture's records; a hand series reads as stated; the joint
