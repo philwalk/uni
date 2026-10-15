@@ -81,6 +81,13 @@ object RecordBands {
     "              [-cpifrom -cpito] for -set, the rows of `cpipersist-2026-10-12.tsv`: the record's",
     "              own reading, no resampling (the statistic straddles a block join in every pair),",
     "              graded among the world's single histories of the window's length [-header]",
+    "-stockbond    THE STOCK-BOND ROWS (`StockBondBandRows`, `CpiNewsRow`) for -set, the rows of",
+    "              `stockbond-2026-10-14.tsv`: -nominal DGS10 as a par bond and -french <daily factors>",
+    "              over 21-session months of the sessions both trade in [-from -to], each month placed",
+    "              by -cpi's year-over-year rate of the calendar month before its first session; and",
+    "              the CPI news row over [-cpifrom -cpito]; two groups with their own joint bands at the",
+    "              mode's share of -of (default 3) [-resamples -seed -joint -header]; the reported rows",
+    "              (`StockBondReportedRows`) go to stderr",
     "-rateafter    THE CONDITIONAL RATE ROWS (`RateAfterRows`): the -fred rate on the equity window's",
     "              session dates, the two years after each 20% decline's trough; the record by",
     "              `rateAfterOfReturns`, its paired block resamples, their own joint band",
@@ -428,6 +435,84 @@ object RecordBands {
   def rowList(names: Vector[String], values: Vector[Double]): String =
     names.zip(values).map((n, v) => f"$n $v%.4f").mkString(", ")
 
+  /** `YYYY-MM` less one month. */
+  def monthBefore(key: String): String =
+    val (y, m) = (key.take(4).toInt, key.slice(5, 7).toInt)
+    if m == 1 then f"${y - 1}%04d-12" else f"$y%04d-${m - 1}%02d"
+
+  /** The year-over-year CPI rate the market had seen at each of `months` 21-session months' first
+    * session (`dates(21k)`): the CPI file's rate of the calendar month before, in simple percent,
+    * or the last published month before that (October 2025 was never published). */
+  def inflationSeen(cpiFile: String, dates: Vector[String], months: Int): Array[Double] =
+    val level = fredSeries(cpiFile).map((d, v) => (d.take(7), v)).toMap
+    val yoyByMonth = level.flatMap { (k, v) =>
+      val prior = f"${k.take(4).toInt - 1}%04d-${k.slice(5, 7)}"
+      level.get(prior).map(p => (k, (v / p - 1.0) * 100.0))
+    }
+    Array.tabulate(months) { k =>
+      val first = dates(k * 21)
+      var m = monthBefore(first.take(7))
+      var found: Option[Double] = None
+      var tries = 0
+      while found.isEmpty && tries < 3 do
+        found = yoyByMonth.get(m)
+        m = monthBefore(m)
+        tries += 1
+      found.getOrElse(usage(s"$cpiFile: no year-over-year rate before ${first.take(7)}"))
+    }
+
+  /** `-stockbond`: THE STOCK-BOND ROWS (`StockBondBandRows`, `CpiNewsRow`; `stockbond-2026-10-14.tsv`)
+    * for -set: the DGS10 par bond (-nominal) and Ken French's market (-french) over 21-session months
+    * of the sessions both trade in [-from, -to], each month placed by -cpi's year-over-year rate of
+    * the calendar month before its first session; and the CPI news row over [-cpifrom, -cpito].
+    * The reported rows (`StockBondReportedRows`) go to stderr. */
+  def stockBondMode(args: Array[String]): Unit =
+    def opt(flag: String): Option[String] =
+      val i = args.indexOf(flag)
+      if i < 0 then None else args.lift(i + 1)
+    def need(flag: String): String = opt(flag).getOrElse(usage(s"-stockbond wants $flag FILE"))
+    def num[T](flag: String, default: T, parse: String => Option[T], msg: String): T =
+      opt(flag).fold(default)(v => parse(v).getOrElse(usage(s"$flag wants $msg")))
+    val (nomFile, frenchFile, cpiFile) = (need("-nominal"), need("-french"), need("-cpi"))
+    val set       = opt("-set").getOrElse(usage("-stockbond wants -set"))
+    val from      = opt("-from").getOrElse("")
+    val to        = opt("-to").getOrElse("9999")
+    val cpiFrom   = opt("-cpifrom").getOrElse("")
+    val cpiTo     = opt("-cpito").getOrElse("9999")
+    val resamples = num("-resamples", 20000, _.toIntOption, "an integer")
+    val seed      = num("-seed", 20260918L, _.toLongOption, "a non-negative integer")
+    val joint     = num("-joint", 0.10, _.toDoubleOption, "a share in (0, 1)")
+    val of        = num("-of", 3, _.toIntOption, "a row count")
+    def alpha(k: Int): Double = joint * k / of
+    if args.contains("-header") then
+      println("set\trow\tseries\twindow\tn\tresamples\trecord\t" +
+              MarketSim.RecordBandPcts.map(p => s"p$p").mkString("\t") + "\tjointC\tjointLo\tjointHi")
+    val nomDaily = readTreasury(nomFile.asPath.lines.toVector, 10.0)
+    val eqDaily  = readFrench(frenchFile).map((d, v) => (d, MarketSim.lnDet(1.0 + v / 100.0)))
+    val (dates, rets) = joinReturns(Vector(nomDaily, eqDaily), from, to)
+    if dates.length < 2 * 252 then usage(s"$nomFile: ${dates.length} common sessions in the window")
+    val bM   = MarketSim.monthlySums(rets(0))
+    val eqM  = MarketSim.monthlySums(rets(1))
+    val seen = inflationSeen(cpiFile, dates, bM.length)
+    val window   = s"${dates.head}..${dates.last}"
+    val record   = MarketSim.stockBondReadings(eqM, bM, seen)
+    val reported = MarketSim.stockBondReported(eqM, bM)
+    eprintln(s"${fredName(nomFile)} par bond and the market: ${dates.length} common sessions $window, ${bM.length} months; " +
+             s"${rowList(MarketSim.StockBondBandRows, record)}; " +
+             f"reported ${MarketSim.StockBondReportedRows(0)}%s ${reported(0)}%.6f, ${MarketSim.StockBondReportedRows(1)}%s ${reported(1)}%.6f; " +
+             s"$resamples resamples, seed $seed")
+    printTipsGroup(set, MarketSim.StockBondBandRows, s"${fredName(nomFile)} par bond, French market", window, bM.length,
+                   record, MarketSim.stockBondResamples(eqM, bM, seen, resamples, seed), alpha(2))
+    // the CPI news row over the CPI window
+    val cpi = fredSeries(cpiFile).filter((d, _) => d >= cpiFrom && d <= cpiTo)
+    if cpi.length < 25 then usage(s"$cpiFile: ${cpi.length} months in the CPI window")
+    val dlog      = Array.tabulate(cpi.length - 1)(i => MarketSim.lnDet(cpi(i + 1)._2 / cpi(i)._2))
+    val cpiWindow = s"${cpi.head._1}..${cpi.last._1}"
+    val news      = MarketSim.cpiNewsReading(dlog)
+    eprintln(f"${fredName(cpiFile)}%s: ${dlog.length}%d monthly changes $cpiWindow%s; ${MarketSim.CpiNewsRow}%s $news%.4f")
+    printTipsGroup(set, Vector(MarketSim.CpiNewsRow), fredName(cpiFile), cpiWindow, dlog.length, Vector(news),
+                   MarketSim.cpiNewsResamples(dlog, resamples, seed), alpha(1))
+
   /** `-cpipersist`: THE CPI PERSISTENCE ROW (`CpiPersistenceRow`) of -cpi over the CPI window for
     * -set, the record's own reading: a single-history row, not resampled. */
   def cpiPersistMode(args: Array[String]): Unit =
@@ -572,6 +657,9 @@ object RecordBands {
   def main(args: Array[String]): Unit = {
     if args.contains("-cpipersist") then
       cpiPersistMode(args)
+      return
+    if args.contains("-stockbond") then
+      stockBondMode(args)
       return
     if args.contains("-tips") then
       tipsMode(args)

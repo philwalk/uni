@@ -84,7 +84,7 @@ class Bond10Suite extends FunSuite:
       assert(MarketSim.realRowsOfPath(off)._1.forall(_.isNaN), "no leg, no rows")
   }
 
-  /** THE TERM STATE (item 60; `WorldExt.termVol`) re-marks the two ten-year legs and nothing else;
+  /** THE TERM STATE (item 60; `WorldExt.termVol`) re-marks the three bond legs and nothing else (the long bond with item 61, marked to the same yield);
     * the legs' yield then no longer carries the overnight rate's session noise.  The Rust twin
     * carries the same check (`the_term_state_moves_the_two_legs_and_nothing_else`). */
   test("the term state moves the two legs and nothing else") {
@@ -92,8 +92,10 @@ class Bond10Suite extends FunSuite:
     val w    = base.copy(bond10 = MarketSim.VerdictBond10, ext = base.ext.copy(tips = MarketSim.VerdictTips))
     val off  = MarketSim.simulate(w, 5, MarketSim.DefaultSeed)
     val on   = MarketSim.simulate(w.copy(ext = w.ext.copy(termVol = 0.007)), 5, MarketSim.DefaultSeed)
-    assert(off.price.sameElements(on.price) && off.bond.sameElements(on.bond) && off.rate.sameElements(on.rate))
-    assert(off.cpi.sameElements(on.cpi) && off.bliq.sameElements(on.bliq) && off.inflPress.sameElements(on.inflPress))
+    assert(off.price.sameElements(on.price) && off.rate.sameElements(on.rate))
+    assert(!off.bond.sameElements(on.bond), "the long bond is marked to the same yield")
+    assert(off.cpi.sameElements(on.cpi) && off.inflPress.sameElements(on.inflPress))
+    assert(!off.bliq.sameElements(on.bliq), "the long bond's market moves with its yield")
     assert(off.expInfl10.sameElements(on.expInfl10) && off.realRate.sameElements(on.realRate))
     assert(!off.bond10.sameElements(on.bond10) && !off.tips10.sameElements(on.tips10) && !off.realYield10.sameElements(on.realYield10))
     def dm(v: Array[Double]): Double =
@@ -128,7 +130,7 @@ class Bond10Suite extends FunSuite:
     val none    = MarketSim.simulate(w, 5, MarketSim.DefaultSeed)
     val real    = MarketSim.simulate(w.copy(ext = w.ext.copy(brkVol = 0.005)), 5, MarketSim.DefaultSeed)
     val nominal = MarketSim.simulate(w.copy(ext = w.ext.copy(brkVol = 0.005, brkNominal = 1.0)), 5, MarketSim.DefaultSeed)
-    assert(none.price.sameElements(nominal.price) && none.bond.sameElements(nominal.bond))
+    assert(none.price.sameElements(nominal.price) && !none.bond.sameElements(nominal.bond))
     assert(none.rate.sameElements(nominal.rate) && none.cpi.sameElements(nominal.cpi))
     assert(real.bond10.sameElements(none.bond10) && !nominal.bond10.sameElements(none.bond10))
     assert(nominal.expInfl10.sameElements(real.expInfl10), "the breakeven is the same state")

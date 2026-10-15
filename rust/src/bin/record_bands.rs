@@ -119,7 +119,14 @@ const USAGE: &str =
   -cpipersist   THE CPI PERSISTENCE ROW (`CPI_PERSISTENCE_ROW`, `cpi_persistence`) of -cpi over
                 [-cpifrom -cpito] for -set, the rows of `cpipersist-2026-10-12.tsv`: the record's
                 own reading, no resampling (the statistic straddles a block join in every pair),
-                graded among the world's single histories of the window's length [-header]";
+                graded among the world's single histories of the window's length [-header]
+  -stockbond    THE STOCK-BOND ROWS (`STOCK_BOND_BAND_ROWS`, `CPI_NEWS_ROW`) for -set, the rows of
+                `stockbond-2026-10-14.tsv`: -nominal DGS10 as a par bond and -french <daily factors>
+                over 21-session months of the sessions both trade in [-from -to], each month placed
+                by -cpi's year-over-year rate of the calendar month before its first session; and
+                the CPI news row over [-cpifrom -cpito]; two groups with their own joint bands at the
+                mode's share of -of (default 3) [-resamples -seed -joint -header]; the reported rows
+                (`STOCK_BOND_REPORTED_ROWS`) go to stderr";
 
 fn usage(msg: &str) -> ! {
     if !msg.is_empty() {
@@ -1384,6 +1391,153 @@ fn sector_mode(args: &[String]) -> bool {
     true
 }
 
+/// `YYYY-MM` less one month.
+fn month_before(key: &str) -> String {
+    let y: usize = key[..4].parse().unwrap_or(0);
+    let m: usize = key[5..7].parse().unwrap_or(1);
+    if m == 1 {
+        format!("{:04}-12", y - 1)
+    } else {
+        format!("{y:04}-{:02}", m - 1)
+    }
+}
+
+/// The year-over-year CPI rate the market had seen at each of `months` 21-session months' first
+/// session (`dates[21k]`): -cpi's rate of the calendar month before, in simple percent, or the
+/// last published month before that (October 2025 was never published).
+fn inflation_seen(cpi_file: &str, dates: &[String], months: usize) -> Vec<f64> {
+    let level: std::collections::HashMap<String, f64> = fred_series(cpi_file)
+        .into_iter()
+        .map(|(d, v)| (d[..7].to_string(), v))
+        .collect();
+    let yoy_by_month: std::collections::HashMap<String, f64> = level
+        .iter()
+        .filter_map(|(k, v)| {
+            let y: usize = k[..4].parse().ok()?;
+            let prior = format!("{:04}-{}", y - 1, &k[5..7]);
+            level
+                .get(&prior)
+                .map(|p| (k.clone(), (v / p - 1.0) * 100.0))
+        })
+        .collect();
+    (0..months)
+        .map(|k| {
+            let first = &dates[k * 21];
+            let mut m = month_before(&first[..7]);
+            for _ in 0..3 {
+                if let Some(v) = yoy_by_month.get(&m) {
+                    return *v;
+                }
+                m = month_before(&m);
+            }
+            usage(&format!(
+                "{cpi_file}: no year-over-year rate before {}",
+                &first[..7]
+            ))
+        })
+        .collect()
+}
+
+/// `-stockbond`: THE STOCK-BOND ROWS (`STOCK_BOND_BAND_ROWS`, `CPI_NEWS_ROW`;
+/// `stockbond-2026-10-14.tsv`) for -set: the DGS10 par bond (-nominal) and Ken French's market
+/// (-french) over 21-session months of the sessions both trade in [-from, -to], each month placed by
+/// -cpi's year-over-year rate of the calendar month before its first session; and the CPI news row
+/// over [-cpifrom, -cpito]. The reported rows (`STOCK_BOND_REPORTED_ROWS`) go to stderr.
+fn stock_bond_mode(args: &[String]) -> bool {
+    if !args.iter().any(|a| a == "-stockbond") {
+        return false;
+    }
+    let opt = |flag: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let need =
+        |flag: &str| opt(flag).unwrap_or_else(|| usage(&format!("-stockbond wants {flag} FILE")));
+    let (nom_file, french_file, cpi_file) = (need("-nominal"), need("-french"), need("-cpi"));
+    let o = TipsOpts {
+        set: opt("-set").unwrap_or_else(|| usage("-stockbond wants -set")),
+        from: opt("-from").unwrap_or_default(),
+        to: opt("-to").unwrap_or_else(|| "9999".to_string()),
+        cpi_from: opt("-cpifrom").unwrap_or_default(),
+        cpi_to: opt("-cpito").unwrap_or_else(|| "9999".to_string()),
+        resamples: opt("-resamples").map_or(20_000, |v| num(&v, "-resamples wants an integer")),
+        seed: opt("-seed").map_or(20_260_918, |v| {
+            num(&v, "-seed wants a non-negative integer")
+        }),
+        joint: opt("-joint").map_or(0.10, |v| num(&v, "-joint wants a share in (0, 1)")),
+        of: opt("-of").map_or(3, |v| num(&v, "-of wants a row count")),
+    };
+    if args.iter().any(|a| a == "-header") {
+        let pcts: Vec<String> = ms::RECORD_BAND_PCTS
+            .iter()
+            .map(|p| format!("p{p}"))
+            .collect();
+        println!(
+            "set\trow\tseries\twindow\tn\tresamples\trecord\t{}\tjointC\tjointLo\tjointHi",
+            pcts.join("\t")
+        );
+    }
+    let nom_text =
+        std::fs::read_to_string(&nom_file).unwrap_or_else(|e| usage(&format!("{nom_file}: {e}")));
+    let nom_daily = read_treasury(&nom_text, 10.0);
+    let eq_daily: Vec<(String, f64)> = read_french(&french_file)
+        .into_iter()
+        .map(|(d, v)| (d, ms::ln_det(1.0 + v / 100.0)))
+        .collect();
+    let (dates, rets) = join_returns(&[&nom_daily, &eq_daily], &o.from, &o.to);
+    if dates.len() < 2 * 252 {
+        usage(&format!(
+            "{nom_file}: {} common sessions in the window",
+            dates.len()
+        ));
+    }
+    let b_m = ms::monthly_sums(&rets[0]);
+    let eq_m = ms::monthly_sums(&rets[1]);
+    let seen = inflation_seen(&cpi_file, &dates, b_m.len());
+    let window = format!("{}..{}", dates[0], dates[dates.len() - 1]);
+    let record = ms::stock_bond_readings(&eq_m, &b_m, &seen);
+    let reported = ms::stock_bond_reported(&eq_m, &b_m);
+    eprintln!(
+        "{} par bond and the market: {} common sessions {window}, {} months; {}; reported {} {:.6}, {} {:.6}; {} resamples, seed {}",
+        fred_name(&nom_file),
+        dates.len(),
+        b_m.len(),
+        row_list(&ms::STOCK_BOND_BAND_ROWS, &record),
+        ms::STOCK_BOND_REPORTED_ROWS[0],
+        reported[0],
+        ms::STOCK_BOND_REPORTED_ROWS[1],
+        reported[1],
+        o.resamples,
+        o.seed
+    );
+    o.print_group(&TipsGroup {
+        names: &ms::STOCK_BOND_BAND_ROWS,
+        series: format!("{} par bond, French market", fred_name(&nom_file)),
+        window,
+        n: b_m.len(),
+        record,
+        reads: ms::stock_bond_resamples(&eq_m, &b_m, &seen, o.resamples, o.seed),
+    });
+    let (_, dlog, cpi_window) = o.cpi_changes(&cpi_file);
+    let news = ms::cpi_news_reading(&dlog);
+    eprintln!(
+        "{}: {} monthly changes {cpi_window}; {} {news:.4}",
+        fred_name(&cpi_file),
+        dlog.len(),
+        ms::CPI_NEWS_ROW
+    );
+    o.print_group(&TipsGroup {
+        names: &[ms::CPI_NEWS_ROW],
+        series: fred_name(&cpi_file),
+        window: cpi_window,
+        n: dlog.len(),
+        record: [news],
+        reads: ms::cpi_news_resamples(&dlog, o.resamples, o.seed),
+    });
+    true
+}
+
 /// `-cpipersist`: THE CPI PERSISTENCE ROW (`CPI_PERSISTENCE_ROW`) of -cpi over the CPI window for
 /// -set, the record's own reading: a single-history row, not resampled.
 fn cpi_persist_mode(args: &[String]) -> bool {
@@ -1437,6 +1591,7 @@ fn main() {
         || volexit_mode(&args)
         || cpi_persist_mode(&args)
         || tips_mode(&args)
+        || stock_bond_mode(&args)
     {
         return;
     }

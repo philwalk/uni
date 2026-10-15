@@ -18,7 +18,7 @@ class RecordBandSuite extends FunSuite:
   private lazy val lines: Vector[String] =
     fixtureLines("recordbands-2026-09-26.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
       fixtureLines("volexit-2026-10-03.tsv").drop(1) ++ fixtureLines("bond10-2026-10-05.tsv").drop(1) ++
-      fixtureLines("tips-2026-10-11.tsv").drop(1)
+      fixtureLines("tips-2026-10-11.tsv").drop(1) ++ fixtureLines("stockbond-2026-10-14.tsv").drop(1)
 
   private def row(set: String, name: String): Vector[Double] =
     lines.map(_.split('\t').toVector).find(r => r(0) == set && r(1) == name)
@@ -55,8 +55,9 @@ class RecordBandSuite extends FunSuite:
       assertEquals(a.recordBands.map(_.name),
         MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows ++ MarketSim.RateAfterRows ++
           MarketSim.VolExitRows ++ MarketSim.Bond10BandRows ++ MarketSim.CpiBandRows ++ MarketSim.CpiCenturyRows ++
-          MarketSim.RealYieldBandRows ++ MarketSim.BreakevenBandRows ++ MarketSim.TipsBandRows ++ MarketSim.RealRateBandRows,
-        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows, Bond10BandRows, CpiBandRows, CpiCenturyRows, RealYieldBandRows, BreakevenBandRows, TipsBandRows, RealRateBandRows")
+          MarketSim.RealYieldBandRows ++ MarketSim.BreakevenBandRows ++ MarketSim.TipsBandRows ++ MarketSim.RealRateBandRows ++
+          MarketSim.StockBondBandRows ++ Vector(MarketSim.CpiNewsRow),
+        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows, Bond10BandRows, CpiBandRows, CpiCenturyRows, RealYieldBandRows, BreakevenBandRows, TipsBandRows, RealRateBandRows, StockBondBandRows, CpiNewsRow")
       for b <- a.recordBands do
         val r = row(set, b.name)
         assertEquals(b.record, r.head, s"$set ${b.name}: record")
