@@ -81,6 +81,28 @@ class RealSideSuite extends FunSuite:
     assert(near(t(2), 1.0) && near(t(3), -1.0), s"correlations ${t(2)} ${t(3)}")
   }
 
+  test("the yield's beta on the market moves the bond against the market") {
+    val w = MarketSim.namedWorld("0.25.0-sp500").map(_._1).getOrElse(fail("recipe"))
+    assert(w.ext.yieldBeta == 0.0 && w.ext.termVol > 0.0)
+    val off = MarketSim.simulate(w, 20, MarketSim.DefaultSeed)
+    val on  = MarketSim.simulate(w.copy(ext = w.ext.copy(yieldBeta = 0.05)), 20, MarketSim.DefaultSeed)
+    assert(!off.bond.sameElements(on.bond))
+    val cOff = monthlyCorr(off.price, off.bond)
+    val cOn  = monthlyCorr(on.price, on.bond)
+    assert(cOn < cOff - 0.2, s"monthly corr $cOn against $cOff at zero")
+  }
+
+  /** the correlation of the two series' 21-session log returns */
+  private def monthlyCorr(a: Array[Double], b: Array[Double]): Double =
+    val n  = a.length / 21
+    val ra = (1 until n).map(k => math.log(a(k * 21) / a((k - 1) * 21)))
+    val rb = (1 until n).map(k => math.log(b(k * 21) / b((k - 1) * 21)))
+    val (ma, mb) = (ra.sum / ra.length, rb.sum / rb.length)
+    val sab = ra.zip(rb).map((x, y) => (x - ma) * (y - mb)).sum
+    val saa = ra.map(x => (x - ma) * (x - ma)).sum
+    val sbb = rb.map(y => (y - mb) * (y - mb)).sum
+    sab / math.sqrt(saa * sbb)
+
   test("the CPI noise leaves every other series bit-identical") {
     val w   = MarketSim.namedWorld("0.24.6-sp500").map(_._1).getOrElse(fail("recipe"))
     val off = MarketSim.simulate(w, 5, MarketSim.DefaultSeed)

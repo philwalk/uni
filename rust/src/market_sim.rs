@@ -908,6 +908,7 @@ pub fn default_world() -> World {
         discount_yield: 0.0,
         cpi_noise_level: 0.0,
         policy_growth: 0.0,
+        yield_beta: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -1078,6 +1079,7 @@ fn v0_19_2() -> World {
         discount_yield: 0.0,
         cpi_noise_level: 0.0,
         policy_growth: 0.0,
+        yield_beta: 0.0,
         easing: 0.045,
         unwind: 0.35,
         floorhold: 0.0,
@@ -1210,6 +1212,7 @@ fn v0_24_1() -> World {
         discount_yield: 0.0,
         cpi_noise_level: 0.0,
         policy_growth: 0.0,
+        yield_beta: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -1527,103 +1530,112 @@ fn v0_24_6_sp500() -> World {
     }
 }
 
-/// THE REAL SIDE (item 60, 0.25.0): the S&P recipe re-solved on the settled rows with the inflation
-/// form, the term state and every other dial free, the seven dials read off the record held fixed at
-/// the record's values, and with them the breakeven premium (`brk_vol` 0.0055) and its nominal share
-/// (`brk_nominal` 0.68), both read off the TIPS era's record, since this set reports the breakeven
-/// rows (`SP500_ERA_ROWS`) and nothing grades them; the outgoing recipe the no-regression reference.
-/// The closing archive's best member (score 5.45), judged on eight fresh seeds at 200 x 100: every
-/// class passes on all eight and no row misses on any. Reads (eight-seed means; record): `real yield
-/// monthly change sd pp` 0.24 (0.22), `cpi yoy persistence 12m` 0.81 (0.73, at the record's own
-/// percentile), `tips vol per duration` 0.70 (0.82), `tips vs equity corr monthly` -0.03 (0.16),
-/// `real rate ex post %` 1.52 (1.08), `bond10 vol per duration` 0.94 (1.03), `bond10 excess return
-/// pts/yr` 0.92 (0.78), `cpi mean %/yr` 3.08 (3.47), `cpi yoy sd pp` 2.11 (2.76), `cpi 4%+ share %`
-/// 19.6 (29.6), `cpi deflation share % (century)` 4.7 (12.7), `short rate %` 4.58 (4.60), `rate floor
-/// share %` 8.7 (14.6), `equity vol %` 16.6 (15.7), `return per vol` 0.66 (0.69), `kurtosis` 27.2
-/// (21.8), `crashes/century` 20.7 (24.9), the upper wing 5.9 (7.6), the lower 6.2 (6.7), `valuation
-/// dispersion` 0.30 (0.30); reported, the era's: `breakeven monthly change sd pp` 0.25 (0.17), its
-/// own 0.21 (0.16), `breakeven vs yield corr monthly` 0.66 (0.51), `tips vs bond10 corr` 0.64 (0.81).
-/// Against the outgoing recipe five band rows move toward their records by more than a quarter band
-/// and three away (`up-day share %`, `clustering lag 20`, `tips depth vs vol`).
+/// THE REAL SIDE (item 60) AND THE STOCK-BOND REGIME (item 61), 0.25.0: the S&P recipe re-solved
+/// on the settled rows with the inflation form, the term state and every other dial free, the seven
+/// dials read off the record held fixed at the record's values, and with them the breakeven premium
+/// (`brk_vol` 0.0055) and its nominal share (`brk_nominal` 0.68), both read off the TIPS era's
+/// record, since this set reports the breakeven rows (`SP500_ERA_ROWS`) and nothing grades them;
+/// then re-solved in place with the equity's discount read on the ten-year yield (`discount_yield`
+/// 1, held) and the CPI noise's level exponent and the policy rule's growth term searched; the
+/// outgoing recipe the no-regression reference each time. The closing archive's member that passes
+/// every class on eight fresh seeds at 200 x 100 with no row missed on any (score 5.65; the
+/// archive's best by score, the recipe before this re-solve with the switch and the exponent at 1,
+/// fails the bond spiral's floor on three of eight). Reads (eight-seed means; record): `stock-bond
+/// corr monthly` 0.18 (0.07), `stock-bond corr slope on inflation seen` 0.089 (0.078), `cpi news
+/// by inflation seen` 1.62 (1.69), `real yield monthly change sd pp` 0.23 (0.22), `cpi yoy
+/// persistence 12m` 0.79 (0.73), `tips vol per duration` 0.67 (0.82), `tips vs equity corr monthly`
+/// 0.11 (0.16), `real rate ex post %` 1.35 (1.08), `bond10 vol per duration` 1.07 (1.03), `bond10
+/// excess return pts/yr` 0.89 (0.78), `cpi mean %/yr` 2.96 (3.47), `cpi yoy sd pp` 2.28 (2.76),
+/// `cpi 4%+ share %` 18.4 (29.6), `cpi deflation share % (century)` 6.4 (12.7), `short rate %` 4.28
+/// (4.60), `rate floor share %` 11.8 (14.6), `equity vol %` 16.8 (15.7), `return per vol` 0.72
+/// (0.69), `kurtosis` 28.3 (21.8), `crashes/century` 20.7 (24.9), the upper wing 6.6 (7.6), the
+/// lower 7.7 (6.7), `valuation dispersion` 0.33 (0.30); reported, the era's: `breakeven monthly
+/// change sd pp` 0.33 (0.17), its own 0.27 (0.16), `breakeven vs yield corr monthly` 0.80 (0.51),
+/// `tips vs bond10 corr` 0.50 (0.81).
 fn recipe_0250_sp500(mut w: World) -> World {
-    w.trend_share = 0.066037263;
-    w.depth = 18.098121;
-    w.stress = 4.2943695;
-    w.drift = 0.14202717;
-    w.fund_vol = 0.036768504;
-    w.rate_mean = 0.066436376;
-    w.vol_of_vol = 0.024247821;
-    w.leverage = 0.090826334;
-    w.down_shock = 0.012503484;
-    w.jump_skew = 0.80782697;
-    w.jump_var = 0.18894203;
-    w.jump_rate = 0.0040676908;
-    w.news_rate = 0.975625;
-    w.news_size = 0.023939175;
-    w.news_lev = 1.7486166;
-    w.news_revert = 0.31021905;
-    w.news_scale = 0.24595851;
-    w.news_bond = 0.092942898;
-    w.credit_regime = 0.0093500256;
-    w.credit_regime_rate = 1.5682981;
-    w.slow_bond_infl = 0.17252302;
-    w.noise_skew = 0.83779199;
-    w.news_flip = 0.24058896;
-    w.value_pull = 0.049780991;
-    w.recovery_drag = 5.7787105;
-    w.boom_rate = 1.3467512;
-    w.boom_size = 0.9823395;
-    w.boom_len = 11.371872;
-    w.recess_rate = 0.088128625;
-    w.recess_size = 0.46344499;
-    w.recess_len = 1.3099111;
-    w.recess_recover = 0.80102402;
-    w.recess_news = 2.4740992;
-    w.recess_vol = 0.0;
-    w.recess_reprice = 0.52817318;
-    w.recess_shape = 1.048454;
-    w.overshoot = 0.77433345;
-    w.overshoot_rate = 0.1729774;
-    w.recess_rec_mult = 1.0419226;
-    w.recess_credit = 8.0594488;
-    w.regime_drift = 0.00075956021;
-    w.drift_sd = 0.0037764015;
-    w.boom_fade = 1.9084166;
-    w.delev_rate = 0.06050941;
-    w.delev_from = 2.0898269;
-    w.delev_size = 0.17198313;
-    w.delev_len = 0.11314246;
-    w.vol_pull = 0.62689482;
-    w.belief_share = 0.9697191;
-    w.belief_years = 2.0754186;
-    w.belief_leak = 0.17320246;
-    w.cap_years = 0.19162615;
-    w.cycle_sd = 0.11943752;
-    w.cycle_years = 19.866068;
-    w.crowd_impact = 0.044181898;
-    w.term_premium = 0.099996994;
-    w.cpi_noise = 0.0055725033;
-    w.defl_prob = 0.20409555;
-    w.defl_size = 0.031641947;
-    w.spike_rate = 0.41336221;
-    w.spike_size = 0.017462717;
-    w.term_vol = 0.0076751442;
+    w.trend_share = 0.052333653;
+    w.depth = 18.197921;
+    w.stress = 4.2696493;
+    w.drift = 0.1368137;
+    w.fund_vol = 0.034572714;
+    w.rate_mean = 0.066036984;
+    w.vol_of_vol = 0.025948233;
+    w.leverage = 0.10959003;
+    w.down_shock = 0.0168163;
+    w.jump_skew = 0.94285342;
+    w.jump_var = 0.18838451;
+    w.jump_rate = 0.0038322107;
+    w.news_rate = 1.706283;
+    w.news_size = 0.026490139;
+    w.news_lev = 1.7321496;
+    w.news_revert = 0.41027793;
+    w.news_scale = 0.26382878;
+    w.news_bond = 0.025489566;
+    w.credit_regime = 0.0;
+    w.credit_regime_rate = 1.0416603;
+    w.slow_bond_infl = 0.19464272;
+    w.noise_skew = 0.8516341;
+    w.news_flip = 0.2768637;
+    w.value_pull = 0.048149485;
+    w.recovery_drag = 6.5108017;
+    w.boom_rate = 1.4862678;
+    w.boom_size = 1.0099656;
+    w.boom_len = 11.965367;
+    w.recess_rate = 0.13835065;
+    w.recess_size = 0.42252267;
+    w.recess_len = 1.3690565;
+    w.recess_recover = 0.76939795;
+    w.recess_news = 2.4503168;
+    w.recess_vol = 0.054343293;
+    w.recess_reprice = 0.52404966;
+    w.recess_shape = 1.0815952;
+    w.overshoot = 0.75745251;
+    w.overshoot_rate = 0.15961362;
+    w.recess_rec_mult = 1.0195928;
+    w.recess_credit = 8.0422847;
+    w.regime_drift = 0.00081930057;
+    w.drift_sd = 0.0065325444;
+    w.boom_fade = 1.3001183;
+    w.delev_rate = 0.11605334;
+    w.delev_from = 2.5172709;
+    w.delev_size = 0.1396063;
+    w.delev_len = 0.11174315;
+    w.vol_pull = 0.65135985;
+    w.belief_share = 0.96761835;
+    w.belief_years = 1.9780303;
+    w.belief_leak = 0.16110284;
+    w.cap_years = 0.59940193;
+    w.cycle_sd = 0.1326506;
+    w.cycle_years = 19.818361;
+    w.crowd_impact = 0.050182039;
+    w.term_premium = 0.096218625;
+    w.cpi_noise = 0.0046397307;
+    w.defl_prob = 0.22405976;
+    w.defl_size = 0.036180303;
+    w.spike_rate = 0.37101492;
+    w.spike_size = 0.017635773;
+    w.term_vol = 0.0072253808;
     w.brk_vol = 0.0055;
     w.brk_nominal = 0.68;
-    w.easing = 0.10720463;
-    w.floorhold = 0.08932882;
-    w.refuge = 0.13443791;
-    w.refuge_days = 1.1751832;
-    w.lev_gain = 10.764332;
-    w.bust_amp = 0.063056209;
-    w.slow_share = 0.15903041;
-    w.slow_vol = 0.96232945;
-    w.slow_perm = 0.2239177;
-    w.slow_beta = 0.48681762;
-    w.infl_size = 0.049910879;
-    w.discount = 6.6998705;
-    w.discount_ref = 0.33178715;
-    w.margin = 0.0067253191;
+    w.easing = 0.10732187;
+    w.floorhold = 0.054918352;
+    w.refuge = 0.13179271;
+    w.refuge_days = 1.2181936;
+    w.lev_gain = 10.188702;
+    w.bust_amp = 0.052243434;
+    w.slow_share = 0.17074016;
+    w.slow_vol = 1.0022486;
+    w.slow_perm = 0.24831987;
+    w.slow_beta = 0.46013661;
+    w.infl_size = 0.050515091;
+    w.discount = 6.3509963;
+    w.discount_ref = 0.27765082;
+    w.margin = 0.0073202803;
+    w.news_bond_skip = 0.035260488;
+    w.recess_base = 0.082143731;
+    w.discount_yield = 1.0;
+    w.cpi_noise_level = 1.0;
+    w.policy_growth = 0.094729873;
     w
 }
 
@@ -1644,6 +1656,7 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
         discount_yield: 0.0,
         cpi_noise_level: 0.0,
         policy_growth: 0.0,
+        yield_beta: 0.0,
         infl_size: 0.081,
         ..recipe_0245_nasdaq(nq_0244)
     }
@@ -2465,6 +2478,7 @@ fn v0_23_0() -> World {
         discount_yield: 0.0,
         cpi_noise_level: 0.0,
         policy_growth: 0.0,
+        yield_beta: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2616,6 +2630,7 @@ fn v0_22_1() -> World {
         discount_yield: 0.0,
         cpi_noise_level: 0.0,
         policy_growth: 0.0,
+        yield_beta: 0.0,
         easing: 0.060,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2769,6 +2784,7 @@ fn v0_22_0() -> World {
         discount_yield: 0.0,
         cpi_noise_level: 0.0,
         policy_growth: 0.0,
+        yield_beta: 0.0,
         easing: 0.060,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2922,6 +2938,7 @@ fn v0_21_0() -> World {
         discount_yield: 0.0,
         cpi_noise_level: 0.0,
         policy_growth: 0.0,
+        yield_beta: 0.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -3075,6 +3092,7 @@ fn v0_20_0() -> World {
         discount_yield: 0.0,
         cpi_noise_level: 0.0,
         policy_growth: 0.0,
+        yield_beta: 0.0,
         easing: 0.046,
         unwind: 0.35,
         floorhold: 0.0,
@@ -3867,7 +3885,7 @@ pub struct World {
     /// spike, accommodation and the rate's gap at their decay speeds) plus this premium, an OU
     /// state reverting at `TERM_REVERT` on its own stream. The record's ten-year real yield moves
     /// 0.22 pp a month as a random walk within the year and reverts over years, which the
-    /// overnight rate's noise cannot give a ten-year yield; the long bond keeps the short rate.
+    /// overnight rate's noise cannot give a ten-year yield; the long bond is marked to it too.
     pub term_vol: f64,
     /// THE BREAKEVEN PREMIUM (item 60): the sd per sqrt-year, decimal, of the innovation of the
     /// premium the market's ten-year breakeven carries over its inflation expectation, an OU state
@@ -3900,6 +3918,14 @@ pub struct World {
     /// experienced mean, a year's worth, and the ten-year yield carries it at the estimate's own
     /// decay.
     pub policy_growth: f64,
+    /// THE YIELD'S BETA ON THE MARKET (item 61): the ten-year yield carries a state driven by
+    /// `yield_beta` times the previous session's observed equity log return, reverting at the
+    /// term state's speed (`TERM_REVERT`), suppressed by inflation pressure on the easing
+    /// channel's scale: the market reprices the expected policy path on its own move while the
+    /// bank watches growth, where the growth term reads only the slow fundamental estimate, and
+    /// not while it fights inflation. Needs the ten-year yield (`term_vol` above 0); 0 is off and
+    /// bit-identical.
+    pub yield_beta: f64,
     /// CAP on policy accommodation under equity stress, in rate points
     pub easing: f64,
     /// how fast that accommodation is withdrawn, per year
@@ -6757,6 +6783,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     // yield, without it to the overnight rate, as before
     let term_on = w.term_vol > 0.0;
     let mut tau = 0.0f64;
+    let mut fq = 0.0f64;
     let mut taurng = NumPyRng::new(seed ^ 0x7e2a_5a1eu64);
     // THE BREAKEVEN PREMIUM (`World::brk_vol`): what the market's ten-year breakeven carries over
     // its expectation, an OU on its own stream; the TIPS leg alone is marked to it
@@ -7423,8 +7450,17 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // spike, accommodation and the rate's gap at their decay speeds, the macro panel's
         // arithmetic less its premium constant -- plus the term state; the overnight rate while
         // the state is off
+        // the yield's beta on the market (`yield_beta`): the state the ten-year yield carries on
+        // the market's own observed return, from information strictly before this session,
+        // suppressed by inflation pressure as the accommodation is
+        let r_prev = if i >= 2 {
+            ln_det(px[i - 1] / px[i - 2])
+        } else {
+            0.0
+        };
         let y10_base = if term_on {
             tau += -TERM_REVERT * tau * dt + w.term_vol * sqdt * taurng.randn();
+            fq += -TERM_REVERT * fq * dt + w.yield_beta * exp_det(-press.max(0.0) / 0.005) * r_prev;
             r_sum += rate;
             a_sum += acc;
             g_sum += g_hat;
@@ -7444,6 +7480,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 + pg * p_g10
                 + (rate - target_mkt) * p_r10
                 + tau
+                + fq
         } else {
             rate
         };
@@ -7473,7 +7510,13 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // immediately. Routing it through the slow value channel smeared rate news over ~40
         // sessions on the equity side while the bond moved same-day, so the two assets shared
         // no same-day factor and the correlation flip could not appear at any setting.
-        let disc_src = if w.discount_yield > 0.0 { y10 } else { rate };
+        // less the yield's own response to the market (`yield_beta`): the equity's price already
+        // carries the news that moved it, so reading it back would make the market trend
+        let disc_src = if w.discount_yield > 0.0 {
+            y10 - fq
+        } else {
+            rate
+        };
         let markdown = if w.discount_lag > 0.0 || w.discount_ref > 0.0 {
             let marked = if w.discount_lag > 0.0 {
                 // a lag under a session would overshoot: the weight is at most 1
@@ -20672,7 +20715,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "tips", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 92] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 93] = [
     "depth",
     "trendShare",
     "drift",
@@ -20765,6 +20808,7 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 92] = [
     "discountYield",
     "cpiNoiseLevel",
     "policyGrowth",
+    "yieldBeta",
 ];
 
 /// THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration search
@@ -21406,11 +21450,12 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             |w, x| w.discount_yield = x,
             |w| w.discount_yield,
         ),
-        // the CPI noise's exponent on the inflation level: 0.5 is the record's
+        // the CPI noise's exponent on the inflation level: the record's CPI news ratio is
+        // reached near 1
         (
             "cpiNoiseLevel",
             0.0,
-            1.0,
+            1.5,
             |w, x| w.cpi_noise_level = x,
             |w| w.cpi_noise_level,
         ),
@@ -21421,6 +21466,14 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             2.0,
             |w, x| w.policy_growth = x,
             |w| w.policy_growth,
+        ),
+        // the yield's beta on the market
+        (
+            "yieldBeta",
+            0.0,
+            0.05,
+            |w, x| w.yield_beta = x,
+            |w| w.yield_beta,
         ),
     ]
 }
@@ -24949,6 +25002,7 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("discountYield", num(w.discount_yield)),
         ("cpiNoiseLevel", num(w.cpi_noise_level)),
         ("policyGrowth", num(w.policy_growth)),
+        ("yieldBeta", num(w.yield_beta)),
         ("easing", num(w.easing)),
         ("unwind", num(w.unwind)),
         ("floorhold", num(w.floorhold)),
@@ -26429,6 +26483,7 @@ pub fn main() {
     let mut discount_yield = dw.discount_yield;
     let mut cpi_noise_level = dw.cpi_noise_level;
     let mut policy_growth = dw.policy_growth;
+    let mut yield_beta = dw.yield_beta;
     let mut easing = dw.easing;
     let mut unwind = dw.unwind;
     let mut floorhold = dw.floorhold;
@@ -26663,6 +26718,7 @@ pub fn main() {
             "-discountyield" => discount_yield = req_f64(&mut it, "-discountyield"),
             "-cpinoiselevel" => cpi_noise_level = req_f64(&mut it, "-cpinoiselevel"),
             "-policygrowth" => policy_growth = req_f64(&mut it, "-policygrowth"),
+            "-yieldbeta" => yield_beta = req_f64(&mut it, "-yieldbeta"),
             "-easing" => easing = req_f64(&mut it, "-easing"),
             "-unwind" => unwind = req_f64(&mut it, "-unwind"),
             "-floorhold" => floorhold = req_f64(&mut it, "-floorhold"),
@@ -26829,6 +26885,10 @@ pub fn main() {
         }
         non_neg("-cpinoiselevel", cpi_noise_level);
         non_neg("-policygrowth", policy_growth);
+        non_neg("-yieldbeta", yield_beta);
+        if yield_beta > 0.0 && term_vol <= 0.0 {
+            cli_die("-yieldbeta needs the ten-year yield: -termvol above 0");
+        }
         non_neg("-stress", stress);
         non_neg("-beta", beta);
         non_neg("-volofvol", vol_of_vol);
@@ -27243,6 +27303,7 @@ pub fn main() {
         discount_yield,
         cpi_noise_level,
         policy_growth,
+        yield_beta,
         easing,
         unwind,
         floorhold,
@@ -28655,9 +28716,9 @@ mod emit_sidecar_tests {
     /// wrote the file, and an edit to the world block's fields moves it visibly, here.
     #[test]
     fn the_world_digest_is_pinned_across_the_twins() {
-        assert_eq!(world_digest(&default_world()), "444b9cd5c0b77798");
+        assert_eq!(world_digest(&default_world()), "bf369b4895c18223");
         let (nq, _) = named_world("0.24.5-nasdaq").expect("recipe");
-        assert_eq!(world_digest(&nq), "044f23c21439a294");
+        assert_eq!(world_digest(&nq), "977b8bee03cdc087");
     }
 
     /// One ulp in one dial moves the digest, where the sidecar's six significant digits cannot.
@@ -31707,6 +31768,42 @@ mod real_side_tests {
         assert!(off.price == on.price && off.rate == on.rate && off.bond == on.bond);
         assert!(off.infl_press == on.infl_press && off.liq == on.liq);
         assert!(off.cpi != on.cpi, "the level itself moves");
+    }
+
+    /// THE YIELD'S BETA ON THE MARKET moves the bond against the equity: at 0.05 the monthly
+    /// correlation of the two falls well below the recipe's, the equity's own series moving only
+    /// through the discount it reads on the yield.
+    #[test]
+    fn the_yield_beta_moves_the_bond_against_the_market() {
+        let (w, _) = named_world("0.25.0-sp500").expect("recipe");
+        assert!(w.yield_beta == 0.0 && w.term_vol > 0.0);
+        let off = simulate(&w, 20, DEFAULT_SEED);
+        let mut on_w = w;
+        on_w.yield_beta = 0.05;
+        let on = simulate(&on_w, 20, DEFAULT_SEED);
+        assert!(off.bond != on.bond);
+        let c_off = monthly_corr(&off.price, &off.bond);
+        let c_on = monthly_corr(&on.price, &on.bond);
+        assert!(
+            c_on < c_off - 0.2,
+            "monthly corr {c_on} against {c_off} at zero"
+        );
+    }
+
+    /// the correlation of the two series' 21-session log returns
+    fn monthly_corr(a: &[f64], b: &[f64]) -> f64 {
+        let n = a.len() / 21;
+        let ra: Vec<f64> = (1..n).map(|k| (a[k * 21] / a[(k - 1) * 21]).ln()).collect();
+        let rb: Vec<f64> = (1..n).map(|k| (b[k * 21] / b[(k - 1) * 21]).ln()).collect();
+        let m = ra.len() as f64;
+        let (ma, mb) = (ra.iter().sum::<f64>() / m, rb.iter().sum::<f64>() / m);
+        let (mut sab, mut saa, mut sbb) = (0.0, 0.0, 0.0);
+        for (x, y) in ra.iter().zip(&rb) {
+            sab += (x - ma) * (y - mb);
+            saa += (x - ma) * (x - ma);
+            sbb += (y - mb) * (y - mb);
+        }
+        sab / (saa * sbb).sqrt()
     }
 
     /// THE DEFLATION SIDE AND THE SPIKES read on the CPI rows: deflation regimes put months below

@@ -1561,7 +1561,7 @@ object MarketSim:
                             // release before 0.25.0 marked them (bit-identical); above 0 both ten-year
                             // legs are marked to the market's ten-year yield -- its expectation of the
                             // average short rate plus this premium, an OU state reverting at `TermRevert`
-                            // on its own stream.  The long bond keeps the short rate.
+                            // on its own stream; the long bond is marked to it at its own duration.
                             termVol: Double = 0.0,
                             // THE BREAKEVEN PREMIUM (item 60): the sd per sqrt-year, decimal, of the
                             // innovation of the premium the market's ten-year breakeven carries over its
@@ -1591,7 +1591,16 @@ object MarketSim:
                             // times the market's perceived fundamental growth (the valuation cycle's
                             // `gEwma`) over that estimate's own experienced mean, a year's worth, and
                             // the ten-year yield carries it at the estimate's own decay.
-                            policyGrowth: Double = 0.0)
+                            policyGrowth: Double = 0.0,
+                            // THE YIELD'S BETA ON THE MARKET (item 61): the ten-year yield carries a
+                            // state driven by `yieldBeta` times the previous session's observed equity
+                            // log return, reverting at the term state's speed (`TermRevert`),
+                            // suppressed by inflation pressure on the easing channel's scale: the
+                            // market reprices the expected policy path on its own move while the bank
+                            // watches growth, where the growth term reads only the slow fundamental
+                            // estimate, and not while it fights inflation.  Needs the ten-year yield
+                            // (`termVol` above 0); 0 is off and bit-identical.
+                            yieldBeta: Double = 0.0)
 
   final case class Path(price: Array[Double], rate: Array[Double], fundamental: Array[Double],
                         liq: Array[Double],      // per-session slippage multiplier (equity market)
@@ -2293,22 +2302,26 @@ object MarketSim:
            ("0.24.6-nasdaq-basket", base("0.24.5-nasdaq-basket").copy(drift = nq.drift, inflSize = nq.inflSize, ext = tp), "nasdaq"),
            ("0.24.6-sp500", base("0.24.5-sp500").copy(drift = 0.14747457, ext = tp), "sp500"))
 
-  /** THE REAL SIDE (item 60, 0.25.0), the S&P: re-solved on the settled rows with the inflation form,
-    * the term state and every other dial free, the seven dials read off the record held fixed at the
-    * record's values, and with them the breakeven premium (`brkVol` 0.0055) and its nominal share
-    * (`brkNominal` 0.68), both read off the TIPS era's record, since this set reports the breakeven
-    * rows (`Sp500EraRows`) and nothing grades them; the outgoing recipe the no-regression reference.
-    * The closing archive's best member (score 5.45), judged on eight fresh seeds at 200 x 100: every
-    * class passes on all eight and no row misses on any.  Reads (eight-seed means; record): `real
-    * yield monthly change sd pp` 0.24 (0.22), `cpi yoy persistence 12m` 0.81 (0.73), `tips vol per
-    * duration` 0.70 (0.82), `tips vs equity corr monthly` -0.03 (0.16), `real rate ex post %` 1.52
-    * (1.08), `bond10 vol per duration` 0.94 (1.03), `cpi mean %/yr` 3.08 (3.47), `cpi 4%+ share %`
-    * 19.6 (29.6), `cpi deflation share % (century)` 4.7 (12.7), `short rate %` 4.58 (4.60), `equity
-    * vol %` 16.6 (15.7), `kurtosis` 27.2 (21.8), `crashes/century` 20.7 (24.9), the wings 5.9 / 6.2
-    * (7.6 / 6.7); reported, the era's: `breakeven monthly change sd pp` 0.25 (0.17), its own 0.21
-    * (0.16), `breakeven vs yield corr monthly` 0.66 (0.51), `tips vs bond10 corr` 0.64 (0.81).
-    * Against the outgoing recipe five band rows move toward their records by more than a quarter
-    * band and three away (`up-day share %`, `clustering lag 20`, `tips depth vs vol`). */
+  /** THE REAL SIDE (item 60) AND THE STOCK-BOND REGIME (item 61), 0.25.0, the S&P: re-solved on the
+    * settled rows with the inflation form, the term state and every other dial free, the seven dials
+    * read off the record held fixed at the record's values, and with them the breakeven premium
+    * (`brkVol` 0.0055) and its nominal share (`brkNominal` 0.68), both read off the TIPS era's record,
+    * since this set reports the breakeven rows (`Sp500EraRows`) and nothing grades them; then
+    * re-solved in place with the equity's discount read on the ten-year yield (`discountYield` 1,
+    * held) and the CPI noise's level exponent and the policy rule's growth term searched; the
+    * outgoing recipe the no-regression reference each time.  The closing archive's member that passes
+    * every class on eight fresh seeds at 200 x 100 with no row missed on any (score 5.65; the
+    * archive's best by score, the recipe before this re-solve with the switch and the exponent at 1,
+    * fails the bond spiral's floor on three of eight).  Reads (eight-seed means; record): `stock-bond
+    * corr monthly` 0.18 (0.07), `stock-bond corr slope on inflation seen` 0.089 (0.078), `cpi news by
+    * inflation seen` 1.62 (1.69), `real yield monthly change sd pp` 0.23 (0.22), `cpi yoy persistence
+    * 12m` 0.79 (0.73), `tips vol per duration` 0.67 (0.82), `tips vs equity corr monthly` 0.11
+    * (0.16), `real rate ex post %` 1.35 (1.08), `bond10 vol per duration` 1.07 (1.03), `cpi mean
+    * %/yr` 2.96 (3.47), `cpi 4%+ share %` 18.4 (29.6), `cpi deflation share % (century)` 6.4 (12.7),
+    * `short rate %` 4.28 (4.60), `equity vol %` 16.8 (15.7), `kurtosis` 28.3 (21.8), `crashes/century`
+    * 20.7 (24.9), the wings 6.6 / 7.7 (7.6 / 6.7); reported, the era's: `breakeven monthly change sd
+    * pp` 0.33 (0.17), its own 0.27 (0.16), `breakeven vs yield corr monthly` 0.80 (0.51), `tips vs
+    * bond10 corr` 0.50 (0.81). */
   val Recipes0250: Vector[(String, World, String)] =
     def base(name: String): World =
       Recipes0246.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
@@ -2343,31 +2356,35 @@ object MarketSim:
                  ext = WorldExt(termPremium = 0.09443145, cpiNoise = 0.0090746905, deflProb = 0.33062808, deflSize = 0.019739191, spikeRate = 0.30119632, spikeSize = 0.02165545, termVol = 0.0087854889, brkVol = 0.0019662045, brkNominal = 0.6223439)),
             "nasdaq"),
            ("0.25.0-sp500",
-            base("0.24.6-sp500").copy(trendShare = 0.066037263, depth = 18.098121, stress = 4.2943695,
-                 drift = 0.14202717, fundVol = 0.036768504, rateMean = 0.066436376,
-                 volOfVol = 0.024247821, leverage = 0.090826334, downShock = 0.012503484,
-                 jumpSkew = 0.80782697, jumpVar = 0.18894203, jumpRate = 0.0040676908,
-                 newsRate = 0.975625, newsSize = 0.023939175, newsLev = 1.7486166,
-                 newsRevert = 0.31021905, newsScale = 0.24595851, newsBond = 0.092942898,
-                 creditRegime = 0.0093500256, creditRegimeRate = 1.5682981,
-                 slowBondInfl = 0.17252302, noiseSkew = 0.83779199, newsFlip = 0.24058896,
-                 valuePull = 0.049780991, recoveryDrag = 5.7787105, boomRate = 1.3467512,
-                 boomSize = 0.9823395, boomLen = 11.371872, recessRate = 0.088128625,
-                 recessSize = 0.46344499, recessLen = 1.3099111, recessRecover = 0.80102402,
-                 recessNews = 2.4740992, recessVol = 0.0, recessReprice = 0.52817318,
-                 recessShape = 1.048454, overshoot = 0.77433345, overshootRate = 0.1729774,
-                 recessRecMult = 1.0419226, recessCredit = 8.0594488, regimeDrift = 0.00075956021,
-                 driftSd = 0.0037764015, boomFade = 1.9084166, delevRate = 0.06050941,
-                 delevFrom = 2.0898269, delevSize = 0.17198313, delevLen = 0.11314246,
-                 volPull = 0.62689482, beliefShare = 0.9697191, beliefYears = 2.0754186,
-                 beliefLeak = 0.17320246, capYears = 0.19162615, cycleSd = 0.11943752,
-                 cycleYears = 19.866068, crowdImpact = 0.044181898, easing = 0.10720463,
-                 floorhold = 0.08932882, refuge = 0.13443791, refugeDays = 1.1751832,
-                 levGain = 10.764332, bustAmp = 0.063056209, slowShare = 0.15903041,
-                 slowVol = 0.96232945, slowPerm = 0.2239177, slowBeta = 0.48681762,
-                 inflSize = 0.049910879, discount = 6.6998705, discountRef = 0.33178715,
-                 margin = 0.0067253191,
-                 ext = WorldExt(termPremium = 0.099996994, cpiNoise = 0.0055725033, deflProb = 0.20409555, deflSize = 0.031641947, spikeRate = 0.41336221, spikeSize = 0.017462717, termVol = 0.0076751442, brkVol = 0.0055, brkNominal = 0.68)),
+            base("0.24.6-sp500").copy(trendShare = 0.052333653, depth = 18.197921,
+                 stress = 4.2696493, drift = 0.1368137, fundVol = 0.034572714,
+                 rateMean = 0.066036984, volOfVol = 0.025948233, leverage = 0.10959003,
+                 downShock = 0.0168163, jumpSkew = 0.94285342, jumpVar = 0.18838451,
+                 jumpRate = 0.0038322107, newsRate = 1.706283, newsSize = 0.026490139,
+                 newsLev = 1.7321496, newsRevert = 0.41027793, newsScale = 0.26382878,
+                 newsBond = 0.025489566, creditRegime = 0.0, creditRegimeRate = 1.0416603,
+                 slowBondInfl = 0.19464272, noiseSkew = 0.8516341, newsFlip = 0.2768637,
+                 valuePull = 0.048149485, recoveryDrag = 6.5108017, boomRate = 1.4862678,
+                 boomSize = 1.0099656, boomLen = 11.965367, recessRate = 0.13835065,
+                 recessSize = 0.42252267, recessLen = 1.3690565, recessRecover = 0.76939795,
+                 recessNews = 2.4503168, recessVol = 0.054343293, recessReprice = 0.52404966,
+                 recessShape = 1.0815952, overshoot = 0.75745251, overshootRate = 0.15961362,
+                 recessRecMult = 1.0195928, recessCredit = 8.0422847, regimeDrift = 0.00081930057,
+                 driftSd = 0.0065325444, boomFade = 1.3001183, delevRate = 0.11605334,
+                 delevFrom = 2.5172709, delevSize = 0.1396063, delevLen = 0.11174315,
+                 volPull = 0.65135985, beliefShare = 0.96761835, beliefYears = 1.9780303,
+                 beliefLeak = 0.16110284, capYears = 0.59940193, cycleSd = 0.1326506,
+                 cycleYears = 19.818361, crowdImpact = 0.050182039, easing = 0.10732187,
+                 floorhold = 0.054918352, refuge = 0.13179271, refugeDays = 1.2181936,
+                 levGain = 10.188702, bustAmp = 0.052243434, slowShare = 0.17074016,
+                 slowVol = 1.0022486, slowPerm = 0.24831987, slowBeta = 0.46013661,
+                 inflSize = 0.050515091, discount = 6.3509963, discountRef = 0.27765082,
+                 margin = 0.0073202803, newsBondSkip = 0.035260488, recessBase = 0.082143731,
+                 ext = WorldExt(termPremium = 0.096218625, cpiNoise = 0.0046397307,
+                                deflProb = 0.22405976, deflSize = 0.036180303,
+                                spikeRate = 0.37101492, spikeSize = 0.017635773,
+                                termVol = 0.0072253808, brkVol = 0.0055, brkNominal = 0.68,
+                                discountYield = 1.0, cpiNoiseLevel = 1.0, policyGrowth = 0.094729873)),
             "sp500"))
 
   val Recipes: Vector[(String, World, String)] =
@@ -4651,6 +4668,7 @@ object MarketSim:
     // yield, without it to the overnight rate, as before
     private val termOn = w.ext.termVol > 0.0
     private var tau = 0.0
+    private var fq = 0.0
     private val tauRng = new NumPyRNG(seed ^ 0x7e2a5a1eL)
     // THE BREAKEVEN PREMIUM (`WorldExt.brkVol`): what the market's ten-year breakeven carries over
     // its expectation, an OU on its own stream; the TIPS leg alone is marked to it
@@ -5104,9 +5122,14 @@ object MarketSim:
       // the market has seen it, the regime, the spike, accommodation and the rate's gap at their
       // decay speeds, the macro panel's arithmetic less its premium constant -- plus the term
       // state; the overnight rate while the state is off
+      // the yield's beta on the market (`WorldExt.yieldBeta`): the state the ten-year yield carries
+      // on the market's own observed return, from information strictly before this session,
+      // suppressed by inflation pressure as the accommodation is
+      val rPrev = if i >= 2 then lnDet(px(i - 1) / px(i - 2)) else 0.0
       val y10Base =
         if termOn then
           tau += -TermRevert * tau * dt + w.ext.termVol * sqdt * tauRng.randn()
+          fq += -TermRevert * fq * dt + w.ext.yieldBeta * expDet(-Math.max(press, 0.0) / 0.005) * rPrev
           rSum += rate
           aSum += acc
           gSum += gHat
@@ -5117,7 +5140,7 @@ object MarketSim:
           // rate's long-run mean plus each state's excess over its own, decaying
           val (gX, sX, aX) = (gHat - gBar, sHat - sBar, acc - aBar)
           val targetMkt = rBar + gX + sX - aX + pg
-          rBar + gX * pI10 + sX * pS10 - aX * pA10 + pg * pG10 + (rate - targetMkt) * pR10 + tau
+          rBar + gX * pI10 + sX * pS10 - aX * pA10 + pg * pG10 + (rate - targetMkt) * pR10 + tau + fq
         else rate
       // the share of the breakeven's own state priced into the nominal yield (`WorldExt.brkNominal`):
       // expected-inflation news, which the real yield does not carry
@@ -5135,7 +5158,9 @@ object MarketSim:
       // Routing it through the slow value channel (the previous form) smeared rate news over ~40
       // sessions on the equity side while the bond moved same-day, so the two assets shared no
       // same-day factor and the correlation flip could not appear at any parameter setting.
-      val discSrc = if w.ext.discountYield > 0.0 then y10 else rate
+      // less the yield's own response to the market (`WorldExt.yieldBeta`): the equity's price
+      // already carries the news that moved it, so reading it back would make the market trend
+      val discSrc = if w.ext.discountYield > 0.0 then y10 - fq else rate
       markdown =
         if w.discountLag > 0.0 || w.discountRef > 0.0 then
           val marked =
@@ -12167,7 +12192,7 @@ object MarketSim:
     "discountRef", "driftSd", "boomFade", "delevRate", "delevFrom", "delevSize", "delevLen",
     "recessReprice", "recessBase", "recessShape", "overshoot", "overshootRate", "recessRecMult",
     "recessCredit", "recessInfl", "termPremium", "cpiNoise", "deflProb", "deflSize", "spikeRate", "spikeSize",
-    "termVol", "brkVol", "brkNominal", "discountYield", "cpiNoiseLevel", "policyGrowth")
+    "termVol", "brkVol", "brkNominal", "discountYield", "cpiNoiseLevel", "policyGrowth", "yieldBeta")
 
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
@@ -12334,10 +12359,12 @@ object MarketSim:
     ("brkNominal",   0.0,  1.0,  (w, x) => w.copy(ext = w.ext.copy(brkNominal = x)), _.ext.brkNominal),
     // which yield the markdown reads (0 the policy rate, 1 the ten-year yield): a switch
     ("discountYield", 0.0, 1.0,  (w, x) => w.copy(ext = w.ext.copy(discountYield = x)), _.ext.discountYield),
-    // the CPI noise's exponent on the inflation level: 0.5 is the record's
-    ("cpiNoiseLevel", 0.0, 1.0,  (w, x) => w.copy(ext = w.ext.copy(cpiNoiseLevel = x)), _.ext.cpiNoiseLevel),
+    // the CPI noise's exponent on the inflation level: the record's CPI news ratio is reached near 1
+    ("cpiNoiseLevel", 0.0, 1.5,  (w, x) => w.copy(ext = w.ext.copy(cpiNoiseLevel = x)), _.ext.cpiNoiseLevel),
     // the policy rule's growth term
     ("policyGrowth",  0.0,  2.0, (w, x) => w.copy(ext = w.ext.copy(policyGrowth = x)), _.ext.policyGrowth),
+    // the yield's beta on the market
+    ("yieldBeta",     0.0,  0.05, (w, x) => w.copy(ext = w.ext.copy(yieldBeta = x)), _.ext.yieldBeta),
   )
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
@@ -14433,7 +14460,7 @@ object MarketSim:
       ("brkVol", num(w.ext.brkVol)),
       ("brkNominal", num(w.ext.brkNominal)),
       ("discountYield", num(w.ext.discountYield)), ("cpiNoiseLevel", num(w.ext.cpiNoiseLevel)),
-      ("policyGrowth", num(w.ext.policyGrowth)),
+      ("policyGrowth", num(w.ext.policyGrowth)), ("yieldBeta", num(w.ext.yieldBeta)),
       ("easing", num(w.easing)), ("unwind", num(w.unwind)), ("floorhold", num(w.floorhold)),
       ("refuge", num(w.refuge)),
       ("refugeDays", num(w.refugeDays)),
@@ -15143,7 +15170,7 @@ $body
     var spikeRate = dw.ext.spikeRate; var spikeSize = dw.ext.spikeSize; var termVol = dw.ext.termVol
     var brkVol = dw.ext.brkVol; var brkNominal = dw.ext.brkNominal
     var discountYield = dw.ext.discountYield; var cpiNoiseLevel = dw.ext.cpiNoiseLevel
-    var policyGrowth = dw.ext.policyGrowth
+    var policyGrowth = dw.ext.policyGrowth; var yieldBeta = dw.ext.yieldBeta
     var easing = dw.easing; var unwind = dw.unwind; var refuge = dw.refuge
     var refugeDays = dw.refugeDays
     var satBeta = dw.satBeta
@@ -15304,6 +15331,7 @@ $body
       case "-discountyield" => discountYield = numOr("-discountyield", consumeNext)
       case "-cpinoiselevel" => cpiNoiseLevel = numOr("-cpinoiselevel", consumeNext)
       case "-policygrowth" => policyGrowth = numOr("-policygrowth", consumeNext)
+      case "-yieldbeta" => yieldBeta = numOr("-yieldbeta", consumeNext)
       case "-easing"     => easing = numOr("-easing", consumeNext)
       case "-unwind"     => unwind = numOr("-unwind", consumeNext)
       case "-floorhold"  => floorhold = numOr("-floorhold", consumeNext)
@@ -15447,6 +15475,8 @@ $body
     if discountYield != 0.0 && discountYield != 1.0 then
       usage("-discountyield is 0 (the policy rate) or 1 (the ten-year yield)")
     nonNeg("-cpinoiselevel", cpiNoiseLevel); nonNeg("-policygrowth", policyGrowth)
+    nonNeg("-yieldbeta", yieldBeta)
+    if yieldBeta > 0.0 && termVol <= 0.0 then usage("-yieldbeta needs the ten-year yield: -termvol above 0")
     nonNeg("-stress", stress); nonNeg("-beta", beta); nonNeg("-volofvol", volOfVol)
     nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
     nonNeg("-newsrate", newsRate); nonNeg("-newssize", newsSize); nonNeg("-refugedays", refugeDays)
@@ -15627,7 +15657,7 @@ $body
                                  spikeRate = spikeRate, spikeSize = spikeSize, tips = tips, termVol = termVol,
                                  brkVol = brkVol, brkNominal = brkNominal,
                                  discountYield = discountYield, cpiNoiseLevel = cpiNoiseLevel,
-                                 policyGrowth = policyGrowth),
+                                 policyGrowth = policyGrowth, yieldBeta = yieldBeta),
                   easing = easing, unwind = unwind, refuge = refuge,
                   refugeDays = refugeDays,
                   inflProb = inflProb, inflSize = inflSize,

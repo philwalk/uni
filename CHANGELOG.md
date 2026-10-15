@@ -97,7 +97,11 @@ month-to-month spread above the window's median rate over the spread below (1.69
 on 1999–2026), which is the inflation news a regime brings to the yield; and `-policygrowth` gives
 the policy rule a growth term on the market's perceived fundamental growth over its own experienced
 mean, which the ten-year yield carries at that estimate's own decay, so growth news moves the yield
-with the equity in the calm regime where inflation news moves them apart. The rolling three-year
+with the equity in the calm regime where inflation news moves them apart; and `-yieldbeta` gives
+the ten-year yield a state on the market's own previous-session return, reverting with the term
+state and suppressed by inflation pressure, the policy-path repricing of ordinary months that the
+growth term cannot carry (the calm correlation sat near −0.10 at any setting of it), with the
+equity's discount reading the yield less that state. The rolling three-year
 correlation's sd and its share below zero are reported beside the record's (0.36 and 37% on
 1962–2026; 0.30 and 85% on 1999–2026). The fixture is `stockbond-2026-10-14.tsv` (`record_bands
 -stockbond`, both generators byte-identical). Two gates are set at the record's values: `bond
