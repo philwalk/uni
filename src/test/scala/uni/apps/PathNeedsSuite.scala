@@ -41,7 +41,7 @@ class PathNeedsSuite extends FunSuite:
         val xs = hr.bandedByPath(name)
         assertEquals(xs.size, paths, s"$set $name: one per path")
         for (x, k) <- xs.zipWithIndex do
-          val alone = get(MarketSim.measure(Vector(main(k).head(h)), h))
+          val alone = get(MarketSim.measure(Vector(main(k).tail(h)), h))
           assert(same(x, alone), s"$set $name path $k: $x alone $alone")
         val finite = xs.count(_.isFinite)
         assert(finite * 2 > paths, s"$set $name: $finite of $paths paths read")

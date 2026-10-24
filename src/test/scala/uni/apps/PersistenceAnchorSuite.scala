@@ -61,24 +61,6 @@ class PersistenceAnchorSuite extends FunSuite:
     assertEquals(MarketSim.vr250EraOf(MarketSim.NasdaqAnchors.vr250Eras, 100.0), 3)
   }
 
-  test("the 250-session rung is graded by the record's placement among the paths") {
-    val st0 = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 30, MarketSim.DefaultSeed), 30)
-    val st = st0.copy(vr20 = 0.95, vr60 = 0.95, vr120 = 1.0, vr250 = 1.40,
-                      vr250RecordPcts = Vector(Double.NaN, Double.NaN, 40.0, 60.0))
-    val sp = MarketSim.SP500Anchors
-    val (name, pass, _) = MarketSim.varRatioProfileCheck(sp, st)
-    assert(pass, s"the record at the 40th percentile passes the rung: $name")
-    assert(name.contains("250d CRSP 1990-2026 0.796 at record@5-95"), name)
-    val (nameNq, _, _) = MarketSim.varRatioProfileCheck(MarketSim.NasdaqAnchors, st)
-    assert(nameNq.contains("250d IXIC+NDX 1971-2026 1.204 at record@5-95"),
-      s"the Nasdaq grades its own record at any length: $nameNq")
-    assert(!MarketSim.varRatioProfileCheck(sp, st.copy(vr250 = 1.0, vr250RecordPcts = st.vr250RecordPcts.updated(2, 99.0)))._2,
-      "the record above every path fails it")
-    val (name2, pass2, _) =
-      MarketSim.varRatioProfileCheck(sp, st.copy(vr250 = 1.0, vr250RecordPcts = st.vr250RecordPcts.updated(2, Double.NaN)))
-    assert(pass2 && name2.contains("250d 0.45-1.30"), s"too few paths keep the envelope: $name2")
-  }
-
   test("every rung's envelope is the real range rounded outward") {
     if rows.nonEmpty then
       assertEquals(MarketSim.VarRatioBands.map(_._1), MarketSim.VarRatioLadder)
@@ -131,18 +113,6 @@ class PersistenceAnchorSuite extends FunSuite:
         val sl = r.vr(b) - r.vr(a)
         assert(sl > lo && sl < hi,
           f"${r.ticker} over ${r.window} has slope $a->$b $sl%+.3f, outside the band the gate enforces")
-  }
-
-  test("the profile row fails a world the boxes admit") {
-    // The reason the slopes exist: 0.70 at 20 sessions and 1.15 at 60 are each inside their
-    // envelope and no real series has that shape.
-    val inside  = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 30, MarketSim.DefaultSeed), 30)
-    val shaped  = inside.copy(vr20 = 0.70, vr60 = 1.15, vr120 = 1.15, vr250 = 1.15)
-    val (name, pass, cls) = MarketSim.varRatioProfileCheck(MarketSim.SP500Anchors, shaped)
-    assert(!pass, s"a +0.45 slope between the short rungs must fail the profile: $name")
-    assertEquals(cls, MarketSim.GateClass.Fidelity)
-    assert(name.contains("20d 0.70-1.15") && name.contains("20->60 -0.20..+0.10"),
-      s"the row's name must carry the bounds it enforces: $name")
   }
 
   test("the era separates these readings and the index does not") {

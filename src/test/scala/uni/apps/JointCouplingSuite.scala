@@ -65,20 +65,27 @@ class JointCouplingSuite extends FunSuite:
     val s = x.sorted
     (s(1) + s(2)) / 2.0
 
-  test("the satellite depth bands are the window and its blocks at the record's drift") {
+  test("the satellite rows' records are the fixture's window readings at the record's drift") {
     val a = rows(Coupling)
     assume(a.nonEmpty, s"$Coupling absent")
-    def at(stat: String): Double =
-      a.find(r => r(0) == "w1999" && r(1) == stat).getOrElse(fail(s"fixture row [w1999 $stat] missing"))(2).toDouble
-    assertEquals((at("refDriftPrimary"), at("refDriftSat")), MarketSim.SatRefDrift)
-    val w = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77)
-    val st = MarketSim.measure(MarketSim.simPaths(w, 2, 10, MarketSim.DefaultSeed), 10)
-    val names = MarketSim.gateChecks(MarketSim.SP500Anchors, st).map(_._1)
-    for (stat, row) <- Vector(("d5Ratio", "satellite d5 ratio"), ("d10Ratio", "satellite d10 ratio")) do
-      val xs = a.filter(r => r(1) == stat && (r(0) == "w1999" || r(0).startsWith("b"))).map(_(2).toDouble)
-      assertEquals(xs.size, 6, "the window and its five blocks")
-      val want = f"$row%s ${math.floor(xs.min * 10.0) / 10.0}%.2f-${math.ceil(xs.max * 10.0) / 10.0}%.2f"
-      assert(names.contains(want), s"no gate row [$want]")
+    def at(pair: String, stat: String): Double =
+      a.find(r => r(0) == pair && r(1) == stat).getOrElse(fail(s"fixture row [$pair $stat] missing"))(2).toDouble
+    assertEquals((at("w1999", "refDriftPrimary"), at("w1999", "refDriftSat")), MarketSim.SatRefDrift)
+    assertEquals(MarketSim.SatRecordSessions, at("m1999", "sessions").toInt)
+    // the ratio rows read the model's way on the window (m1999); the depth and crash rows at the
+    // record's drift (w1999)
+    for (pair, stat, row) <- Vector(
+        ("m1999", "relTrend63", "satellite rel-trend 63d"), ("m1999", "relTrend126", "satellite rel-trend 126d"),
+        ("m1999", "relTrend252", "satellite rel-trend 252d"), ("m1999", "corr", "satellite corr"),
+        ("m1999", "absCorr", "satellite |r| corr"), ("m1999", "beta", "satellite beta"),
+        ("m1999", "volRatio", "satellite vol ratio"), ("m1999", "kurtRatio", "satellite kurtosis ratio"),
+        ("m1999", "ac1Ratio", "satellite clustering-1 ratio"), ("m1999", "ac20Ratio", "satellite clustering-20 ratio"),
+        ("w1999", "d5Ratio", "satellite d5 ratio"), ("w1999", "d10Ratio", "satellite d10 ratio"),
+        ("w1999", "crashRatio", "satellite crash ratio")) do
+      val j = MarketSim.SatelliteRows.indexOf(row)
+      assert(j >= 0, s"no placement row [$row]")
+      assertEqualsDouble(MarketSim.SatelliteRecords(j).getOrElse(fail(s"[$row] has no record")), at(pair, stat), 1e-9)
+    assertEquals(MarketSim.SatelliteRows.size, MarketSim.SatelliteRecords.size)
   }
 
   test("redrifting carries the reference drift and takes the world's out") {

@@ -193,7 +193,8 @@ fn world_of(base: &World, d: &[f64]) -> World {
 }
 
 /// A dial's value in the coordinates the search steps and measures it in: ln(1 + x) for the
-/// library's `SEARCH_LOG_DIALS`, which the reachability check shares.
+/// library's `SEARCH_LOG_DIALS` and a cap's tightness for its `SEARCH_INV_DIALS`, which the
+/// reachability check shares.
 fn coord(r: &Range, x: f64) -> f64 {
     ms::search_coord(r.0, x)
 }
@@ -214,14 +215,24 @@ fn apart(a: &[f64], b: &[f64]) -> f64 {
 }
 
 fn clamped(r: &Range, x: f64) -> f64 {
-    x.max(r.1).min(r.2)
+    if ms::SEARCH_INV_DIALS.contains(&r.0) {
+        // a cap's range is off to its tightest in its tightness: every looser cap is inside
+        let (y, lo, hi) = (coord(r, x), coord(r, r.1), coord(r, r.2));
+        if y < lo || y > hi {
+            ms::from_search_coord(r.0, y.max(lo).min(hi))
+        } else {
+            x
+        }
+    } else {
+        x.max(r.1).min(r.2)
+    }
 }
 
 /// A parent's dial moved by `z` sd of `sigma` times its width, in its search coordinates, and
 /// held inside its range. Identical to a step on the value itself for every other dial.
 fn stepped(r: &Range, x: f64, z: f64, sigma: f64) -> f64 {
     let y = coord(r, x) + z * sigma * coord_width(r);
-    if ms::SEARCH_LOG_DIALS.contains(&r.0) {
+    if ms::SEARCH_LOG_DIALS.contains(&r.0) || ms::SEARCH_INV_DIALS.contains(&r.0) {
         let y = y.max(coord(r, r.1)).min(coord(r, r.2));
         clamped(r, ms::from_search_coord(r.0, y))
     } else {
@@ -328,6 +339,466 @@ fn dead_zone(sds: f64) -> f64 {
 /// zone alone let every row drift half an anchor sd for free, which is how a search whose members
 /// all scored well produced none that could replace the recipe. The primary arm only: the
 /// transport arm is a check that the mechanism carries, not a recipe being replaced.
+/// THE OBJECTIVE'S FORM (`-objective`): the ledger score (`ledger_score`) or the record's CRPS
+/// (`crps_rows`), the placement feasibility and `-noregress` the same under either.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ObjectiveKind {
+    Crps,
+    Ledger,
+}
+
+impl ObjectiveKind {
+    fn parse(s: &str) -> Self {
+        match s {
+            "crps" => Self::Crps,
+            "ledger" => Self::Ledger,
+            other => usage(&format!("-objective takes crps or ledger, not [{other}]")),
+        }
+    }
+
+    /// the checkpoint's `score` setting, so an archive cannot resume across a change of objective
+    fn label(self) -> &'static str {
+        match self {
+            Self::Crps => "sum-excess",
+            Self::Ledger => "ledger-crps",
+        }
+    }
+}
+
+/// THE LEDGER'S ROW TABLE (`-ledger FILE`), in the file's order: each graded row's units class,
+/// weight, null (`None` for a level or a share, which can never sit on the wrong side of
+/// anything) and record scale in each world (`LEDGER_WORLDS`). The order is the archive's column
+/// order and the order the score is summed in.
+#[derive(Default)]
+struct Ledger {
+    rows: Vec<LedgerSpec>,
+    index: HashMap<&'static str, usize>,
+}
+
+struct LedgerSpec {
+    name: &'static str,
+    units: &'static str,
+    weight: f64,
+    null: Option<f64>,
+    /// the record's own scale in each of `LEDGER_WORLDS`, `None` where the record cannot be
+    /// resampled to give one
+    scales: [Option<f64>; 2],
+}
+
+/// The worlds a table carries a scale column for, in the table's column order, as anchor set
+/// specs (`ms::anchors_named`).
+const LEDGER_WORLDS: [&str; 2] = ["sp500", "nasdaq"];
+
+/// The units classes, in the order the family aggregates are laid out (`ledger_families`).
+const LEDGER_UNITS: [&str; 4] = ["return", "loss", "vol", "shape"];
+
+impl Ledger {
+    fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    fn get(&self, name: &str) -> Option<&LedgerSpec> {
+        self.index.get(name).map(|&i| &self.rows[i])
+    }
+
+    /// Row `k`'s record scale in the anchor set's world; `None` for a world the table has no
+    /// column for, or a row it gives none in that world.
+    fn scale(&self, k: usize, anchors: Anchors) -> Option<f64> {
+        LEDGER_WORLDS
+            .iter()
+            .position(|w| ms::anchors_named(w).name == anchors.name)
+            .and_then(|i| self.rows[k].scales[i])
+    }
+
+    /// the table's text digest, its sign rule and the score's form, in the reference cache's key
+    fn digest(&self) -> String {
+        let text: String = self.rows.iter().map(ledger_line).collect();
+        fnv(&format!(
+            "{text}sign|{LEDGER_SIGN_RULE}\n{}\n",
+            ledger_form()
+        ))
+    }
+}
+
+/// A table row as the digests write it: name, units, weight, null and its scale in each world.
+fn ledger_line(r: &LedgerSpec) -> String {
+    let none = || "none".to_string();
+    format!(
+        "{}|{}|{}|{}|{}|{}\n",
+        r.name,
+        r.units,
+        g8(r.weight),
+        r.null.map_or_else(none, g8),
+        r.scales[0].map_or_else(none, g8),
+        r.scales[1].map_or_else(none, g8)
+    )
+}
+
+/// The score's form, in the digests: the CRPS in record scales, clipped, and the sign's weight.
+fn ledger_form() -> String {
+    format!("crps|clip {}|sign {}", g8(LEDGER_CLIP), g8(LEDGER_SIGN_K))
+}
+
+/// The sign penalty (ruled 2026-10-23): a row whose model and record sit on opposite sides of its
+/// null costs up to this many record scales, in proportion to the model's share of the separation
+/// -- about what a row placed outside every history costs in CRPS (1.0-2.0 scales on the
+/// simulator's paths), so a full crossing keeps the ratio to a miss the gap ledger gave it.
+const LEDGER_SIGN_K: f64 = 3.0;
+/// A history's reading is clipped to the record plus or minus this many scales before the CRPS,
+/// so a ruined leg (-inf) or an undefined extreme counts as a large miss in proportion to its
+/// share of the histories rather than making the row infinite.
+const LEDGER_CLIP: f64 = 50.0;
+/// The sign share's rule, in the digests, so an archive or reference scored under another is
+/// refused: a banded row's sign counts only outside the record's band (`ledger_vector`).
+const LEDGER_SIGN_RULE: &str = "band";
+
+/// THE RESIDUAL TERMS UNDER THE LEDGER OBJECTIVE: a fidelity gate the placement does not cover
+/// costs one tier, as a full sign crossing does, in place of the CRPS dead zone.
+const LEDGER_DEAD: f64 = LEDGER_SIGN_K;
+
+/// THE PARETO RESERVE (`reserve_after`): a member the scalar admission discards is kept when no
+/// member is at least as good on all eight family aggregates within this many record scales and
+/// strictly better on one -- a tenth of the CRPS between a central row and one outside every
+/// history; the archive, core and reserve, is capped at `LEDGER_ARCHIVE_CAP` members.
+const LEDGER_EPS: f64 = 0.1;
+const LEDGER_ARCHIVE_CAP: usize = 400;
+
+/// The row table as the gap ledger tool writes it (`gapledger.py -units`): a header
+/// `row<TAB>units<TAB>weight<TAB>null<TAB>scale sp500<TAB>scale nasdaq`, then one row a line, the
+/// null a number or `none`, each scale a positive number or `none`.
+fn read_ledger(path: &str) -> Ledger {
+    if path.is_empty() {
+        usage(
+            "-objective ledger needs -ledger FILE, the row table the gap ledger tool writes (-units)",
+        );
+    }
+    let text = read_text(path).unwrap_or_else(|| usage(&format!("-ledger: cannot read {path}")));
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let head: Vec<&str> = lines.next().unwrap_or("").split('\t').collect();
+    let want = [
+        "row",
+        "units",
+        "weight",
+        "null",
+        "scale sp500",
+        "scale nasdaq",
+    ];
+    if head != want {
+        usage(&format!(
+            "-ledger {path}: the header is [{}], not {}: the ledger scores each row's CRPS in its \
+             record's scale",
+            head.join("|"),
+            want.join("/")
+        ));
+    }
+    let mut table = Ledger::default();
+    for l in lines {
+        let f: Vec<&str> = l.split('\t').collect();
+        if f.len() != head.len() {
+            usage(&format!(
+                "-ledger {path}: a row of {} fields: [{l}]",
+                f.len()
+            ));
+        }
+        let units = LEDGER_UNITS
+            .iter()
+            .copied()
+            .find(|u| *u == f[1].trim())
+            .unwrap_or_else(|| usage(&format!("-ledger {path}: units [{}] on [{}]", f[1], f[0])));
+        let weight: f64 = f[2]
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| usage(&format!("-ledger {path}: weight [{}] on [{}]", f[2], f[0])));
+        let null =
+            match f[3].trim() {
+                "none" => None,
+                v => Some(v.parse::<f64>().unwrap_or_else(|_| {
+                    usage(&format!("-ledger {path}: null [{v}] on [{}]", f[0]))
+                })),
+            };
+        let scale = |v: &str| -> Option<f64> {
+            match v.trim() {
+                "none" => None,
+                s => Some(
+                    s.parse::<f64>()
+                        .ok()
+                        .filter(|x| *x > 0.0 && x.is_finite())
+                        .unwrap_or_else(|| {
+                            usage(&format!("-ledger {path}: scale [{s}] on [{}]", f[0]))
+                        }),
+                ),
+            }
+        };
+        let name: &'static str = Box::leak(f[0].trim().to_string().into_boxed_str());
+        if table.index.insert(name, table.rows.len()).is_some() {
+            usage(&format!("-ledger {path}: [{name}] is listed twice"));
+        }
+        table.rows.push(LedgerSpec {
+            name,
+            units,
+            weight,
+            null,
+            scales: [scale(f[4]), scale(f[5])],
+        });
+    }
+    if table.is_empty() {
+        usage(&format!("-ledger {path}: no rows"));
+    }
+    table
+}
+
+/// A graded row as the verdict prints it: its name, the percentile the verdict prints for it
+/// (`model@` for a banded row, the model's median in the record's band; `record@` for a history
+/// row, the record among the read's single histories), the model and record values, and a banded
+/// row's record band (`model@ P% of lo..hi`), none on a history row.
+type LedgerRow = (&'static str, usize, f64, f64, Option<(f64, f64)>);
+
+/// THE GRADED ROWS OF ONE READ, in the verdict's print order: the fidelity rows that carry a
+/// percentile, then the rows the placement alone grades (a history row with a record and a finite
+/// reading that no fidelity or reported row already shows), as `print_placement` lists them.
+fn ledger_rows(
+    anchors: Anchors,
+    st: &ms::WorldStats,
+    rows: &[ms::FidelityRow],
+    hrows: &[ms::HistoryRow],
+) -> Vec<LedgerRow> {
+    let shown: Vec<&str> = rows
+        .iter()
+        .map(|r| r.name)
+        .chain(ms::reported_rows(anchors, st).iter().map(|r| r.0))
+        .collect();
+    let mut out: Vec<LedgerRow> = Vec::with_capacity(rows.len() + hrows.len());
+    for r in rows {
+        let p = match (r.ratio, r.pctile) {
+            (Some(_), _) => r.record_band.and(r.record_pctile),
+            (None, p) => p,
+        };
+        if let Some(p) = p {
+            let band = r.ratio.and(r.record_band);
+            out.push((r.name, p, r.model, r.real, band));
+        }
+    }
+    for r in hrows {
+        let Some(rec) = r.record else { continue };
+        if shown.contains(&r.name) {
+            continue;
+        }
+        let finite: Vec<f64> = r.reads.iter().copied().filter(|x| x.is_finite()).collect();
+        if finite.is_empty() {
+            continue;
+        }
+        out.push((
+            r.name,
+            ms::anchor_pctile(&finite, rec),
+            ms::pctile(&finite, 0.5),
+            rec,
+            None,
+        ));
+    }
+    out
+}
+
+/// A value as the verdict prints it, to two decimals: the ledger tool reads the printed line, so
+/// the sign share is taken on the same figures.
+fn printed(v: f64) -> f64 {
+    java_format_f(v, 0, 2).parse().unwrap_or(f64::NAN)
+}
+
+/// ONE READ'S LEDGER VECTOR, in table order: `[crps, sign share, model]` a row -- the crps the
+/// record's CRPS under the read's single histories of the row in the record's own scale
+/// (`ledger_crps`), the sign share the model's part of the separation from the record when the
+/// two sit on opposite sides of the row's null, |model - null| / (|model - null| + |record - null|),
+/// else 0, at eight digits as the archive writes it -- and NaN on a row the read did not grade. A
+/// banded row's sign counts only where the record establishes it: 0 when its null lies strictly
+/// inside the record's band on the printed figures (an edge printed at the null is outside), the
+/// band alone grading the row. A row whose printed model or record is not a number, or without
+/// two readable histories (`hist`, each with its record), is not graded; a graded row the table
+/// does not name, or gives no scale in this world, is an error, by name.
+fn ledger_vector(
+    graded: &[LedgerRow],
+    hist: &[ms::HistoryRow],
+    anchors: Anchors,
+    table: &Ledger,
+) -> Result<Vec<[f64; 3]>, String> {
+    let mut v = vec![[f64::NAN; 3]; table.rows.len()];
+    for (name, _, model, record, band) in graded {
+        let (m, r) = (printed(*model), printed(*record));
+        if !m.is_finite() || !r.is_finite() {
+            continue;
+        }
+        let Some(&k) = table.index.get(*name) else {
+            return Err(format!("the ledger table has no row [{name}]"));
+        };
+        let Some(scale) = table.scale(k, anchors) else {
+            return Err(format!(
+                "the ledger table has no scale for [{name}] in {}",
+                anchors.name
+            ));
+        };
+        let crps = hist
+            .iter()
+            .find(|h| h.name == *name)
+            .and_then(|h| h.record.map(|rec| ledger_crps(&h.reads, rec, scale)))
+            .unwrap_or(f64::NAN);
+        if crps.is_nan() {
+            continue;
+        }
+        let share = table.rows[k].null.map_or(0.0, |n| {
+            if band.is_some_and(|(lo, hi)| printed(lo) < n && n < printed(hi)) {
+                return 0.0;
+            }
+            let (a, b) = (m - n, r - n);
+            if (a < 0.0 && 0.0 < b) || (b < 0.0 && 0.0 < a) {
+                a.abs() / (a.abs() + b.abs())
+            } else {
+                0.0
+            }
+        });
+        v[k] = [crps, g8(share).parse().unwrap_or(share), *model];
+    }
+    Ok(v)
+}
+
+/// A row's CRPS in its record's scale: `ms::crps` of the record under the histories' readings,
+/// each first clipped to the record plus or minus `LEDGER_CLIP` scales (a NaN reading is left
+/// out, as `ms::crps` leaves it), divided by the scale. NaN under two readable histories.
+fn ledger_crps(reads: &[f64], record: f64, scale: f64) -> f64 {
+    let (lo, hi) = (record - LEDGER_CLIP * scale, record + LEDGER_CLIP * scale);
+    let clipped: Vec<f64> = reads
+        .iter()
+        .map(|&x| if x.is_nan() { x } else { x.clamp(lo, hi) })
+        .collect();
+    ms::crps(&clipped, record) / scale
+}
+
+/// Each graded row's ledger score, its weight times (crps + `LEDGER_SIGN_K` x sign share), in
+/// table order over the rows the read graded.
+fn ledger_row_scores(v: &[[f64; 3]], table: &Ledger) -> Vec<(&'static str, f64)> {
+    v.iter()
+        .zip(&table.rows)
+        .filter(|(x, _)| x[0].is_finite())
+        .map(|(x, r)| (r.name, r.weight * (x[0] + LEDGER_SIGN_K * x[1])))
+        .collect()
+}
+
+/// THE LEDGER SCORE of one read (the gap ledger tool's number on the same read, and the re-pick
+/// tool's weighted sum on the archive's row): the row scores summed in table order, as Python's
+/// float `sum` sums them (Neumaier's compensation, since 3.12), so the tools' sums are this one
+/// bit for bit. Lower is better.
+fn ledger_sum(v: &[[f64; 3]], table: &Ledger) -> f64 {
+    let (mut s, mut c) = (0.0f64, 0.0f64);
+    for (_, x) in ledger_row_scores(v, table) {
+        let t = s + x;
+        if s.abs() >= x.abs() {
+            c += (s - t) + x;
+        } else {
+            c += (x - t) + s;
+        }
+        s = t;
+    }
+    if c != 0.0 && c.is_finite() { s + c } else { s }
+}
+
+/// THE EIGHT FAMILY AGGREGATES the Pareto reserve is pruned on: for each units class in
+/// `LEDGER_UNITS` order, the sum of its rows' scaled CRPS, then of its rows' sign shares x
+/// `LEDGER_SIGN_K`, over the rows the read graded, every row at its full weight of one.
+fn ledger_families(v: &[[f64; 3]], table: &Ledger) -> Vec<f64> {
+    let mut out = vec![0.0; 2 * LEDGER_UNITS.len()];
+    for (x, r) in v.iter().zip(&table.rows) {
+        if !x[0].is_finite() {
+            continue;
+        }
+        let k = LEDGER_UNITS
+            .iter()
+            .position(|u| *u == r.units)
+            .unwrap_or(LEDGER_UNITS.len() - 1);
+        out[2 * k] += x[0];
+        out[2 * k + 1] += LEDGER_SIGN_K * x[1];
+    }
+    out
+}
+
+/// EPSILON-DOMINANCE on the family aggregates (lower is better): `b` dominates `a` when it is at
+/// least as good on every aggregate within `LEDGER_EPS` and strictly better on one.
+fn eps_dominates(b: &[f64], a: &[f64]) -> bool {
+    b.iter().zip(a).all(|(y, x)| *y <= x + LEDGER_EPS) && b.iter().zip(a).any(|(y, x)| y < x)
+}
+
+/// THE PARETO RESERVE after one admission: the members the scalar admission discarded (`before`
+/// less `core`, and the candidate when it did not enter) join the reserve unless a member of the
+/// archive dominates them; a reserve member another member dominates is dropped (of two that
+/// dominate each other within the epsilon, the better score stays); then the archive is capped at
+/// `LEDGER_ARCHIVE_CAP` by the spread-keeping trim on the aggregates, the reserve alone giving way.
+fn reserve_after(
+    before: &[Member],
+    core: &[Member],
+    cand: &Member,
+    mut reserve: Vec<Member>,
+    table: &Ledger,
+) -> Vec<Member> {
+    let fam = |m: &Member| m.ledger.as_ref().map(|v| ledger_families(v, table));
+    let in_core = |m: &Member| core.iter().any(|o| o.dials == m.dials);
+    let discards: Vec<&Member> = before
+        .iter()
+        .chain(std::iter::once(cand))
+        .filter(|m| !in_core(m))
+        .collect();
+    for d in discards {
+        let Some(fd) = fam(d) else { continue };
+        if reserve.iter().any(|o| o.dials == d.dials) {
+            continue;
+        }
+        let dominated = core
+            .iter()
+            .chain(reserve.iter())
+            .filter_map(fam)
+            .any(|f| eps_dominates(&f, &fd));
+        if !dominated {
+            reserve.push(d.clone());
+        }
+    }
+    let fams: Vec<Option<Vec<f64>>> = reserve.iter().map(fam).collect();
+    let core_fams: Vec<Vec<f64>> = core.iter().filter_map(fam).collect();
+    let keep: Vec<bool> = (0..reserve.len())
+        .map(|i| {
+            let Some(fi) = &fams[i] else { return false };
+            if core_fams.iter().any(|f| eps_dominates(f, fi)) {
+                return false;
+            }
+            !(0..reserve.len()).any(|j| {
+                let Some(fj) = (j != i).then_some(&fams[j]).and_then(|f| f.as_ref()) else {
+                    return false;
+                };
+                eps_dominates(fj, fi)
+                    && (!eps_dominates(fi, fj)
+                        || reserve[j].score < reserve[i].score
+                        || (reserve[j].score == reserve[i].score && j < i))
+            })
+        })
+        .collect();
+    let mut reserve: Vec<Member> = reserve
+        .into_iter()
+        .zip(keep)
+        .filter(|(_, k)| *k)
+        .map(|(m, _)| m)
+        .collect();
+    while core.len() + reserve.len() > LEDGER_ARCHIVE_CAP && !reserve.is_empty() {
+        let all: Vec<&Member> = core.iter().chain(reserve.iter()).collect();
+        let vecs: Vec<Vec<f64>> = all.iter().map(|m| fam(m).unwrap_or_default()).collect();
+        let scores: Vec<f64> = all.iter().map(|m| m.score).collect();
+        let removable: Vec<bool> = (0..all.len()).map(|i| i >= core.len()).collect();
+        match least_distinct_on(&vecs, &scores, &removable) {
+            Some(i) => {
+                reserve.remove(i - core.len());
+            }
+            None => {
+                reserve.pop();
+            }
+        }
+    }
+    reserve
+}
+
 struct Objective {
     dead: f64,
     reference: Option<Vec<(&'static str, f64)>>,
@@ -372,6 +843,25 @@ struct Objective {
     /// THE PROJECTED ROW (`-project DIAL:ROW`): its reading on every read (`Read::held`), from
     /// which the next child's dial is solved instead of stepped
     project_row: Option<&'static str>,
+    /// THE YARDSTICK each graded row's CRPS is summed in (`crps_rows`): the record's own resample
+    /// sd where the row carries a record band, else the reference world's single-history sd
+    /// (`reference_of`), frozen in the checkpoint so widening a candidate's spread cannot improve
+    /// its score. A row with no yardstick is scored in its own read's sd.
+    yardstick: HashMap<&'static str, f64>,
+    /// THE PLACEMENT GATES: a candidate the record is not a typical history of, among its reads'
+    /// histories pooled (`placed_together`), is infeasible. False for
+    /// the seed worlds (`without_gap`), which root the lineages and are the worlds a re-solve
+    /// starts from because they fail it; their placement is read and reported, as their gap rows
+    /// are. Every candidate, and a `-holdout` re-score of every member, is held to it.
+    place: bool,
+    /// THE RECORD OVERRIDE (`-record FILE`): the graded rows' records the placement and the CRPS
+    /// read, where the file names them (`record_overrides`); the overfit check's synthetic record.
+    /// Applied to every history read, the reference's included.
+    records: Option<HashMap<String, f64>>,
+    /// THE OBJECTIVE'S FORM (`-objective`): the ledger score of a feasible read or its CRPS.
+    kind: ObjectiveKind,
+    /// THE LEDGER'S ROW TABLE (`-ledger FILE`), empty under the CRPS objective.
+    ledger: std::sync::Arc<Ledger>,
 }
 
 impl Objective {
@@ -387,6 +877,11 @@ impl Objective {
             stage: 0,
             stage_check: false,
             project_row: None,
+            yardstick: self.yardstick.clone(),
+            place: self.place,
+            records: self.records.clone(),
+            kind: self.kind,
+            ledger: self.ledger.clone(),
         }
     }
 
@@ -403,6 +898,11 @@ impl Objective {
             stage: 0,
             stage_check: false,
             project_row: self.project_row,
+            yardstick: self.yardstick.clone(),
+            place: false,
+            records: self.records.clone(),
+            kind: self.kind,
+            ledger: self.ledger.clone(),
         }
     }
 
@@ -418,6 +918,11 @@ impl Objective {
             stage: 0,
             stage_check: false,
             project_row: self.project_row,
+            yardstick: self.yardstick.clone(),
+            place: self.place,
+            records: self.records.clone(),
+            kind: self.kind,
+            ledger: self.ledger.clone(),
         }
     }
 }
@@ -449,6 +954,10 @@ const PROJECT_STEP: f64 = 0.10;
 const PROJECT_SLOPE_READS: u64 = 4;
 /// The rows a staged read's prefix must fail before the candidate is rejected there (`-stage`).
 const STAGE_MIN_FAILS: usize = 2;
+/// How a candidate's reads decide membership, recorded as `membership`: the placement once over
+/// their pooled histories (`placed_together`); an archive without the key placed each read alone.
+const MEMBERSHIP: &str = "pooled";
+const MEMBERSHIP_BEFORE: &str = "per-read";
 
 /// A reading at eight significant digits, as the checkpoint writes every number: the projection is
 /// solved from these, so a fresh run, a resumed one and the other twin, whose readings differ in the
@@ -466,47 +975,81 @@ fn candidate_seed(base: i64, slot: u64) -> u64 {
     (base as u64).wrapping_add(CANDIDATE_OFFSET.wrapping_add(slot.wrapping_mul(READ_STRIDE)))
 }
 
-/// The outgoing recipe's distance from the record on every fitness row: the mean of
-/// `NOREGRESS_READS` reads at the search's own ensemble, each priced as `one_read` prices a
-/// candidate (`record_distances`).
-fn reference_distances(
+/// THE REFERENCE WORLD READ: `NOREGRESS_READS` reads at the search's own ensemble on the
+/// reference stream; the yardstick over them pooled (`yardstick_from`), and each graded row's
+/// CRPS in that yardstick as the mean over the reads, priced as `read_paths` prices a candidate.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the world, the ensemble, the seed, the records and the objective's form: what a \
+              reference means"
+)]
+fn reference_of(
     w: &World,
     anchors: Anchors,
     paths: usize,
     years: usize,
     base: i64,
-) -> Vec<(&'static str, f64)> {
-    let reads: Vec<Vec<(&'static str, f64)>> = (1..=NOREGRESS_READS)
-        .map(|j| {
-            let s = (base as u64).wrapping_add(NOREGRESS_OFFSET + j * READ_STRIDE);
-            read_distances(w, anchors, paths, years, s)
+    records: Option<&HashMap<String, f64>>,
+    kind: ObjectiveKind,
+    table: &Ledger,
+) -> Reference {
+    let seeds: Vec<u64> = (1..=NOREGRESS_READS)
+        .map(|j| (base as u64).wrapping_add(NOREGRESS_OFFSET + j * READ_STRIDE))
+        .collect();
+    // under the ledger objective the rows priced are the reads' ledger row scores, their mean
+    let (reads, per): RefReads = match kind {
+        ObjectiveKind::Ledger => seeds
+            .iter()
+            .map(|&s| ledger_read(w, anchors, paths, years, s, records, table))
+            .unzip(),
+        ObjectiveKind::Crps => (
+            seeds
+                .iter()
+                .map(|&s| history_read(w, anchors, paths, years, s, records))
+                .collect(),
+            Vec::new(),
+        ),
+    };
+    let yard = yardstick_from(anchors, &reads);
+    let ym: HashMap<&'static str, f64> = yard.iter().copied().collect();
+    let per: Vec<Vec<(&'static str, f64)>> = if kind == ObjectiveKind::Crps {
+        reads.iter().map(|r| crps_rows(r, &ym)).collect()
+    } else {
+        per
+    };
+    let crps: Vec<(&'static str, f64)> = per[0]
+        .iter()
+        .map(|(name, _)| {
+            let xs: Vec<f64> = per
+                .iter()
+                .filter_map(|p| p.iter().find(|(n, _)| n == name).map(|(_, c)| *c))
+                .collect();
+            (*name, xs.iter().sum::<f64>() / xs.len() as f64)
         })
         .collect();
-    reads[0]
-        .iter()
-        .enumerate()
-        .map(|(i, (name, _))| {
-            (
-                *name,
-                reads.iter().map(|r| r[i].1).sum::<f64>() / reads.len() as f64,
-            )
-        })
+    (g8_rows(yard), g8_rows(crps))
+}
+
+/// Rows at eight significant digits IN MEMORY, as the checkpoint writes every number: a fresh
+/// run, a resumed one and the other twin then price against the same text.
+fn g8_rows(rows: Rows) -> Rows {
+    rows.into_iter()
+        .map(|(n, v)| (n, g8(v).parse().unwrap_or(v)))
         .collect()
 }
 
 // ---- evaluation ---------------------------------------------------------------------------
 
-/// Feasible on every rep, and the SUM over rows of each row's distance past the dead zone. The
-/// reading is the WORST across reps, never the mean: a world that passes only on a lucky seed
-/// has not passed.
+/// Within its bounds on every rep and the record placed among the reps' pooled histories, and the
+/// SUM over rows of each row's distance past the dead zone. The reading is the WORST across reps,
+/// never the mean: a world that passes only on a lucky seed has not passed.
 #[derive(Clone)]
 struct Read {
     feasible: bool,
-    /// THE OBJECTIVE: `sum(max(0, term - dead))` over every row of every arm. Inside the record's
-    /// own error a row contributes nothing; outside it every row counts, and a row cannot be
-    /// bought below the dead zone because its excess is paid in full. The worst row alone put no
-    /// pressure on any other, and an archive built on it drifted out to the binding row's level
-    /// on every row (median member 5 rows past the dead zone against the default's 1).
+    /// THE OBJECTIVE of a feasible read: the record's CRPS under the read's single histories,
+    /// summed over every graded row in its yardstick (`crps_rows`, the release rule's score), plus
+    /// one dead zone per failed fidelity gate the placement does not cover and the regressions
+    /// against `-noregress`; an infeasible read's is `fitness`'s dead-zone sum, for the log.
     score: f64,
     /// The worst row's term, and its name: what a member is furthest from, for the reports.
     raw: f64,
@@ -542,6 +1085,118 @@ struct Read {
     stage_fail: Option<Vec<String>>,
     /// the projected row's reading (`Objective::project_row`), NaN without one
     held: f64,
+    /// THE LEDGER SCORE PER READ under that objective, `seed:score` a read (the transport arm's
+    /// prefixed with its market), so the gap ledger tool's number on the same read checks the
+    /// search's; empty under the CRPS objective
+    ledger: Vec<String>,
+    /// THE LEDGER VECTOR of the read that set `score` (the primary arm's worst read), what the
+    /// archive stores per member (`ledger_vector`); `None` under the CRPS objective
+    ledger_vec: Option<Vec<[f64; 3]>>,
+    /// A READ WITHIN ITS BOUNDS awaiting the placement over every read's histories pooled, which
+    /// `evaluate` reads and clears (`placed_together`); `None` on a read its bounds rejected
+    due: Option<Box<Due>>,
+}
+
+/// A read within its bounds, before the placement over every read's histories pooled.
+#[derive(Clone)]
+struct Due {
+    /// the read's history rows, the records overridden
+    rows: Vec<ms::HistoryRow>,
+    /// where the placement's failures go in `gate_fail`: after the uncovered fidelity gates,
+    /// before the regressions
+    at: usize,
+    /// the read should the pooled placement reject it
+    rejected: Rejected,
+}
+
+/// A read ranked as a rejection: `fitness`'s dead-zone sum without the extreme rows, its worst row
+/// and its summed loss.
+#[derive(Clone)]
+struct Rejected {
+    score: f64,
+    raw: f64,
+    worst: String,
+    total: f64,
+}
+
+impl Read {
+    /// This read once the pooled placement `pl` is read (`placed_together`): the rejection it ranks
+    /// as when the placement `rejects`; else the placement's failures (thin units, or a seed
+    /// world's failing ones) after its uncovered fidelity gates.
+    fn placed(self, pl: &ms::Placement, rejects: bool) -> Read {
+        let mut r = self;
+        let Some(due) = r.due.take() else {
+            return r;
+        };
+        if rejects {
+            let x = due.rejected;
+            return Read {
+                feasible: false,
+                score: x.score,
+                raw: x.raw,
+                worst: x.worst,
+                total: x.total,
+                gate_fail: pl.failures(),
+                ledger: Vec::new(),
+                ledger_vec: None,
+                ..r
+            };
+        }
+        r.gate_fail.splice(due.at..due.at, pl.failures());
+        r
+    }
+}
+
+/// THE MEMBERSHIP RULE over a candidate's reads (`ms::pooled_history_rows`): once every read is
+/// within its bounds, the record is placed once among all their histories pooled, row by row in
+/// read order. Each read passing its own placement rejected a typical history 16% (Nasdaq) and 13%
+/// (S&P) of the time at two reads, the pool 11% and 9%, the rule's size at one read. A pooled
+/// failure rejects every read; the seed worlds (`Objective::place` false) are placed and
+/// reported, never rejected.
+fn placed_together(reads: Vec<Read>, place: bool) -> Vec<Read> {
+    if !reads.iter().all(|r| r.due.is_some()) {
+        return reads.into_iter().map(|r| Read { due: None, ..r }).collect();
+    }
+    let rows: Vec<&[ms::HistoryRow]> = reads
+        .iter()
+        .filter_map(|r| r.due.as_ref().map(|d| d.rows.as_slice()))
+        .collect();
+    let pl = ms::placement(&ms::pooled_history_rows(&rows), ms::PLACEMENT_ALPHA);
+    let rejects = place && pl.verdict == ms::PlacementVerdict::Fail;
+    reads.into_iter().map(|r| r.placed(&pl, rejects)).collect()
+}
+
+/// The rows a read is ranked on, (term, name), and the worst of them, ties broken by name exactly
+/// as the Scala harness's `max` on a (term, name) pair does: an infeasible read's without the
+/// extreme rows, which it is taken never to have measured.
+fn ranked(
+    rows: &[(&'static str, f64, f64, f64)],
+    feasible: bool,
+) -> (Vec<(f64, &'static str)>, (f64, &'static str)) {
+    let scored: Vec<(f64, &'static str)> = rows
+        .iter()
+        .filter(|(nm, _, _, _)| feasible || !ms::extreme_target_names().contains(nm))
+        .map(|(nm, _, _, term)| (*term, *nm))
+        .collect();
+    let worst = scored
+        .iter()
+        .copied()
+        .fold((f64::NEG_INFINITY, ""), |a, b| {
+            if b.0 > a.0 || (b.0 == a.0 && b.1 > a.1) {
+                b
+            } else {
+                a
+            }
+        });
+    (scored, worst)
+}
+
+/// An infeasible read's score, for the log: the dead-zone sum over its ranked rows.
+fn dead_sum(scored: &[(f64, &str)], dead: f64) -> f64 {
+    scored
+        .iter()
+        .map(|(term, _)| (term - dead).max(0.0))
+        .sum::<f64>()
 }
 
 /// One seed's reading.  Every quantity the fidelity table grades is read at its record's horizon
@@ -582,7 +1237,9 @@ fn one_read(
         head.gate_fail.clone()
     };
     // two rows failing on the prefix, not one: a single near-edge row flips back on the whole read
-    // (7 of 18 feasible candidates were rejected that way at P = 50 in a measured run), two did not once
+    // (7 of 18 feasible candidates were rejected that way at P = 50 in a measured run), two did not once.
+    // The prefix fails on its bounds alone: membership is the placement over every read's histories
+    // pooled (`placed_together`), which a prefix's cannot speak for
     if stage_fail.len() >= STAGE_MIN_FAILS && !obj.stage_check {
         return Read {
             gate_fail: stage_fail.iter().map(|f| format!("stage: {f}")).collect(),
@@ -620,7 +1277,7 @@ fn read_paths(
 ) -> Read {
     let dead = obj.dead;
     let paths = main.len();
-    let st = ms::measure(main, years);
+    let (st, reads) = ms::measure_keeping(main, years);
     // THE VERDICT'S READINGS: vol, the typical year, return per vol, kurtosis, the clustering lags
     // and the crash rate are gated at their records' horizons (`gate_checks_at`), as a recipe's
     // verdict gates them, so the search and the verdict never disagree on those rows because they
@@ -660,14 +1317,9 @@ fn read_paths(
         .filter(|(_, ok, cls)| !ok && default.contains(cls))
         .count();
     let gated = bad == 0;
-    // THE FIDELITY BANDS THAT ARE NOT FITNESS ROWS -- the macro panel's, the channels', the
-    // variance-ratio profile, the bond's -- were invisible to the search: neither gated (a
-    // fidelity band flips on a seed at 60 paths, and feasibility has to hold on every seed) nor
-    // scored (no fitness row reads them). An archive built blind to them had 139 of 145 members
-    // failing one, and a recipe has to pass every class. Each failed band now costs one dead
-    // zone, the one priced term in the score: a flip on one seed is a nudge, a band a member
-    // sits outside on every seed is a row's worth of excess. Named in `gate_fail` for a
-    // feasible candidate, so the log says which.
+    // THE FIDELITY GATES THE PLACEMENT DOES NOT COVER -- the valuation dispersion band and the
+    // client-ruler basket rows, the hand bands left -- each cost one dead zone, named in
+    // `gate_fail` for a feasible candidate, so the log says which.
     let fid_fail: Vec<String> = checks
         .iter()
         .filter(|(_, ok, cls)| !ok && *cls == ms::GateClass::Fidelity)
@@ -698,25 +1350,32 @@ fn read_paths(
     } else {
         Vec::new()
     };
+    // THE MEMBERSHIP RULE is not one read's to decide: the record is placed once among every
+    // read's histories pooled (`placed_together`). A read within its bounds -- the gates, the gap
+    // and the held rows -- keeps its history rows for it, so a rejected candidate never pays for
+    // them; read from the readings the gates read, not a second pass over the horizons
+    // (value-identical)
     let feasible = gated && gap_miss.is_empty() && hold_miss.is_empty();
-    let band_miss: Vec<(&str, f64)> = ms::record_band_terms(anchors, banded)
-        .into_iter()
-        .filter(|(_, t)| feasible && *t > 0.0)
-        .collect();
-    let gate_fail: Vec<String> = if feasible {
-        fid_fail
-            .iter()
-            .cloned()
-            .chain(band_miss.iter().map(|(nm, _)| format!("band: {nm}")))
-            .collect()
-    } else if gated {
-        gap_miss
+    let hrows = feasible.then(|| {
+        let mut hrows = ms::history_rows_reading(anchors, &st, main, years, &hr, Some(&reads));
+        if let Some(over) = &obj.records {
+            ms::override_records(&mut hrows, over);
+        }
+        hrows
+    });
+    let crps_read = hrows
+        .as_ref()
+        .map_or_else(Vec::new, |h| crps_rows(h, &obj.yardstick));
+    // a read within its bounds names the uncovered fidelity gates; the placement's thin units (and
+    // a seed world's failing ones) join them once it is read
+    let gate_fail: Vec<String> = match &hrows {
+        Some(_) => fid_fail.clone(),
+        None if gated => gap_miss
             .iter()
             .map(|nm| format!("gap: {nm}"))
             .chain(hold_miss.iter().map(|nm| format!("hold: {nm}")))
-            .collect()
-    } else {
-        default
+            .collect(),
+        None => default
             .iter()
             .flat_map(|cls| {
                 checks
@@ -724,7 +1383,7 @@ fn read_paths(
                     .filter(move |(_, ok, c)| !ok && c == cls)
                     .map(|(nm, _, _)| nm.clone())
             })
-            .collect()
+            .collect(),
     };
 
     let ex = if feasible {
@@ -733,46 +1392,60 @@ fn read_paths(
         HashMap::new()
     };
     let (total, rows) = ms::fitness(anchors, &st, &ex);
-    // AGAINST THE OUTGOING RECIPE (`-noregress`): each row's excess over the recipe's distance from
-    // its record, in `fitness` row order as the reference was taken
+    // AGAINST THE OUTGOING RECIPE (`-noregress`): each graded row's CRPS over the recipe's
+    let crps: &[(&'static str, f64)] = &crps_read;
+    // THE LEDGER OBJECTIVE: a feasible read's graded rows as the verdict grades them, scored as
+    // the gap ledger tool scores the same read (`ledger_of`); the CRPS sum otherwise
+    let ledger = hrows
+        .as_ref()
+        .and_then(|h| ledger_of(obj, anchors, (&st, &hr), h, main));
+    // under the ledger objective the regressions are priced on the rows' ledger scores, and the
+    // uncovered fidelity gates at one tier each (`LEDGER_DEAD`)
     let regress = if feasible {
-        regressions(anchors, obj, &rows, banded)
+        regressions(obj, ledger.as_ref().map_or(crps, |l| l.2.as_slice()))
     } else {
         Vec::new()
     };
-    let scored: Vec<(f64, &str)> = rows
-        .iter()
-        .filter(|(nm, _, _, _)| feasible || !ms::extreme_target_names().contains(nm))
-        .map(|(nm, _, _, term)| (*term, *nm))
-        .collect();
-    // the worst row, ties broken by name exactly as the Scala harness's `max` on a (term, name)
-    // pair does
-    let worst = scored
-        .iter()
-        .copied()
-        .fold((f64::NEG_INFINITY, ""), |a, b| {
-            if b.0 > a.0 || (b.0 == a.0 && b.1 > a.1) {
-                b
-            } else {
-                a
-            }
-        });
-    // in row order, a plain left fold, as the Scala harness's `sum` is; then the fidelity bands,
-    // then the record bands, then the regressions
-    let score = scored
-        .iter()
-        .map(|(term, _)| (term - dead).max(0.0))
-        .sum::<f64>()
-        + dead * fid_fail.len() as f64
-        + band_miss.iter().map(|(_, t)| dead + t).sum::<f64>()
-        + regress.iter().map(|(_, e)| e).sum::<f64>();
+    let dead_units = if obj.kind == ObjectiveKind::Ledger {
+        LEDGER_DEAD
+    } else {
+        dead
+    };
+    let (scored, worst) = ranked(&rows, feasible);
+    // a feasible read: the summed CRPS in row order, a plain left fold, as the Scala harness's
+    // `sum` is; then the uncovered fidelity gates, then the regressions. An infeasible read keeps
+    // `fitness`'s dead-zone sum, so the log still ranks rejections
+    let score = if feasible {
+        ledger
+            .as_ref()
+            .map_or_else(|| crps.iter().map(|(_, c)| c).sum::<f64>(), |l| l.1)
+            + dead_units * fid_fail.len() as f64
+            + regress.iter().map(|(_, e)| e).sum::<f64>()
+    } else {
+        dead_sum(&scored, dead)
+    };
+    // the read as the rejection it ranks as should the pooled placement fail
+    let due = hrows.map(|h| {
+        let (total, rows) = ms::fitness(anchors, &st, &HashMap::new());
+        let (scored, worst) = ranked(&rows, false);
+        Box::new(Due {
+            rows: h,
+            at: fid_fail.len(),
+            rejected: Rejected {
+                score: dead_sum(&scored, dead),
+                raw: worst.0,
+                worst: worst.1.to_string(),
+                total,
+            },
+        })
+    });
     // the log names a regression past a dead zone; smaller ones are priced but not listed
     let gate_fail: Vec<String> = gate_fail
         .into_iter()
         .chain(
             regress
                 .iter()
-                .filter(|(_, e)| *e > dead)
+                .filter(|(_, e)| *e > dead_units)
                 .map(|(nm, _)| format!("regress: {nm}")),
         )
         .collect();
@@ -789,7 +1462,86 @@ fn read_paths(
         watch_miss,
         stage_fail: None,
         held,
+        ledger: ledger
+            .as_ref()
+            .map_or_else(Vec::new, |l| vec![format!("{s}:{}", g8(l.1))]),
+        ledger_vec: ledger.map(|l| l.0),
+        due,
     }
+}
+
+/// A feasible read's ledger under that objective: its vector (`ledger_vector`), its score
+/// (`ledger_sum`) and its row scores (`ledger_row_scores`, what `-noregress` prices), over the
+/// graded rows and the ledger rows read on the read's own ensemble `main` (`ms::LEDGER_ROWS`);
+/// `None` under the CRPS objective. A row the table does not name stops the search by name.
+type LedgerRead = (Vec<[f64; 3]>, f64, Vec<(&'static str, f64)>);
+
+fn ledger_of(
+    obj: &Objective,
+    anchors: Anchors,
+    (st, hr): (&ms::WorldStats, &ms::HorizonReadings),
+    hrows: &[ms::HistoryRow],
+    main: &[ms::Path],
+) -> Option<LedgerRead> {
+    if obj.kind != ObjectiveKind::Ledger {
+        return None;
+    }
+    let mut rows = ms::rows_from_readings(anchors, st, hr);
+    let lh = ms::ledger_histories(anchors, main);
+    rows.extend(ms::ledger_fidelity_rows(anchors, &lh));
+    let graded = ledger_rows(anchors, st, &rows, hrows);
+    let hist = with_ledger_histories(anchors, hrows, &lh);
+    let v = ledger_vector(&graded, &hist, anchors, &obj.ledger).unwrap_or_else(|e| usage(&e));
+    let sum = ledger_sum(&v, &obj.ledger);
+    let per = ledger_row_scores(&v, &obj.ledger);
+    Some((v, sum, per))
+}
+
+/// The histories a read's ledger scores: the graded rows' (`hrows`), then the ledger rows' with
+/// their records (`ms::ledger_histories_recorded`), as `-historyrows` dumps them.
+fn with_ledger_histories(
+    anchors: Anchors,
+    hrows: &[ms::HistoryRow],
+    lh: &[ms::HistoryRow],
+) -> Vec<ms::HistoryRow> {
+    hrows
+        .iter()
+        .cloned()
+        .chain(ms::ledger_histories_recorded(anchors, lh))
+        .collect()
+}
+
+/// A reference read under the ledger objective: the read's history rows (the yardstick's) and
+/// its row scores, read as `read_paths` reads a candidate.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the world, the ensemble, the seed, the records and the table: what the read means"
+)]
+fn ledger_read(
+    w: &World,
+    anchors: Anchors,
+    paths: usize,
+    years: usize,
+    s: u64,
+    records: Option<&HashMap<String, f64>>,
+    table: &Ledger,
+) -> (Vec<ms::HistoryRow>, Vec<(&'static str, f64)>) {
+    let vw = ms::verdict_world(anchors, w);
+    let main = ms::sim_paths(&vw, paths, years, s);
+    let (st, reads) = ms::measure_keeping(&main, years);
+    let hr = ms::horizon_readings(anchors, &st, Some(&main), years, paths, s, w, true);
+    let mut rows = ms::rows_from_readings(anchors, &st, &hr);
+    let lh = ms::ledger_histories(anchors, &main);
+    rows.extend(ms::ledger_fidelity_rows(anchors, &lh));
+    let mut hrows = ms::history_rows_reading(anchors, &st, &main, years, &hr, Some(&reads));
+    if let Some(over) = records {
+        ms::override_records(&mut hrows, over);
+    }
+    let graded = ledger_rows(anchors, &st, &rows, &hrows);
+    let hist = with_ledger_histories(anchors, &hrows, &lh);
+    let v = ledger_vector(&graded, &hist, anchors, table).unwrap_or_else(|e| usage(&e));
+    let per = ledger_row_scores(&v, table);
+    (hrows, per)
 }
 
 /// The gap rows (`Objective::gap`) whose band this read misses: its banded reading outside the
@@ -869,21 +1621,167 @@ fn gap_misses(
         .collect()
 }
 
-/// AGAINST THE OUTGOING RECIPE (`-noregress`): each fitness row's excess over the recipe's distance
-/// from its record, in `fitness` row order as the reference was taken; empty without a reference.
-fn regressions(
-    anchors: Anchors,
-    obj: &Objective,
-    rows: &[(&'static str, f64, f64, f64)],
-    banded: &HashMap<&'static str, f64>,
-) -> Vec<(&'static str, f64)> {
+/// AGAINST THE OUTGOING RECIPE (`-noregress`): each graded row's CRPS in excess of the recipe's
+/// on that row (`reference_of`), in the read's row order; a row the reference did not read costs
+/// nothing; empty without a reference.
+fn regressions(obj: &Objective, crps: &[(&'static str, f64)]) -> Vec<(&'static str, f64)> {
     obj.reference.as_ref().map_or_else(Vec::new, |reference| {
-        ms::record_distances(anchors, rows, banded)
-            .iter()
-            .zip(reference)
-            .map(|((name, d), (_, r))| (*name, (d - r).max(0.0)))
+        crps.iter()
+            .map(|(name, c)| {
+                let r = reference
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map_or(f64::INFINITY, |(_, r)| *r);
+                (*name, (c - r).max(0.0))
+            })
             .collect()
     })
+}
+
+/// Each graded row's CRPS of the record under the read's single histories, in its yardstick
+/// (`Objective::yardstick`; the read's own sd where a row has none); a row without two finite
+/// readings is left out, as the placement leaves it unread.
+fn crps_rows(
+    hrows: &[ms::HistoryRow],
+    yard: &HashMap<&'static str, f64>,
+) -> Vec<(&'static str, f64)> {
+    hrows
+        .iter()
+        .filter_map(|r| {
+            let rec = r.record?;
+            let c = ms::crps(&r.reads, rec);
+            if c.is_nan() {
+                return None;
+            }
+            let unit = yard
+                .get(r.name)
+                .copied()
+                .unwrap_or_else(|| history_sd(&r.reads));
+            (unit > 0.0).then_some((r.name, c / unit))
+        })
+        .collect()
+}
+
+/// The sd of the finite readings, 0 under two of them.
+fn history_sd(xs: &[f64]) -> f64 {
+    let v: Vec<f64> = xs.iter().copied().filter(|x| x.is_finite()).collect();
+    if v.len() < 2 {
+        return 0.0;
+    }
+    let m = v.iter().sum::<f64>() / v.len() as f64;
+    (v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (v.len() - 1) as f64).sqrt()
+}
+
+/// One read's history rows: the verdict world's ensemble at seed `s`, every graded row per
+/// history at its record's horizon.
+fn history_read(
+    w: &World,
+    anchors: Anchors,
+    paths: usize,
+    years: usize,
+    s: u64,
+    records: Option<&HashMap<String, f64>>,
+) -> Vec<ms::HistoryRow> {
+    let vw = ms::verdict_world(anchors, w);
+    let main = ms::sim_paths(&vw, paths, years, s);
+    let st = ms::measure(&main, years);
+    let mut rows = ms::history_rows(anchors, &st, &main, years, paths, s, w);
+    if let Some(over) = records {
+        ms::override_records(&mut rows, over);
+    }
+    rows
+}
+
+/// THE YARDSTICK over the reference's pooled reads: a banded row's is the record's own resample
+/// sd (`record_sd`), any other graded row's the pooled histories' sd. In row order.
+fn yardstick_from(anchors: Anchors, reads: &[Vec<ms::HistoryRow>]) -> Vec<(&'static str, f64)> {
+    reads[0]
+        .iter()
+        .filter(|r| r.record.is_some())
+        .map(|r| {
+            let unit = ms::record_sd(anchors, r.name).unwrap_or_else(|| {
+                let pooled: Vec<f64> = reads
+                    .iter()
+                    .flat_map(|rd| {
+                        rd.iter()
+                            .find(|x| x.name == r.name)
+                            .map_or(&[][..], |x| x.reads.as_slice())
+                    })
+                    .copied()
+                    .collect();
+                history_sd(&pooled)
+            });
+            (r.name, unit)
+        })
+        .collect()
+}
+
+/// The settings an archive's state names, with the keys it was written before given the value it
+/// ran under, so a resume refuses rather than adopts: its members were admitted by another
+/// standard. A checkpoint without `score` was scored on the worst row alone, and one without
+/// `gates` gated on its own ensemble.
+fn with_settings_before(prior: &mut HashMap<String, String>) {
+    if !prior.contains_key("score") {
+        prior.insert("score".into(), "worst-row".into());
+    }
+    // one written before `candidateSeeds` read its candidates a path stride apart
+    if !prior.contains_key("candidateSeeds") {
+        prior.insert("candidateSeeds".into(), "path-stride".into());
+    }
+    // one written before `noiseReads` read its seed noise off the reps' spread alone
+    if !prior.contains_key("noiseReads") {
+        prior.insert("noiseReads".into(), "reps".into());
+    }
+    // one written before `-hold` held no row
+    if !prior.contains_key("hold") {
+        prior.insert("hold".into(), "(none)".into());
+    }
+    // one written before `-fix` stepped every dial
+    if !prior.contains_key("fix") {
+        prior.insert("fix".into(), "(none)".into());
+    }
+    // one written before `-gate` gated on the verdict's default classes
+    if !prior.contains_key("gateClasses") {
+        prior.insert("gateClasses".into(), "realism,mechanism".into());
+    }
+    if !prior.contains_key("gates") {
+        prior.insert("gates".into(), "search-ensemble".into());
+    }
+    // one written before `-stage` read every path at once, and one before `-project` stepped every dial
+    if !prior.contains_key("stage") {
+        prior.insert("stage".into(), "0".into());
+    }
+    if !prior.contains_key("project") {
+        prior.insert("project".into(), "(none)".into());
+    }
+    // one written before `-cov` existed drew its children one dial at a time
+    if !prior.contains_key("proposal") {
+        prior.insert("proposal".into(), "dial".into());
+    }
+    // one without `transportWeight` priced its transport arm in full
+    if !prior.contains_key("transportWeight") {
+        let full = if prior.get("transport").is_none_or(|t| t == "(none)") {
+            "(none)"
+        } else {
+            "1.0000"
+        };
+        prior.insert("transportWeight".into(), full.into());
+    }
+    // one written before `membership` placed the record on each read alone
+    if !prior.contains_key("membership") {
+        prior.insert("membership".into(), MEMBERSHIP_BEFORE.into());
+    }
+}
+
+/// The settings this run records that differ from the archive's (`with_settings_before`).
+fn drifted<'a>(
+    settings: &'a [(String, String)],
+    prior: &HashMap<String, String>,
+) -> Vec<&'a (String, String)> {
+    settings
+        .iter()
+        .filter(|(k, v)| prior.get(k).is_some_and(|p| p != v))
+        .collect()
 }
 
 /// A member with its readings on the two holdout streams.
@@ -919,6 +1817,7 @@ fn evaluate(
             break;
         }
     }
+    let reads = placed_together(reads, obj.place);
     let hardest = reads
         .iter()
         .fold(&reads[0], |a, b| if b.raw > a.raw { b } else { a })
@@ -958,6 +1857,16 @@ fn evaluate(
         // the last read's: every read before it passed its prefix, or it would have stopped there
         stage_fail: reads.last().and_then(|r| r.stage_fail.clone()),
         held: reads.iter().map(|r| r.held).sum::<f64>() / reads.len() as f64,
+        ledger: reads
+            .iter()
+            .flat_map(|r| r.ledger.iter().cloned())
+            .collect(),
+        // the read that set the score: the first at the maximum
+        ledger_vec: reads
+            .iter()
+            .find(|r| r.score == hi)
+            .and_then(|r| r.ledger_vec.clone()),
+        due: None,
     }
 }
 
@@ -1137,6 +2046,14 @@ fn judge(
         watch_miss: a.watch_miss,
         stage_fail: a.stage_fail,
         held: a.held,
+        ledger: a
+            .ledger
+            .iter()
+            .cloned()
+            .chain(b.ledger.iter().map(|x| format!("{}:{x}", tr.spec)))
+            .collect(),
+        ledger_vec: a.ledger_vec,
+        due: None,
     }
 }
 
@@ -1163,12 +2080,19 @@ fn hold_text(hold: &[(&'static str, f64)]) -> String {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every term the loss applies, named: a struct would hide what the digest records"
+)]
 fn objective_digest(
     anchors: Anchors,
     transport: Option<&Transport>,
     noregress: Option<(&str, &[(&'static str, f64)])>,
     gap: &[&str],
     hold: &[(&'static str, f64)],
+    yardstick: &[(&'static str, f64)],
+    record_name: &str,
+    ledger: &Ledger,
 ) -> String {
     let mut text = String::new();
     for a in std::iter::once(anchors).chain(transport.map(|t| t.anchors)) {
@@ -1194,6 +2118,19 @@ fn objective_digest(
     // written only when a row is held, so an archive built before `-hold` keeps its digest
     if !hold.is_empty() {
         let _ = writeln!(text, "hold|{}", hold_text(hold));
+    }
+    // the membership rule and the score's units: an archive built under another rule is refused
+    let _ = writeln!(text, "placement|{}{record_name}", g8(ms::PLACEMENT_ALPHA));
+    for (row, u) in yardstick {
+        let _ = writeln!(text, "yard|{row}|{}", g8(*u));
+    }
+    // written only under the ledger objective, so a CRPS archive keeps its digest
+    for r in &ledger.rows {
+        let _ = write!(text, "ledger|{}", ledger_line(r));
+    }
+    if !ledger.rows.is_empty() {
+        let _ = writeln!(text, "ledger sign|{LEDGER_SIGN_RULE}");
+        let _ = writeln!(text, "ledger {}", ledger_form());
     }
     if let Some((name, reference)) = noregress {
         let _ = writeln!(text, "noregress|{name}");
@@ -1242,6 +2179,8 @@ struct Member {
     raw: f64,
     worst: String,
     desc: Vec<f64>,
+    /// the ledger vector of the read that admitted it (`Read::ledger_vec`), `None` under CRPS
+    ledger: Option<Vec<[f64; 3]>>,
 }
 
 fn names() -> Vec<&'static str> {
@@ -1251,33 +2190,85 @@ fn names() -> Vec<&'static str> {
 /// THE SETTINGS ARE PART OF THE CHECKPOINT: without the ensemble and rules that judged them the
 /// members cannot be reproduced, and a resume that changed a flag would mix standards silently.
 /// Key/value so a later version copes with a row it does not recognise.
+/// THE LEDGER COLUMNS of an archive written under that objective, after the descriptors: the
+/// member's tier (`core`, the scalar admission's; `pareto`, the reserve's), its `ledger` score,
+/// then `crps:ROW`, `sign:ROW` and `model:ROW` for every row of the table, in table order -- what
+/// the re-pick tool re-weights after the fact, its weighted sum under the table's weights being
+/// the `ledger` column.
+fn ledger_columns(table: &Ledger) -> String {
+    let mut s = String::from("\ttier\tledger");
+    for r in &table.rows {
+        let _ = write!(s, "\tcrps:{}\tsign:{}\tmodel:{}", r.name, r.name, r.name);
+    }
+    s
+}
+
+/// The ledger cells at full round-trip precision (`{}`), not the archive's eight digits: the
+/// re-pick tool's weighted sum of the stored CRPS and sign shares must equal the `ledger` cell.
+fn ledger_cells(m: &Member, table: &Ledger, tier: &str) -> String {
+    let nan = || "NaN".to_string();
+    let mut s = format!(
+        "\t{tier}\t{}",
+        m.ledger
+            .as_ref()
+            .map_or_else(nan, |v| ledger_sum(v, table).to_string())
+    );
+    for k in 0..table.rows.len() {
+        let x = m.ledger.as_ref().and_then(|v| v.get(k)).copied();
+        for j in 0..3 {
+            let _ = write!(s, "\t{}", x.map_or_else(nan, |x| x[j].to_string()));
+        }
+    }
+    s
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the archive, its reserve, the run's position, its noise and its settings: what a checkpoint is"
+)]
 fn write_archive(
     dir: &str,
     arc: &[Member],
+    reserve: &[Member],
     generation: u64,
     evals: u64,
     noise: (f64, u64),
     cfg: &[(String, String)],
+    table: &Ledger,
 ) {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "name\tscore\traw\tworstRow\t{}\t{}",
+        "name\tscore\traw\tworstRow\t{}\t{}{}",
         names().join("\t"),
-        DESC_NAMES.join("\t")
+        DESC_NAMES.join("\t"),
+        if table.is_empty() {
+            String::new()
+        } else {
+            ledger_columns(table)
+        }
     );
-    for m in arc {
+    for (m, tier) in arc
+        .iter()
+        .map(|m| (m, "core"))
+        .chain(reserve.iter().map(|m| (m, "pareto")))
+    {
         let ds: Vec<String> = m.dials.iter().map(|x| g8(*x)).collect();
         let bs: Vec<String> = m.desc.iter().map(|x| g8(*x)).collect();
         let _ = writeln!(
             out,
-            "{}\t{:.6}\t{:.6}\t{}\t{}\t{}",
+            "{}\t{:.6}\t{:.6}\t{}\t{}\t{}{}",
             m.name,
             m.score,
             m.raw,
             m.worst,
             ds.join("\t"),
-            bs.join("\t")
+            bs.join("\t"),
+            if table.is_empty() {
+                String::new()
+            } else {
+                ledger_cells(m, table, tier)
+            }
         );
     }
     write_text(&format!("{dir}/archive.tsv"), &out);
@@ -1318,9 +2309,12 @@ fn read_state(dir: &str) -> HashMap<String, String> {
     m
 }
 
-fn read_archive(dir: &str) -> Vec<Member> {
+/// The archive's members: the core (the scalar admission's) and the Pareto reserve, which an
+/// archive written under the CRPS objective does not carry. The ledger columns, when present, are
+/// read off the header's own row names; the objective digest refuses a resume under another table.
+fn read_archive(dir: &str) -> (Vec<Member>, Vec<Member>) {
     let Some(text) = read_text(&format!("{dir}/archive.tsv")) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     // THE HEADER IS THE CONTRACT: the dial columns are read by position, so an archive written
     // with a different dial table -- fewer dials, or the same count in another order -- must be
@@ -1332,48 +2326,75 @@ fn read_archive(dir: &str) -> Vec<Member> {
         DESC_NAMES.join("\t")
     );
     let head = text.lines().next().unwrap_or_default();
-    if head != expect {
-        usage(&format!(
-            "{dir}/archive.tsv was written with different columns; it has [{head}]\n  this binary reads [{expect}]"
-        ));
-    }
-    let want = 4 + ranges().len() + DESC_NAMES.len();
-    text.lines()
-        .skip(1)
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| {
-            let f: Vec<&str> = l.split('\t').collect();
-            if f.len() != want {
-                usage(&format!(
-                    "{dir}/archive.tsv has a row of {} fields where {want} are expected",
-                    f.len()
-                ));
-            }
-            let num = |v: &str| -> f64 {
-                v.parse().unwrap_or_else(|_| {
-                    usage(&format!("{dir}/archive.tsv has a malformed number [{v}]"))
+    let base = 4 + ranges().len() + DESC_NAMES.len();
+    // the ledger columns: `tier`, `ledger`, then three a row, every row named three times
+    let rows: Option<usize> = if head == expect {
+        None
+    } else {
+        let cols: Vec<&str> = head.split('\t').collect();
+        let shape = head.starts_with(&format!("{expect}\ttier\tledger\t"))
+            && (cols.len() - base - 2).is_multiple_of(3)
+            && cols[base + 2..].chunks(3).all(|c| {
+                c[0].strip_prefix("crps:").is_some_and(|n| {
+                    c[1].strip_prefix("sign:") == Some(n) && c[2].strip_prefix("model:") == Some(n)
                 })
-            };
-            Member {
-                name: f[0].to_string(),
-                dials: f
-                    .iter()
-                    .skip(4)
-                    .take(ranges().len())
-                    .map(|x| num(x))
-                    .collect(),
-                desc: f
-                    .iter()
-                    .skip(4 + ranges().len())
-                    .take(DESC_NAMES.len())
-                    .map(|x| num(x))
-                    .collect(),
-                score: num(f[1]),
-                raw: num(f[2]),
-                worst: f[3].to_string(),
-            }
-        })
-        .collect()
+            });
+        if !shape {
+            usage(&format!(
+                "{dir}/archive.tsv was written with different columns; it has [{head}]\n  this binary reads [{expect}] with or without the ledger columns"
+            ));
+        }
+        Some((cols.len() - base - 2) / 3)
+    };
+    let want = base + rows.map_or(0, |n| 2 + 3 * n);
+    let (mut core, mut reserve) = (Vec::new(), Vec::new());
+    for l in text.lines().skip(1).filter(|l| !l.trim().is_empty()) {
+        let f: Vec<&str> = l.split('\t').collect();
+        if f.len() != want {
+            usage(&format!(
+                "{dir}/archive.tsv has a row of {} fields where {want} are expected",
+                f.len()
+            ));
+        }
+        let num = |v: &str| -> f64 {
+            v.parse().unwrap_or_else(|_| {
+                usage(&format!("{dir}/archive.tsv has a malformed number [{v}]"))
+            })
+        };
+        let ledger = rows.map(|n| {
+            (0..n)
+                .map(|k| {
+                    let at = base + 2 + 3 * k;
+                    [num(f[at]), num(f[at + 1]), num(f[at + 2])]
+                })
+                .collect::<Vec<[f64; 3]>>()
+        });
+        let m = Member {
+            name: f[0].to_string(),
+            dials: f
+                .iter()
+                .skip(4)
+                .take(ranges().len())
+                .map(|x| num(x))
+                .collect(),
+            desc: f
+                .iter()
+                .skip(4 + ranges().len())
+                .take(DESC_NAMES.len())
+                .map(|x| num(x))
+                .collect(),
+            score: num(f[1]),
+            raw: num(f[2]),
+            worst: f[3].to_string(),
+            ledger,
+        };
+        if rows.is_some() && f[base] == "pareto" {
+            reserve.push(m);
+        } else {
+            core.push(m);
+        }
+    }
+    (core, reserve)
 }
 
 /// World rows (`-seedworlds`, `-noregressset`): a TSV whose header is `name` and the searched dials
@@ -1416,22 +2437,6 @@ fn fnv(text: &str) -> String {
     format!("{h:016x}")
 }
 
-/// One read's distance from the record on every fitness row, priced as `one_read` prices a candidate
-/// (`record_distances`).
-fn read_distances(
-    w: &World,
-    anchors: Anchors,
-    paths: usize,
-    years: usize,
-    s: u64,
-) -> Vec<(&'static str, f64)> {
-    let main = ms::sim_paths(w, paths, years, s);
-    let st = ms::measure(&main, years);
-    let hr = ms::horizon_readings(anchors, &st, Some(&main), years, paths, s, w, true);
-    let (_, rows) = ms::fitness(anchors, &st, &hr.extreme_scores());
-    ms::record_distances(anchors, &rows, &hr.banded)
-}
-
 /// The median of `xs`: the middle value, or the mean of the middle two.
 fn median(xs: &[f64]) -> f64 {
     let mut v = xs.to_vec();
@@ -1465,53 +2470,153 @@ fn set_reference(
     years: usize,
     base: i64,
     dir: &str,
-) -> (String, Vec<(&'static str, f64)>) {
+    records: Option<&HashMap<String, f64>>,
+    record_name: &str,
+    kind: ObjectiveKind,
+    table: &Ledger,
+) -> (String, Reference) {
     let digest = fnv(&format!(
-        "{file_text}|{}|{paths}|{years}|{base}",
-        anchors.name
+        "{file_text}|{}|{paths}|{years}|{base}|{}{record_name}",
+        anchors.name,
+        reference_tag(kind, table)
     ));
-    let names_now: Vec<&'static str> = ms::fit_targets(anchors).iter().map(|t| t.0).collect();
-    let cached = read_text(&format!("{dir}/reference.tsv")).and_then(|t| {
-        let mut lines = t.lines();
-        (lines.next()? == format!("digest\t{digest}")).then_some(())?;
-        let got: Vec<(&'static str, f64)> = lines
-            .filter_map(|l| {
-                let (n, v) = l.split_once('\t')?;
-                let at = names_now.iter().position(|x| *x == n)?;
-                Some((names_now[at], v.parse().ok()?))
-            })
-            .collect();
-        (!got.is_empty()).then_some(got)
-    });
-    if let Some(r) = cached {
+    if let Some(r) = cached_reference(dir, &digest, kind, table) {
         return (digest, r);
     }
-    let reads: Vec<Vec<(&'static str, f64)>> = rows
-        .iter()
-        .enumerate()
-        .map(|(k, (_, w))| {
-            let s = (base as u64)
-                .wrapping_add(NOREGRESS_OFFSET + (NOREGRESS_READS + 1 + k as u64) * READ_STRIDE);
-            read_distances(w, anchors, paths, years, s)
+    let seeds: Vec<u64> = (0..rows.len())
+        .map(|k| {
+            (base as u64)
+                .wrapping_add(NOREGRESS_OFFSET + (NOREGRESS_READS + 1 + k as u64) * READ_STRIDE)
         })
         .collect();
-    // at eight significant digits, as the checkpoint writes every number: the twins' readings differ
-    // in the last ulps, and a fresh run, a resumed one and the other twin all price against this text
-    let r: Vec<(&'static str, f64)> = reads[0]
+    let (reads, per): RefReads = match kind {
+        ObjectiveKind::Ledger => rows
+            .iter()
+            .zip(&seeds)
+            .map(|((_, w), &s)| ledger_read(w, anchors, paths, years, s, records, table))
+            .unzip(),
+        ObjectiveKind::Crps => (
+            rows.iter()
+                .zip(&seeds)
+                .map(|((_, w), &s)| history_read(w, anchors, paths, years, s, records))
+                .collect(),
+            Vec::new(),
+        ),
+    };
+    // the set's pooled predictive sd is the yardstick where a row has no record band
+    let yard = yardstick_from(anchors, &reads);
+    let ym: HashMap<&'static str, f64> = yard.iter().copied().collect();
+    let per: Vec<Vec<(&'static str, f64)>> = if kind == ObjectiveKind::Crps {
+        reads.iter().map(|r| crps_rows(r, &ym)).collect()
+    } else {
+        per
+    };
+    let crps: Vec<(&'static str, f64)> = per[0]
         .iter()
-        .enumerate()
-        .map(|(i, (name, _))| {
-            let xs: Vec<f64> = reads.iter().map(|m| m[i].1).collect();
-            let m = median(&xs);
-            (*name, g8(m).parse().unwrap_or(m))
+        .map(|(name, _)| {
+            let xs: Vec<f64> = per
+                .iter()
+                .filter_map(|p| p.iter().find(|(n, _)| n == name).map(|(_, c)| *c))
+                .collect();
+            (*name, median(&xs))
         })
         .collect();
+    let r = (g8_rows(yard), g8_rows(crps));
+    write_reference(dir, &digest, &r, kind);
+    (digest, r)
+}
+
+/// The reference cache key's tag for the objective's form: `crps`, or `ledger-` and the table's
+/// digest, so a reference priced under one is never read under the other.
+fn reference_tag(kind: ObjectiveKind, table: &Ledger) -> String {
+    match kind {
+        ObjectiveKind::Crps => "crps".to_string(),
+        ObjectiveKind::Ledger => format!("ledger-{}", table.digest()),
+    }
+}
+
+/// Graded rows with a value each, in row order.
+type Rows = Vec<(&'static str, f64)>;
+/// A reference's reads: each read's history rows, and under the ledger objective its row scores.
+type RefReads = (Vec<Vec<ms::HistoryRow>>, Vec<Rows>);
+/// A reference: the yardstick and the reference's CRPS per graded row, each in row order.
+type Reference = (Rows, Rows);
+
+/// The reference cached in `reference.tsv` under `digest`, at eight significant digits as the
+/// checkpoint writes every number: the twins' readings differ in the last ulps, and a fresh run, a
+/// resumed one and the other twin all price against this text. Rows are matched by name to the
+/// graded rows this build knows (`history_row_names`).
+fn cached_reference(
+    dir: &str,
+    digest: &str,
+    kind: ObjectiveKind,
+    table: &Ledger,
+) -> Option<Reference> {
+    let t = read_text(&format!("{dir}/reference.tsv"))?;
+    let mut lines = t.lines();
+    (lines.next()? == format!("digest\t{digest}")).then_some(())?;
+    let names = history_row_names();
+    let row_tag = reference_row_tag(kind);
+    let (mut yard, mut rows) = (Vec::new(), Vec::new());
+    for l in lines {
+        let mut p = l.split('\t');
+        let (tag, n, v) = (p.next()?, p.next()?, p.next()?.parse::<f64>().ok()?);
+        // a ledger row is one of the table's; any other a history row this build knows
+        let name = names
+            .iter()
+            .copied()
+            .find(|x| *x == n)
+            .or_else(|| table.get(n).map(|r| r.name));
+        let Some(name) = name else { continue };
+        match tag {
+            "yard" => yard.push((name, v)),
+            t if t == row_tag => rows.push((name, v)),
+            _ => return None,
+        }
+    }
+    (!yard.is_empty()).then_some((yard, rows))
+}
+
+/// The reference's priced rows' tag in `reference.tsv`: each row's CRPS, or its ledger score.
+fn reference_row_tag(kind: ObjectiveKind) -> &'static str {
+    match kind {
+        ObjectiveKind::Crps => "crps",
+        ObjectiveKind::Ledger => "led",
+    }
+}
+
+fn write_reference(dir: &str, digest: &str, r: &Reference, kind: ObjectiveKind) {
     let mut out = format!("digest\t{digest}\n");
-    for (n, v) in &r {
-        let _ = writeln!(out, "{n}\t{}", g8(*v));
+    for (n, v) in &r.0 {
+        let _ = writeln!(out, "yard\t{n}\t{}", g8(*v));
+    }
+    for (n, v) in &r.1 {
+        let _ = writeln!(out, "{}\t{n}\t{}", reference_row_tag(kind), g8(*v));
     }
     write_text(&format!("{dir}/reference.tsv"), &out);
-    (digest, r)
+}
+
+/// Every graded row name a history read can carry: the fit targets, the macro panel's, the bars',
+/// the sectors', the satellite's and the dividend yield's. A row missing here is dropped from a
+/// cached reference, and the objective digest of a resumed run then disagrees with the fresh one.
+fn history_row_names() -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = ms::fit_targets(ms::anchors_named("sp500"))
+        .into_iter()
+        .chain(ms::fit_targets(ms::anchors_named("nasdaq")))
+        .map(|t| t.0)
+        .collect();
+    v.extend(
+        ms::macro_placement_rows(ms::anchors_named("sp500"))
+            .iter()
+            .map(|r| r.0),
+    );
+    v.extend(ms::BAR_ROWS);
+    v.extend(ms::SECTOR_ROWS);
+    v.extend(ms::SATELLITE_ROWS);
+    v.push(ms::DIVIDEND_ROW);
+    v.sort_unstable();
+    v.dedup();
+    v
 }
 
 /// A member's key in `held.tsv`: its seed world and its dials as the archive writes them, so a
@@ -1823,10 +2928,65 @@ fn least_distinct(arc: &[Member]) -> Option<usize> {
     Some(worst.1)
 }
 
+/// THE SAME TRIM on any vectors -- the Pareto reserve's family aggregates -- with only the
+/// `removable` entries eligible: of the closest pair with a removable member, the one that scores
+/// worse goes, or the removable one when the worse is not.
+fn least_distinct_on(vecs: &[Vec<f64>], scores: &[f64], removable: &[bool]) -> Option<usize> {
+    let n = vecs.len();
+    let k = vecs.iter().map(Vec::len).max().unwrap_or(0);
+    let span: Vec<f64> = (0..k)
+        .map(|j| {
+            let xs: Vec<f64> = vecs
+                .iter()
+                .filter_map(|v| v.get(j).copied())
+                .filter(|x| x.is_finite())
+                .collect();
+            if xs.is_empty() {
+                0.0
+            } else {
+                xs.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                    - xs.iter().copied().fold(f64::INFINITY, f64::min)
+            }
+        })
+        .collect();
+    if n < 2 || span.iter().all(|s| *s <= 0.0) {
+        return None;
+    }
+    let dist = |a: &[f64], b: &[f64]| -> f64 {
+        (0..span.len())
+            .filter(|&j| span[j] > 0.0)
+            .filter_map(|j| {
+                let (x, y) = (a.get(j)?, b.get(j)?);
+                (x.is_finite() && y.is_finite()).then(|| ((x - y) / span[j]).powi(2))
+            })
+            .sum::<f64>()
+            .sqrt()
+    };
+    let mut worst: Option<(f64, usize)> = None;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if !(removable[i] || removable[j]) {
+                continue;
+            }
+            let d = dist(&vecs[i], &vecs[j]);
+            if worst.is_none_or(|(w, _)| d < w) {
+                let loser = if scores[i] > scores[j] { i } else { j };
+                let loser = if removable[loser] {
+                    loser
+                } else {
+                    i + j - loser
+                };
+                worst = Some((d, loser));
+            }
+        }
+    }
+    worst.map(|(_, i)| i)
+}
+
 /// The archive as a worlds JSON in the sidecar's own key format -- what a consumer runs a strategy
 /// across.
 fn export_worlds(dir: &str, file: &str, seed_for: &dyn Fn(&str) -> World) {
-    let arc = read_archive(dir);
+    let (arc, _) = read_archive(dir);
     if arc.is_empty() {
         usage(&format!("no archive in {dir} to export"));
     }
@@ -1878,6 +3038,10 @@ fn read_text(path: &str) -> Option<String> {
 
 // ---- cli --------------------------------------------------------------------------------------
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one help text, a line per option; split, the options would no longer read in one place"
+)]
 fn usage(msg: &str) -> ! {
     if !msg.is_empty() {
         eprintln!("error: {msg}\n");
@@ -1891,7 +3055,8 @@ fn usage(msg: &str) -> ! {
                 ;   come from the seed, so seeding from a recipe searches THAT configuration
   -paths N      ; ensemble paths per evaluation (default 60)
   -years Y      ; years per path (default 80)
-  -reps K       ; seeds a candidate must pass feasibility on, all of them (default 2); at 1 each
+  -reps K       ; reads of a candidate (default 2): its bounds (the gate classes, -gap, -hold) on
+                ;   every read, the placement once over all their histories pooled; at 1 each
                 ;   generation reads one passing candidate once more, for the seed noise alone
   -sigma S      ; mutation sd as a fraction of each dial's range (default 0.07; 0.20 breaks),
                 ;   the news rate's in ln(1 + rate)
@@ -1907,8 +3072,9 @@ fn usage(msg: &str) -> ! {
                 ;   archive's spread, the report's CLOSED rule, a block being an eighth of the
                 ;   run and at least 75 generations, so never before generation 300
                 ;   (default 2; 0 = never stop on its own)
-  -dead D       ; dead zone in anchor sds; a row inside it scores 0 (default 0.5).  At 1.0 a
-                ;   calibrated world scores 0 on every row and the objective goes flat
+  -dead D       ; the price, in anchor sds, of a fidelity gate the placement does not cover (the
+                ;   valuation dispersion band, a basket row) and the size of regression the log names
+                ;   (default 0.5); an infeasible read's logged score is still the dead-zone sum
   -seed S       ; base seed (default 20260813)
   -holdout K    ; re-score every archive member on K seeds the search never selected on, at
                 ;   the recorded ensemble, and exit
@@ -1945,10 +3111,35 @@ fn usage(msg: &str) -> ! {
                 ;   realism,mechanism, the verdict's own).  With fidelity the bands a search
                 ;   otherwise only prices gate too, which every member of a calibration set has to
                 ;   pass anyway; realism is always in
+  -record F     ; a record OVERRIDE, row<TAB>value a line: the rows named read these as their
+                ;   records in the placement and the score (the reference's too), so a synthetic
+                ;   record cut from one history of a designed world can be fitted and the fit judged
+                ;   (-validate -record F): the overfit check. Named in the objective digest
+  -objective K  ; what a feasible read scores: ledger (default), the ledger score as the gap
+                ;   ledger tool computes it on the same read -- over every graded row the row's
+                ;   weight times the record's CRPS under the read's single histories in the
+                ;   record's own scale (each reading clipped to the record +- 50 scales) plus 3
+                ;   times the model's share of the separation from the record when the two sit
+                ;   on opposite sides of the row's null -- or crps, the record's CRPS in the
+                ;   -noregress yardstick. Feasibility (the placement, the gates) and -noregress
+                ;   are the same under either; the log's `ledger` column carries each read's
+                ;   score as seed:score for the tool to check
+  -ledger F     ; the ledger's row table, row<TAB>units<TAB>weight<TAB>null<TAB>scale sp500<TAB>
+                ;   scale nasdaq a line as the gap ledger tool writes it (-units); required under
+                ;   -objective ledger, and a graded row it does not name, or gives no scale in the
+                ;   run's world, stops the search by name. Under it the archive carries each
+                ;   member's tier (core, the scalar admission's; pareto, the reserve of members no
+                ;   other is at least as good as on all eight family aggregates -- each units
+                ;   class's summed scaled CRPS and summed sign shares x 3 -- within 0.1 scales and
+                ;   strictly better on one, the whole capped at 400 by the spread trim on those
+                ;   aggregates), its `ledger` score and, per table row, crps:ROW, sign:ROW and
+                ;   model:ROW, for re-weighting after the fact; a fidelity gate the placement does
+                ;   not cover costs 3 scales and -noregress prices each row's ledger score over
+                ;   the recipe's
   -noregressset F ; -noregress against a SET's median member: F as -seedworlds, one read each
-  -noregress R  ; price every row a candidate holds further from its record than recipe R does,
-                ;   by the difference (R read at the search's ensemble, the mean of six reads):
-                ;   the release rule, which a dead zone alone lets every row drift inside
+  -noregress R  ; price every graded row whose CRPS exceeds recipe R's on that row by the
+                ;   difference (R read at the search's ensemble, the mean of six reads, which also
+                ;   set the yardstick): the release rule, so no row drifts out unpaid
   -seedset KV   ; comma-separated DIAL=VALUE (e.g. 'overshoot=0.8,recessBase=1') applied to every
                 ;   seed world before the search starts: the lineage roots at the recipe moved to a
                 ;   form found by hand, and the quality bar is judged against that world.  Searched
@@ -1956,7 +3147,8 @@ fn usage(msg: &str) -> ! {
   -fix DIALS    ; comma-separated dials (e.g. 'disasterSize,disasterOvershoot') every child keeps
                 ;   at its parent's value, so at the seed's: the dials read off the record rather
                 ;   than solved.  The draws are made as without it, so the other dials step alike
-  -stage P      ; read a candidate's first P paths alone and reject it there if they fail it;
+  -stage P      ; read a candidate's first P paths alone and reject it there if they fail two
+                ;   or more of its bounds (never its placement, the pooled reads');
                 ;   a candidate they pass reads the rest, and the whole is the unstaged read bit
                 ;   for bit (default 0: every path at once)
   -stagecheck P ; read the same prefix and record its verdict in stage.tsv beside the full read's,
@@ -1971,6 +3163,12 @@ fn usage(msg: &str) -> ! {
                 ;   An extreme row is held by the record's percentile among the read's single
                 ;   histories (5-95), a multi-year row by their joint band.
                 ;   The seed worlds are exempt (they root the lineages); -holdout holds them to it
+                ;   MEMBERSHIP is the placement (the calibrated rule, docs/MarketSimWorlds.md): the
+                ;   record must be a typical single history of the candidate's primary arm over
+                ;   every graded row at once, p > 0.10, placed once among all its reads' histories
+                ;   pooled; a candidate it fails is infeasible, the log naming the units.  THE SCORE of a feasible read is the record's CRPS under
+                ;   the read's single histories summed over the graded rows, each in its yardstick
+                ;   (the record's own resample sd, else the reference world's history sd)
   -fidelity L   ; comma-separated PxY ensembles (e.g. 20x40,30x60).  Score the frozen pool at
                 ;   -paths/-years and at each of these, report how well each RANKS the worlds
                 ;   against the reference and what it costs, and exit.  Measured against 60x80:
@@ -2025,6 +3223,12 @@ struct Cfg {
     seed_worlds: String,
     /// the outgoing SET whose median member a row is priced against (`-noregressset`)
     noregress_set: String,
+    /// the record override file (`-record`), empty for the record itself
+    record: String,
+    /// the objective's form (`-objective`): `ledger` or `crps`
+    objective: String,
+    /// the ledger's row table (`-ledger FILE`)
+    ledger: String,
 }
 
 fn parse_args() -> Cfg {
@@ -2064,6 +3268,9 @@ fn parse_args() -> Cfg {
         project: String::new(),
         seed_worlds: String::new(),
         noregress_set: String::new(),
+        record: String::new(),
+        objective: "ledger".into(),
+        ledger: String::new(),
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -2112,6 +3319,12 @@ fn parse_args() -> Cfg {
             "-project" => c.project = need(&mut i, "-project"),
             "-seedworlds" => c.seed_worlds = need(&mut i, "-seedworlds"),
             "-noregressset" => c.noregress_set = need(&mut i, "-noregressset"),
+            "-record" => c.record = need(&mut i, "-record"),
+            "-objective" => c.objective = need(&mut i, "-objective"),
+            "-ledger" => c.ledger = need(&mut i, "-ledger"),
+            "-depth" => usage(
+                "-depth is retired: membership is the placement, the calibrated rule, on every read",
+            ),
             "-h" | "-help" | "--help" => usage(""),
             a => usage(&format!("unrecognized arg [{a}]")),
         }
@@ -2312,6 +3525,16 @@ fn main() {
     // Paths govern feasibility agreement and years govern ranking.  `-years` saves less than it looks:
     // the worst-crash row reads at its anchor's horizon, 100 years for the S&P, whatever `-years`
     // says.  20 paths is a floor, below which that row cannot place a record inside its band.
+    // THE OBJECTIVE'S FORM: the ledger score by default, its row table read here and refused
+    // incomplete at the first read that names a row it lacks; `-export` and `-prune` score nothing
+    let kind = ObjectiveKind::parse(&c.objective);
+    let ledger = std::sync::Arc::new(
+        if kind == ObjectiveKind::Ledger && !(c.prune || !c.export_to.is_empty()) {
+            read_ledger(&c.ledger)
+        } else {
+            Ledger::default()
+        },
+    );
     // the -fidelity ranking reads other ensembles, which a reference taken at this one does not fit
     let plain = Objective {
         dead: dead_zone(c.dead),
@@ -2323,6 +3546,11 @@ fn main() {
         stage: 0,
         stage_check: false,
         project_row: None,
+        yardstick: HashMap::new(),
+        place: true,
+        records: None,
+        kind,
+        ledger: ledger.clone(),
     };
     if !c.fidelity.is_empty() {
         let ens = parse_ensembles(&c.fidelity);
@@ -2404,6 +3632,14 @@ fn main() {
         return;
     }
 
+    // THE RECORD OVERRIDE (`-record`): the overfit check's synthetic record, named in every digest
+    let records: Option<HashMap<String, f64>> =
+        (!c.record.is_empty()).then(|| ms::record_overrides(&c.record));
+    let record_name = if c.record.is_empty() {
+        String::new()
+    } else {
+        format!("|record:{}", fnv(&read_text(&c.record).unwrap_or_default()))
+    };
     // THE REFERENCE (`-noregress`): the outgoing recipe read at this ensemble, before any candidate;
     // checked in every mode, read only where a candidate is scored (a search, `-holdout`)
     if !c.noregress.is_empty() && !c.noregress_set.is_empty() {
@@ -2423,11 +3659,22 @@ fn main() {
         if c.prune || !c.export_to.is_empty() {
             None
         } else {
-            let (digest, r) =
-                set_reference(&rows, &text, anchors, c.paths, c.years, c.base, &c.out);
+            let (digest, r) = set_reference(
+                &rows,
+                &text,
+                anchors,
+                c.paths,
+                c.years,
+                c.base,
+                &c.out,
+                records.as_ref(),
+                &record_name,
+                kind,
+                &ledger,
+            );
             noregress_name = format!("set:{digest}");
             println!(
-                "noregress: the median member of {} ({} worlds) at {} x {}y; a row further from its record costs the difference",
+                "noregress: the median member of {} ({} worlds) at {} x {}y; a row's CRPS over the median member's costs the difference",
                 c.noregress_set,
                 rows.len(),
                 c.paths,
@@ -2453,12 +3700,74 @@ fn main() {
         if c.prune || !c.export_to.is_empty() {
             None
         } else {
-            let r = reference_distances(&w, anchors, c.paths, c.years, c.base);
+            let digest = fnv(&format!(
+                "{}|{}|{}|{}|{}|{}{record_name}",
+                c.noregress,
+                anchors.name,
+                c.paths,
+                c.years,
+                c.base,
+                reference_tag(kind, &ledger)
+            ));
+            let r = cached_reference(&c.out, &digest, kind, &ledger).unwrap_or_else(|| {
+                let r = reference_of(
+                    &w,
+                    anchors,
+                    c.paths,
+                    c.years,
+                    c.base,
+                    records.as_ref(),
+                    kind,
+                    &ledger,
+                );
+                write_reference(&c.out, &digest, &r, kind);
+                r
+            });
             println!(
-                "noregress: {} at {} x {}y, the mean of {NOREGRESS_READS} reads; a row further from its record costs the difference",
-                c.noregress, c.paths, c.years
+                "noregress: {} at {} x {}y, the mean of {NOREGRESS_READS} reads; a row's {} over the recipe's costs the difference",
+                c.noregress,
+                c.paths,
+                c.years,
+                match kind {
+                    ObjectiveKind::Crps => "CRPS",
+                    ObjectiveKind::Ledger => "ledger score",
+                }
             );
             Some(r)
+        }
+    };
+    // THE YARDSTICK: the reference's, or the first seed world's read the same way, frozen in the
+    // checkpoint; `-export` and `-prune` score nothing and carry none
+    let (yardstick, reference): (Rows, Option<Rows>) = match reference {
+        Some((yard, crps)) => (yard, Some(crps)),
+        None if c.prune || !c.export_to.is_empty() => (Vec::new(), None),
+        None => {
+            let (_, w) = pool
+                .first()
+                .unwrap_or_else(|| usage("no seed world to set the yardstick from"));
+            let digest = fnv(&format!(
+                "yard|{}|{}|{}|{}|{}{record_name}",
+                ms::world_digest(w),
+                anchors.name,
+                c.paths,
+                c.years,
+                c.base
+            ));
+            let (yard, _) = cached_reference(&c.out, &digest, kind, &ledger).unwrap_or_else(|| {
+                let r = reference_of(
+                    w,
+                    anchors,
+                    c.paths,
+                    c.years,
+                    c.base,
+                    records.as_ref(),
+                    kind,
+                    &ledger,
+                );
+                write_reference(&c.out, &digest, &r, kind);
+                r
+            });
+            (yard, None)
         }
     };
     // THE GAP ROWS (`-gap`): each must name a graded row of this anchor set -- a record band, or a
@@ -2541,6 +3850,11 @@ fn main() {
                     "-project names [{dial}], which is not a searched dial"
                 ))
             });
+        if ms::SEARCH_INV_DIALS.contains(&dial.trim()) {
+            usage(&format!(
+                "-project solves a dial on a straight slope, and [{dial}] is searched in its tightness"
+            ));
+        }
         let (name, _, target, _) = ms::fit_targets(anchors)
             .into_iter()
             .find(|(n, _, _, _)| *n == row.trim())
@@ -2565,6 +3879,11 @@ fn main() {
         stage: c.stage.max(c.stage_check),
         stage_check: c.stage_check > 0,
         project_row: project.map(|(_, row, _)| row),
+        yardstick: yardstick.iter().copied().collect(),
+        place: true,
+        records: records.clone(),
+        kind,
+        ledger: ledger.clone(),
     };
 
     let mut prior = read_state(&c.out);
@@ -2603,6 +3922,9 @@ fn main() {
                 .map(|r| (noregress_name.as_str(), r)),
             &obj.gap,
             &obj.hold,
+            &yardstick,
+            &record_name,
+            &obj.ledger,
         ),
     };
     let settings: Vec<(String, String)> = vec![
@@ -2644,8 +3966,13 @@ fn main() {
         // the coordinates a child is stepped in and the archive's distance is read in
         (
             "steps".into(),
-            format!("ln1p:{}", ms::SEARCH_LOG_DIALS.join(",")),
+            format!(
+                "ln1p:{};tight:{}",
+                ms::SEARCH_LOG_DIALS.join(","),
+                ms::SEARCH_INV_DIALS.join(",")
+            ),
         ),
+        ("membership".into(), MEMBERSHIP.to_string()),
         // how a child is drawn from its parent: one dial at a time, or along the archive's shape
         (
             "proposal".into(),
@@ -2667,7 +3994,7 @@ fn main() {
             "gateClasses".into(),
             ms::gate_classes_label(&ms::parse_gate(&c.gate)),
         ),
-        ("score".into(), "sum-excess".to_string()),
+        ("score".into(), obj.kind.label().to_string()),
         ("objective".into(), objective),
         (
             "transport".into(),
@@ -2726,55 +4053,9 @@ fn main() {
         ),
     ];
 
-    let loaded = read_archive(&c.out);
-    // a checkpoint without `score` was scored on the worst row alone, and one without `gates` gated
-    // on its own ensemble; a resume must refuse, not adopt, since its members were admitted by
-    // another standard
-    if !loaded.is_empty() && !prior.contains_key("score") {
-        prior.insert("score".into(), "worst-row".into());
-    }
-    // one written before `candidateSeeds` read its candidates a path stride apart
-    if !loaded.is_empty() && !prior.contains_key("candidateSeeds") {
-        prior.insert("candidateSeeds".into(), "path-stride".into());
-    }
-    // one written before `noiseReads` read its seed noise off the reps' spread alone
-    if !loaded.is_empty() && !prior.contains_key("noiseReads") {
-        prior.insert("noiseReads".into(), "reps".into());
-    }
-    // one written before `-hold` held no row
-    if !loaded.is_empty() && !prior.contains_key("hold") {
-        prior.insert("hold".into(), "(none)".into());
-    }
-    // one written before `-fix` stepped every dial
-    if !loaded.is_empty() && !prior.contains_key("fix") {
-        prior.insert("fix".into(), "(none)".into());
-    }
-    // one written before `-gate` gated on the verdict's default classes
-    if !loaded.is_empty() && !prior.contains_key("gateClasses") {
-        prior.insert("gateClasses".into(), "realism,mechanism".into());
-    }
-    if !loaded.is_empty() && !prior.contains_key("gates") {
-        prior.insert("gates".into(), "search-ensemble".into());
-    }
-    // one written before `-stage` read every path at once, and one before `-project` stepped every dial
-    if !loaded.is_empty() && !prior.contains_key("stage") {
-        prior.insert("stage".into(), "0".into());
-    }
-    if !loaded.is_empty() && !prior.contains_key("project") {
-        prior.insert("project".into(), "(none)".into());
-    }
-    // one written before `-cov` existed drew its children one dial at a time
-    if !loaded.is_empty() && !prior.contains_key("proposal") {
-        prior.insert("proposal".into(), "dial".into());
-    }
-    // one without `transportWeight` priced its transport arm in full
-    if !loaded.is_empty() && !prior.contains_key("transportWeight") {
-        let full = if prior.get("transport").is_none_or(|t| t == "(none)") {
-            "(none)"
-        } else {
-            "1.0000"
-        };
-        prior.insert("transportWeight".into(), full.into());
+    let (loaded, loaded_reserve) = read_archive(&c.out);
+    if !loaded.is_empty() {
+        with_settings_before(&mut prior);
     }
     let gen0: u64 = prior.get("gen").and_then(|s| s.parse().ok()).unwrap_or(0);
     let evals0: u64 = prior.get("evals").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -2790,10 +4071,7 @@ fn main() {
     // A resume that changes how a candidate is judged puts two standards in one archive and says
     // nothing about it. Refuse, unless told the change is deliberate.
     if !loaded.is_empty() {
-        let drift: Vec<&(String, String)> = settings
-            .iter()
-            .filter(|(k, v)| prior.get(k).is_some_and(|p| p != v))
-            .collect();
+        let drift = drifted(&settings, &prior);
         let missing: Vec<&str> = settings
             .iter()
             .map(|(k, _)| k.as_str())
@@ -2860,10 +4138,23 @@ fn main() {
                     r.raw,
                     r.worst
                 );
+                // the ledger score per read, for the gap ledger tool to check on the same seed
+                if !r.ledger.is_empty() {
+                    println!("    ledger: {}", r.ledger.join(" "));
+                }
                 // a rejected seed names the gates it failed: its worst row is a fitness row, not
                 // the reason
                 if !r.feasible {
                     println!("    fails: {}", r.gate_fail.join("; "));
+                }
+                let thin: Vec<&str> = r
+                    .gate_fail
+                    .iter()
+                    .filter(|f| f.starts_with("placement: "))
+                    .map(String::as_str)
+                    .collect();
+                if r.feasible && !thin.is_empty() {
+                    println!("    {}", thin.join("; "));
                 }
                 if !r.watch_miss.is_empty() {
                     println!("    misses gap rows: {}", r.watch_miss.join(", "));
@@ -2917,6 +4208,7 @@ fn main() {
                 raw: r.raw,
                 worst: r.worst.clone(),
                 desc: r.desc.clone(),
+                ledger: r.ledger_vec.clone(),
             })
             .collect();
         if seeded.is_empty() {
@@ -2993,7 +4285,16 @@ fn main() {
             );
         }
         write_text(&format!("{}/dropped.tsv", c.out), &out);
-        write_archive(&c.out, &kept, gen0, evals0, (nsum0, nn0), &settings);
+        write_archive(
+            &c.out,
+            &kept,
+            &loaded_reserve,
+            gen0,
+            evals0,
+            (nsum0, nn0),
+            &settings,
+            &ledger,
+        );
         println!(
             "archive pruned to {}; {} moved to {}/dropped.tsv",
             kept.len(),
@@ -3231,12 +4532,21 @@ fn main() {
         return;
     }
 
-    write_archive(&c.out, &start_arc, gen0, evals0, (nsum0, nn0), &settings);
+    write_archive(
+        &c.out,
+        &start_arc,
+        &loaded_reserve,
+        gen0,
+        evals0,
+        (nsum0, nn0),
+        &settings,
+        &ledger,
+    );
     // THE HEADER IS A CONTRACT, and it is written only when the log is absent, so a resume
     // after a column was added would append wider rows under the narrower header and quietly
     // ragged the file. Refuse instead: the run that wrote those rows read a different log.
     let header = format!(
-        "gen\teval\tparent\tfeasible\tscore\traw\tworstRow\tseconds\t{}\tgateFail\tadmitted\n",
+        "gen\teval\tparent\tfeasible\tscore\traw\tworstRow\tseconds\t{}\tgateFail\tadmitted\tledger\n",
         DESC_NAMES.join("\t")
     );
     match read_text(&format!("{}/log.tsv", c.out)) {
@@ -3364,6 +4674,9 @@ fn main() {
     let mut noise_sum = nsum0;
     let mut noise_n = nn0;
     let mut arc = start_arc;
+    // THE PARETO RESERVE (`reserve_after`), under the ledger objective: the non-dominated members
+    // the scalar admission discards, kept beside the core and never drawn from as parents
+    let mut reserve: Vec<Member> = loaded_reserve;
     let mut g = gen0;
     let mut evals = evals0;
     while c.gens == 0 || g < gen0 + c.gens {
@@ -3477,29 +4790,33 @@ fn main() {
                 } else {
                     0.0
                 };
-                let (next, entered) = admit(
-                    arc,
-                    Member {
-                        name: parent.name.clone(),
-                        dials: child,
-                        score: r.score,
-                        raw: r.raw,
-                        worst: r.worst.clone(),
-                        desc: r.desc.clone(),
-                    },
-                    c.sep,
-                    c.keep,
-                    noise,
-                );
+                let cand = Member {
+                    name: parent.name.clone(),
+                    dials: child,
+                    score: r.score,
+                    raw: r.raw,
+                    worst: r.worst.clone(),
+                    desc: r.desc.clone(),
+                    ledger: r.ledger_vec.clone(),
+                };
+                let before: Vec<Member> = if obj.kind == ObjectiveKind::Ledger {
+                    arc.clone()
+                } else {
+                    Vec::new()
+                };
+                let (next, entered) = admit(arc, cand.clone(), c.sep, c.keep, noise);
                 arc = next;
                 took = entered;
+                if obj.kind == ObjectiveKind::Ledger {
+                    reserve = reserve_after(&before, &arc, &cand, reserve, &obj.ledger);
+                }
                 if took {
                     trace.push((g, r.desc.clone()));
                     held.insert(child_key, round8(r.held));
                 }
             }
             log.push(format!(
-                "{g}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}\t{:.3}\t{}\t{}\t{took}",
+                "{g}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}\t{:.3}\t{}\t{}\t{took}\t{}",
                 // `evals` is the SEED SLOT this candidate drew from (rep j reads `candidate_seed(base,
                 // evals + j)`), so a log line reproduces its candidate
                 evals,
@@ -3510,7 +4827,8 @@ fn main() {
                 r.worst,
                 secs,
                 bs.join("\t"),
-                gate_fail
+                gate_fail,
+                r.ledger.join(" ")
             ));
             // every candidate's dials, so what it was can be read back without re-deriving the
             // draws: the log carries its descriptors and the archive only the members
@@ -3560,7 +4878,16 @@ fn main() {
                 &stage_log,
             );
         }
-        write_archive(&c.out, &arc, g + 1, evals, (noise_sum, noise_n), &settings);
+        write_archive(
+            &c.out,
+            &arc,
+            &reserve,
+            g + 1,
+            evals,
+            (noise_sum, noise_n),
+            &settings,
+            &ledger,
+        );
         if project.is_some() {
             write_held(&c.out, &arc, &held);
         }
@@ -3640,6 +4967,333 @@ mod seed_stream_tests {
 }
 
 #[cfg(test)]
+mod ledger_tests {
+    use super::*;
+
+    fn table_of(rows: &[(&'static str, &'static str, f64, Option<f64>)]) -> Ledger {
+        let mut t = Ledger::default();
+        for (name, units, weight, null) in rows {
+            t.index.insert(name, t.rows.len());
+            t.rows.push(LedgerSpec {
+                name,
+                units,
+                weight: *weight,
+                null: *null,
+                scales: [Some(1.0), Some(1.0)],
+            });
+        }
+        t
+    }
+
+    fn hist_of(name: &'static str, reads: &[f64], record: f64) -> ms::HistoryRow {
+        ms::HistoryRow {
+            name,
+            horizon: 1,
+            reads: reads.to_vec(),
+            record: Some(record),
+        }
+    }
+
+    fn nasdaq() -> Anchors {
+        ms::anchors_named("nasdaq")
+    }
+
+    fn score_of(
+        rows: &[LedgerRow],
+        hist: &[ms::HistoryRow],
+        table: &Ledger,
+    ) -> Result<f64, String> {
+        ledger_vector(rows, hist, nasdaq(), table).map(|v| ledger_sum(&v, table))
+    }
+
+    /// The score is weight x (the record's CRPS under the histories in the world's record scale,
+    /// plus 3 x sign share), the share taken on the printed two-decimal figures, a level never on
+    /// the wrong side; a row the table lacks, or gives no scale in this world, refused by name.
+    #[test]
+    fn the_ledger_score_is_the_crps_in_record_scales_plus_the_sign() {
+        let mut table = table_of(&[
+            ("a", "vol", 2.0, Some(1.0)),
+            ("b", "loss", 3.0, None),
+            ("c", "shape", 1.0, Some(0.0)),
+        ]);
+        table.rows[0].scales = [Some(0.5), Some(0.1)];
+        table.rows[1].scales = [Some(4.0), Some(2.0)];
+        table.rows[2].scales = [None, Some(1.0)];
+        let rows: Vec<LedgerRow> = vec![
+            // a ratio on the wrong side of 1: share 0.02 / (0.02 + 0.08)
+            ("a", 96, 1.02, 0.92, None),
+            // a level: the CRPS alone
+            ("b", 10, -80.0, -80.0, None),
+        ];
+        let hist = [
+            hist_of("a", &[1.0, 1.1], 0.92),
+            hist_of("b", &[-90.0, -80.0, -70.0], -80.0),
+        ];
+        // a: E|X - y| 0.13, E|X - X'| 0.05, so 0.105 in the nasdaq scale 0.1;
+        // b: 20/3 - 40/9 = 20/9 in the scale 2
+        let want = 2.0 * (1.05 + 3.0 * 0.2) + 3.0 * (20.0 / 9.0 / 2.0);
+        let got = score_of(&rows, &hist, &table).expect("every row named");
+        assert!((got - want).abs() < 1e-9, "{got} against {want}");
+        let missing = score_of(&[("tail hedge", 50, 0.0, 0.0, None)], &hist, &table);
+        assert_eq!(
+            missing,
+            Err("the ledger table has no row [tail hedge]".to_string())
+        );
+        let no_scale = ledger_vector(
+            &[("c", 50, 0.1, 0.15, None)],
+            &[hist_of("c", &[0.1, 0.2], 0.15)],
+            ms::anchors_named("sp500"),
+            &table,
+        );
+        assert_eq!(
+            no_scale,
+            Err(format!(
+                "the ledger table has no scale for [c] in {}",
+                ms::anchors_named("sp500").name
+            ))
+        );
+        // the vector in table order, NaN on a row the read did not grade, and the families:
+        // loss crps 10/9 / signs 0; vol crps 1.05 / signs 0.6
+        let v = ledger_vector(&rows, &hist, nasdaq(), &table).expect("named");
+        assert!(v[2][0].is_nan() && v[1][1] == 0.0 && v[0][2] == 1.02);
+        let fam = ledger_families(&v, &table);
+        let want_fam = [0.0, 0.0, 10.0 / 9.0, 0.0, 1.05, 0.6, 0.0, 0.0];
+        assert!(
+            fam.iter().zip(want_fam).all(|(a, b)| (a - b).abs() < 1e-9),
+            "{fam:?}"
+        );
+    }
+
+    /// A ruined leg (-inf) or a runaway history is clipped to the record +- 50 scales, a large miss
+    /// in proportion to its share; a NaN reading is left out; under two readable histories the
+    /// row is not graded.
+    #[test]
+    fn a_ruined_history_is_a_clipped_miss_and_two_readings_are_needed() {
+        let table = table_of(&[("c", "shape", 1.0, Some(0.0))]);
+        let row: Vec<LedgerRow> = vec![("c", 50, 0.15, 0.15, None)];
+        let hist = [hist_of("c", &[f64::NEG_INFINITY, 0.1, 0.2, f64::NAN], 0.15)];
+        let v = ledger_vector(&row, &hist, nasdaq(), &table).expect("named");
+        let want = ms::crps(&[0.15 - 50.0, 0.1, 0.2], 0.15);
+        assert!(want.is_finite() && want > 5.0, "{want}");
+        assert_eq!(v[0][0].to_bits(), want.to_bits());
+        let thin = [hist_of("c", &[0.1, f64::NAN], 0.15)];
+        let v = ledger_vector(&row, &thin, nasdaq(), &table).expect("named");
+        assert!(v[0][0].is_nan(), "one readable history grades nothing");
+        let none = ledger_vector(&row, &[], nasdaq(), &table).expect("named");
+        assert!(none[0][0].is_nan(), "no histories grade nothing");
+    }
+
+    /// A printed NaN is not a graded figure: the tool's line pattern does not match it.
+    #[test]
+    fn a_row_without_a_printed_figure_is_left_out() {
+        let table = table_of(&[("x", "return", 4.0, Some(0.0))]);
+        let hist = [hist_of("x", &[0.5, 1.5], 1.0)];
+        assert_eq!(
+            score_of(&[("x", 90, f64::NAN, 1.0, None)], &hist, &table),
+            Ok(0.0)
+        );
+    }
+
+    /// A banded row's sign counts only where the record establishes it, its null outside the
+    /// record's band on the printed figures: inside, the CRPS alone; an edge printed at the null,
+    /// or a band on one side of it, keeps the share; a history row (no band) always keeps it.
+    #[test]
+    fn a_banded_rows_sign_counts_only_with_its_null_outside_the_band() {
+        let table = table_of(&[("x", "vol", 2.0, Some(0.0)), ("r", "shape", 1.0, Some(1.0))]);
+        // histories at the record: a CRPS of 0, so the score is the sign term alone
+        let at = |name: &'static str, model: f64, record: f64, band: Option<(f64, f64)>| {
+            let hist = [hist_of(name, &[record, record], record)];
+            score_of(&[(name, 60, model, record, band)], &hist, &table).expect("named")
+        };
+        // model -0.5 and record 0.5 straddle 0: share 0.5
+        let crossed = 2.0 * (3.0 * 0.5);
+        assert_eq!(at("x", -0.5, 0.5, None), crossed, "a history row");
+        assert_eq!(
+            at("x", -0.5, 0.5, Some((-2.96, 5.13))),
+            0.0,
+            "the null inside"
+        );
+        assert_eq!(
+            at("x", -0.5, 0.5, Some((0.2, 1.5))),
+            crossed,
+            "the band above the null"
+        );
+        // the record below 0 on a band whose top prints -0.00 or 0.00: the edge is not inside
+        let edge = 2.0 * (3.0 * 0.6);
+        assert!(
+            (at("x", 0.3, -0.2, Some((-0.40, -0.001))) - edge).abs() < 1e-12,
+            "-0.40..-0.00"
+        );
+        assert!(
+            (at("x", 0.3, -0.2, Some((-0.40, 0.004))) - edge).abs() < 1e-12,
+            "-0.40..0.00"
+        );
+        assert_eq!(
+            at("x", 0.3, -0.2, Some((-0.40, 0.006))),
+            0.0,
+            "-0.40..0.01 holds 0"
+        );
+        // a ratio's null is 1
+        assert_eq!(
+            at("r", 1.02, 0.92, Some((0.85, 1.08))),
+            0.0,
+            "a ratio band holding 1"
+        );
+    }
+
+    /// Epsilon-dominance: at least as good within 0.1 scales on every aggregate and strictly
+    /// better on one.
+    #[test]
+    fn epsilon_dominance_reads_the_eight_aggregates() {
+        assert!(eps_dominates(&[10.0, 0.0], &[12.0, 0.0]));
+        assert!(
+            eps_dominates(&[10.0, 0.08], &[12.0, 0.0]),
+            "0.08 scales worse is within the epsilon"
+        );
+        assert!(
+            !eps_dominates(&[10.0, 0.12], &[12.0, 0.0]),
+            "0.12 scales worse is not"
+        );
+        assert!(
+            !eps_dominates(&[10.0, 0.0], &[10.0, 0.0]),
+            "equal is not strictly better"
+        );
+    }
+
+    /// The reserve keeps a discarded member no archive member dominates, drops one the candidate
+    /// dominates, and never holds a core member.
+    #[test]
+    fn the_reserve_keeps_the_non_dominated_discards() {
+        let table = table_of(&[("a", "return", 4.0, Some(0.0)), ("b", "loss", 3.0, None)]);
+        let member = |dial: f64, score: f64, ga: f64, gb: f64| Member {
+            name: "s".to_string(),
+            dials: vec![dial],
+            score,
+            raw: 0.0,
+            worst: String::new(),
+            desc: Vec::new(),
+            ledger: Some(vec![[ga, 0.0, 0.0], [gb, 0.0, 0.0]]),
+        };
+        // the core replaced m1 by the candidate; m1 is better on the loss family: kept
+        let m1 = member(1.0, 300.0, 40.0, 10.0);
+        let cand = member(2.0, 200.0, 10.0, 40.0);
+        let core = vec![cand.clone()];
+        let reserve = reserve_after(std::slice::from_ref(&m1), &core, &cand, Vec::new(), &table);
+        assert_eq!(reserve.len(), 1);
+        assert_eq!(reserve[0].dials, vec![1.0]);
+        // a discard the candidate dominates on both families is not kept
+        let m2 = member(3.0, 400.0, 30.0, 45.0);
+        let reserve = reserve_after(&[m2], &core, &cand, reserve, &table);
+        assert_eq!(reserve.len(), 1);
+        // a later core member dominating the reserve's member drops it
+        let better = member(4.0, 100.0, 5.0, 5.0);
+        let core = vec![cand.clone(), better.clone()];
+        let reserve = reserve_after(&[], &core, &better, reserve, &table);
+        assert!(reserve.is_empty());
+    }
+
+    /// The archive round-trips its ledger columns and tiers, and the `ledger` column is the
+    /// table-order weighted sum the re-pick tool computes.
+    #[test]
+    fn the_archive_carries_the_ledger_columns() {
+        let table = table_of(&[("a", "return", 4.0, Some(0.0)), ("b", "loss", 3.0, None)]);
+        let dir = std::env::temp_dir().join(format!("ledger-archive-{}", std::process::id()));
+        let dir = dir.to_str().expect("path").to_string();
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let n = ranges().len();
+        let m = Member {
+            name: "seed".to_string(),
+            dials: vec![0.5; n],
+            score: 1.0,
+            raw: 0.5,
+            worst: "a".to_string(),
+            desc: vec![1.0; DESC_NAMES.len()],
+            ledger: Some(vec![[12.0, 0.25, 1.5], [f64::NAN; 3]]),
+        };
+        let p = Member {
+            dials: vec![0.25; n],
+            ..m.clone()
+        };
+        write_archive(
+            &dir,
+            std::slice::from_ref(&m),
+            &[p],
+            3,
+            7,
+            (0.0, 0),
+            &[],
+            &table,
+        );
+        let text = read_text(&format!("{dir}/archive.tsv")).expect("written");
+        let head = text.lines().next().expect("header");
+        assert!(head.ends_with("\ttier\tledger\tcrps:a\tsign:a\tmodel:a\tcrps:b\tsign:b\tmodel:b"));
+        // 4 x (12 + 3 x 0.25)
+        let row = text.lines().nth(1).expect("core row");
+        assert!(
+            row.contains("\tcore\t51\t12\t0.25\t1.5\tNaN\tNaN\tNaN"),
+            "{row}"
+        );
+        let (core, reserve) = read_archive(&dir);
+        assert_eq!((core.len(), reserve.len()), (1, 1));
+        let back = core[0].ledger.as_ref().expect("the ledger columns");
+        assert_eq!(back[0], [12.0, 0.25, 1.5]);
+        assert!(back[1].iter().all(|x| x.is_nan()));
+        assert_eq!(reserve[0].dials, vec![0.25; n]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The table parses as the tool writes it, `none` the level's null and a world's missing
+    /// scale, and each world reads its own column.
+    #[test]
+    fn the_row_table_reads_as_the_tool_writes_it() {
+        let dir = std::env::temp_dir().join(format!("ledger-rows-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let f = dir.join("rows.tsv");
+        std::fs::write(
+            &f,
+            "row\tunits\tweight\tnull\tscale sp500\tscale nasdaq\nreturn per vol\treturn\t4\t0\t0.12\t0.27\nvariance ratio 20d\tshape\t1\t1\t0.04\t0.05\nworst crash %\tloss\t3\tnone\tnone\t9.5\n",
+        )
+        .expect("write");
+        let table = read_ledger(f.to_str().expect("path"));
+        assert_eq!(table.rows.len(), 3);
+        let spec = |n: &str| table.get(n).map(|r| (r.units, r.weight, r.null, r.scales));
+        assert_eq!(
+            spec("return per vol"),
+            Some(("return", 4.0, Some(0.0), [Some(0.12), Some(0.27)]))
+        );
+        assert_eq!(
+            spec("variance ratio 20d"),
+            Some(("shape", 1.0, Some(1.0), [Some(0.04), Some(0.05)]))
+        );
+        assert_eq!(
+            spec("worst crash %"),
+            Some(("loss", 3.0, None, [None, Some(9.5)]))
+        );
+        assert_eq!(table.rows[2].name, "worst crash %");
+        assert_eq!(table.scale(0, ms::anchors_named("sp500")), Some(0.12));
+        assert_eq!(table.scale(0, nasdaq()), Some(0.27));
+        assert_eq!(table.scale(2, ms::anchors_named("sp500")), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// EVERY ROW AT FULL WEIGHT (ruled 2026-10-22): the family aggregates sum each row's CRPS and
+    /// sign whole.
+    #[test]
+    fn every_row_counts_whole_in_the_family_aggregates() {
+        let t = table_of(&[
+            ("a", "return", 1.0, Some(0.0)),
+            ("b", "return", 1.0, Some(0.0)),
+        ]);
+        let v = vec![[3.0, 0.2, 1.0], [1.0, 0.4, 1.0]];
+        let f = ledger_families(&v, &t);
+        assert!(
+            (f[0] - 4.0).abs() < 1e-12 && (f[1] - 1.8).abs() < 1e-12,
+            "{f:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod noise_tests {
     use super::*;
 
@@ -3657,6 +5311,25 @@ mod noise_tests {
             watch_miss: Vec::new(),
             stage_fail: None,
             held: f64::NAN,
+            ledger: Vec::new(),
+            ledger_vec: None,
+            due: None,
+        }
+    }
+
+    /// THE QUANTILE IS AS241's: the values Python's `NormalDist.inv_cdf` returns, to the last
+    /// digits, in each of its three branches.
+    #[test]
+    fn the_normal_quantile_matches_the_judges() {
+        for (p, want) in [
+            (0.5, 0.0),
+            (0.975, 1.959_963_984_540_054),
+            (0.1, -1.281_551_565_544_600_5),
+            (1e-10, -6.361_340_902_404_056),
+            (0.999_999, 4.753_424_308_817_089),
+        ] {
+            let got = ms::ndtri(p);
+            assert!((got - want).abs() < 1e-12, "{p}: {got} vs {want}");
         }
     }
 
@@ -3678,6 +5351,11 @@ mod noise_tests {
             stage: 0,
             stage_check: false,
             project_row: Some("return per vol"),
+            yardstick: HashMap::new(),
+            place: true,
+            records: None,
+            kind: ObjectiveKind::Crps,
+            ledger: std::sync::Arc::new(Ledger::default()),
         };
         let staged = Objective {
             stage: 12,
@@ -3798,6 +5476,11 @@ mod watch_tests {
             stage: 0,
             stage_check: false,
             project_row: None,
+            yardstick: HashMap::new(),
+            place: true,
+            records: None,
+            kind: ObjectiveKind::Crps,
+            ledger: std::sync::Arc::new(Ledger::default()),
         }
         .without_gap();
         assert!(seed_obj.gap.is_empty() && seed_obj.watch == graded);
@@ -3839,6 +5522,7 @@ mod coverage_tests {
             raw: 0.0,
             worst: String::new(),
             desc: desc.to_vec(),
+            ledger: None,
         }
     }
 
@@ -3865,5 +5549,141 @@ mod coverage_tests {
         let flat: Vec<Member> = (0..3).map(|_| member(&[1.0])).collect();
         assert_eq!(coverage_weights(&flat), vec![1.0; 3]);
         assert_eq!(coverage_weights(&[member(&[])]), vec![1.0]);
+    }
+}
+
+#[cfg(test)]
+mod membership_tests {
+    use super::*;
+
+    /// Two exchangeable reads of three graded rows placed alone, the record drawn with them: each
+    /// row's 20 histories and its record iid standard normal from `seed`.
+    fn two_reads(seed: u64) -> (Vec<ms::HistoryRow>, Vec<ms::HistoryRow>) {
+        let mut rng = NumPyRng::new(seed);
+        let recs: Vec<f64> = (0..3).map(|_| rng.randn()).collect();
+        let mut read = || -> Vec<ms::HistoryRow> {
+            recs.iter()
+                .zip(["x", "y", "z"])
+                .map(|(&rec, name)| ms::HistoryRow {
+                    name,
+                    horizon: 1,
+                    reads: (0..20).map(|_| rng.randn()).collect(),
+                    record: Some(rec),
+                })
+                .collect()
+        };
+        let a = read();
+        let b = read();
+        (a, b)
+    }
+
+    /// A read within its bounds carrying `rows`: scored 1 with a ledger, 9 as a rejection, its
+    /// uncovered fidelity gate before a regression.
+    fn due_read(rows: Vec<ms::HistoryRow>) -> Read {
+        Read {
+            feasible: true,
+            score: 1.0,
+            raw: 1.0,
+            worst: "x".to_string(),
+            desc: Vec::new(),
+            total: 1.0,
+            gate_fail: vec!["fidelity: band".to_string(), "regress: x".to_string()],
+            spread: 0.0,
+            complete: true,
+            watch_miss: Vec::new(),
+            stage_fail: None,
+            held: f64::NAN,
+            ledger: vec!["1:1".to_string()],
+            ledger_vec: Some(Vec::new()),
+            due: Some(Box::new(Due {
+                rows,
+                at: 1,
+                rejected: Rejected {
+                    score: 9.0,
+                    raw: 3.0,
+                    worst: "y".to_string(),
+                    total: 7.0,
+                },
+            })),
+        }
+    }
+
+    fn placed(rows: &[ms::HistoryRow]) -> ms::Placement {
+        ms::placement(rows, ms::PLACEMENT_ALPHA)
+    }
+
+    /// MEMBERSHIP OVER A CANDIDATE'S READS IS THE POOLED PLACEMENT'S: a read failing its own does
+    /// not reject a candidate the pool passes; a read its bounds rejected leaves nothing to place.
+    #[test]
+    fn a_read_failing_its_own_placement_does_not_reject_what_the_pool_passes() {
+        use ms::PlacementVerdict::Fail;
+        use ms::PlacementVerdict::Pass;
+        let (a, b) = two_reads(57);
+        assert_eq!((placed(&a).verdict, placed(&b).verdict), (Fail, Pass));
+        assert_eq!(placed(&ms::pooled_history_rows(&[&a, &b])).verdict, Pass);
+        let got = placed_together(vec![due_read(a.clone()), due_read(b)], true);
+        assert!(
+            got.iter()
+                .all(|r| r.feasible && r.due.is_none() && r.score == 1.0 && r.ledger_vec.is_some())
+        );
+        assert_eq!(got[0].gate_fail, ["fidelity: band", "regress: x"]);
+
+        let mut out = due_read(Vec::new());
+        out.feasible = false;
+        out.due = None;
+        let got = placed_together(vec![due_read(a), out], true);
+        assert!(got[0].feasible && !got[1].feasible && got.iter().all(|r| r.due.is_none()));
+    }
+
+    /// Reads each passing their own placement do not admit a candidate the pool fails, every read
+    /// ranked as the rejection it is; a seed world is placed and reported, never rejected.
+    #[test]
+    fn reads_passing_their_own_placements_do_not_admit_what_the_pool_fails() {
+        use ms::PlacementVerdict::Fail;
+        use ms::PlacementVerdict::Pass;
+        let (a, b) = two_reads(107);
+        assert_eq!((placed(&a).verdict, placed(&b).verdict), (Pass, Pass));
+        let pool = placed(&ms::pooled_history_rows(&[&a, &b]));
+        assert_eq!(pool.verdict, Fail);
+        let got = placed_together(vec![due_read(a.clone()), due_read(b.clone())], true);
+        for r in &got {
+            assert!(!r.feasible && r.due.is_none());
+            assert_eq!(
+                (r.score, r.raw, r.worst.as_str(), r.total),
+                (9.0, 3.0, "y", 7.0)
+            );
+            assert!(r.ledger.is_empty() && r.ledger_vec.is_none());
+            assert_eq!(r.gate_fail, pool.failures());
+        }
+        let seeds = placed_together(vec![due_read(a), due_read(b)], false);
+        let want: Vec<String> = ["fidelity: band".to_string()]
+            .into_iter()
+            .chain(pool.failures())
+            .chain(["regress: x".to_string()])
+            .collect();
+        assert!(want.len() > 2, "the pool names its failing units");
+        for r in &seeds {
+            assert!(r.feasible && r.score == 1.0);
+            assert_eq!(r.gate_fail, want);
+        }
+    }
+
+    /// AN ARCHIVE SEARCHED UNDER PER-READ PLACEMENT REFUSES TO RESUME: its state names no
+    /// `membership`, which reads as the rule it ran under.
+    #[test]
+    fn an_archive_placed_per_read_refuses_to_resume() {
+        let settings = vec![
+            ("paths".to_string(), "200".to_string()),
+            ("membership".to_string(), MEMBERSHIP.to_string()),
+        ];
+        let mut prior: HashMap<String, String> =
+            HashMap::from([("paths".to_string(), "200".to_string())]);
+        with_settings_before(&mut prior);
+        assert_eq!(prior["membership"], MEMBERSHIP_BEFORE);
+        let drift = drifted(&settings, &prior);
+        assert_eq!(drift.len(), 1);
+        assert_eq!(drift[0].0, "membership");
+        prior.insert("membership".to_string(), MEMBERSHIP.to_string());
+        assert!(drifted(&settings, &prior).is_empty());
     }
 }

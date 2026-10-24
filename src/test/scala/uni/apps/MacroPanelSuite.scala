@@ -188,51 +188,35 @@ class MacroPanelSuite extends FunSuite:
     assert(ms.vrp.isFinite && ms.r2rv >= 0.0 && ms.r2rv <= 1.0)
   }
 
-  test("the bands are the fixture's: warning shares per set from its two references, the shape rows shared") {
+  test("the placement rows' records are the fixture's: the shape rows shared, the index-relative rows per set") {
     val rs = rows(Fixture)
     assume(rs.nonEmpty, s"$Fixture absent")
-    def at2(x: Double) = math.round(x * 100.0) / 100.0
-    // the lag bands are US-wide: +-40 sessions around the upper-middle (the twins' median) of the
-    // four references' median firing lags -- sessions from the peak to the first firing, over the
-    // 20% episodes the member fired in, rank members in the quarter before the peak
+    def at4(x: Double) = math.round(x * 10000.0) / 10000.0
     val refs = Vector(("sp500", "CRSP"), ("sp500", "SPY"), ("nasdaq", "NDX"), ("nasdaq", "QQQ"))
-    def lagBand(fred: String, member: String) =
-      val m = MarketSim.pctile(refs.map((s, r) => value(rs, s, s"$fred/$r", member, "lag20_63")), 0.5)
-      (m - 40.0, m + 40.0)
-    assertEquals(MarketSim.MacroBands.SpreadLag, lagBand("BAA10Y", "spread"))
-    assertEquals(MarketSim.MacroBands.CondLag,   lagBand("NFCILEVERAGE", "cond"))
-    // the build-up: the conditions index's mean trailing rank over the quarter before the peak,
-    // 0.12 under the four references' upper-middle, to 1 -- the coupling test, which a decoupled
-    // series (the null panel, 0.49) fails by construction
-    val pre = MarketSim.pctile(refs.map((s, r) => value(rs, s, s"NFCILEVERAGE/$r", "cond", "prepeak20_63")), 0.5)
-    assertEquals(MarketSim.MacroBands.CondPrePeak, (at2(pre - 0.12), 1.0))
+    // the mechanism's two constants: engaged clear of the null panel, and the references' minimum
+    // quarter-horizon 20% hazard floored to 0.1
     assert(refs.forall((s, r) => value(rs, s, s"NFCILEVERAGE/$r", "cond", "prepeak20_63") > 0.8),
       "the record's leverage index builds before every reference's peaks")
-    // the hazard: the references' minimum quarter-horizon 20% hazard, floored to 0.1
     val hz = refs.map((s, r) => value(rs, s, s"NFCILEVERAGE/$r", "cond", "hazard20_63"))
     assertEquals(MarketSim.MacroBands.HazardMin, math.floor(hz.min * 10.0) / 10.0)
     assert(hz.forall(_ > 1.4) && hz.max > 2.5, "leverage concentrates the big peaks on every reference")
-    // the record's conditions index leads the peak on three of the four references
     assert(refs.count((s, r) => value(rs, s, s"NFCILEVERAGE/$r", "cond", "lag20_63") < 0.0) >= 3)
-    // the shape rows: persistence +-0.08 around the record's, capped at 1
-    def acBand(fred: String, member: String, stat: String) =
-      val x = value(rs, "shared", fred, member, stat)
-      (at2(x - 0.08), at2(math.min(1.0, x + 0.08)))
-    assertEquals(MarketSim.MacroBands.SpreadAcK, acBand("BAA10Y", "spread", "ac20"))
-    assertEquals(MarketSim.MacroBands.CondAcK,   acBand("NFCILEVERAGE", "cond", "ac4"))
-    assertEquals(MarketSim.MacroBands.IvolAcK,   acBand("VIXCLS", "ivol", "ac20"))
-    // the oracle bound sits above every predictive R^2 the record shows, and not far above
-    // over the four measured members; the two draw-free levels are reported, not bounded
+    // the placement rows' records: the shape rows are US-wide, the index-relative rows read the
+    // set's own index (CRSP for the S&P, QQQ for the Nasdaq)
     val measured = Set("spread", "slope", "cond", "ivol")
-    val r2s = rs.filter(r => r(3) == "r2fwd60" && measured(r(2))).map(_(6).toDouble)
-    assert(r2s.nonEmpty && r2s.max < MarketSim.MacroBands.OracleR2 && MarketSim.MacroBands.OracleR2 <= r2s.max + 0.02,
-      f"oracle bound ${MarketSim.MacroBands.OracleR2} against the record's largest ${r2s.max}%.4f")
-    // the slope's inversion share and the variance risk premium bands hold the record
-    val inv = value(rs, "shared", "T10Y2Y", "slope", "invShare")
-    assert(inv > MarketSim.MacroBands.InvShare._1 && inv < MarketSim.MacroBands.InvShare._2)
-    for ref <- Vector("CRSP", "SPY") do
-      val vrp = value(rs, "shared", s"VIXCLS/$ref", "ivol", "vrp")
-      assert(vrp > MarketSim.MacroBands.Vrp._1 && vrp < MarketSim.MacroBands.Vrp._2, s"$ref vrp $vrp")
+    for (set, a, ref) <- Vector(("sp500", MarketSim.SP500Anchors, "CRSP"), ("nasdaq", MarketSim.NasdaqAnchors, "QQQ")) do
+      val rec = MarketSim.macroPlacementRows(a).map(r => r._1 -> r._4).toMap
+      assertEqualsDouble(rec("macro inversion share"), at4(value(rs, "shared", "T10Y2Y", "slope", "invShare")), 1e-12)
+      assertEqualsDouble(rec("macro vol premium"), at4(value(rs, "shared", "VIXCLS/CRSP", "ivol", "vrp")), 1e-12)
+      assertEqualsDouble(rec("macro spread persistence"), at4(value(rs, "shared", "BAA10Y", "spread", "ac20")), 1e-12)
+      assertEqualsDouble(rec("macro cond persistence"), at4(value(rs, "shared", "NFCILEVERAGE", "cond", "ac4")), 1e-12)
+      assertEqualsDouble(rec("macro ivol persistence"), at4(value(rs, "shared", "VIXCLS", "ivol", "ac20")), 1e-12)
+      val r2s = rs.filter(r => r(0) == set && r(1).endsWith(s"/$ref") && r(3) == "r2fwd60" && measured(r(2))).map(_(6).toDouble)
+      assert(r2s.nonEmpty, s"$set: no r2fwd60 rows on $ref")
+      assertEqualsDouble(rec("macro oracle bound r2"), at4(r2s.max), 1e-12, s"$set oracle")
+      assertEqualsDouble(rec("macro spread lag"), at4(value(rs, set, s"BAA10Y/$ref", "spread", "lag20_63")), 1e-12, s"$set spread lag")
+      assertEqualsDouble(rec("macro cond lag"), at4(value(rs, set, s"NFCILEVERAGE/$ref", "cond", "lag20_63")), 1e-12, s"$set cond lag")
+      assertEqualsDouble(rec("macro cond build-up"), at4(value(rs, set, s"NFCILEVERAGE/$ref", "cond", "prepeak20_63")), 1e-12, s"$set build-up")
   }
 
   test("the null panel is a sibling path's: the same price, a decoupled panel, and no macro rows") {
@@ -258,8 +242,9 @@ class MacroPanelSuite extends FunSuite:
     // a decoupled conditions index reads its unconditional level before a peak
     assert(st.macroPanel.get.members(2).prePeak < 0.65, s"null pre-peak rank ${st.macroPanel.get.members(2).prePeak}")
     val ownSt = MarketSim.measure(MarketSim.simPaths(w, 4, 30, MarketSim.DefaultSeed), 30)
-    assert(MarketSim.gateChecks(MarketSim.SP500Anchors, ownSt).count(r => panelRow(r._1)) == 11,
-      "the path's own panel carries its eleven rows")
+    val ownRows = MarketSim.gateChecks(MarketSim.SP500Anchors, ownSt).filter(r => panelRow(r._1))
+    assert(ownRows.size == 2 && ownRows.forall(_._3 == MarketSim.GateClass.Mechanism),
+      "the path's own panel carries its two mechanism rows; its levels and lags are placement rows")
     for (v, w0) <- MarketSim.Releases do assertEquals(w0.macroNull, 0, s"release $v")
     for (n, w0, _) <- MarketSim.Recipes do assertEquals(w0.macroNull, 0, s"recipe $n")
   }

@@ -13,13 +13,13 @@
 #
 # WHAT THIS FILE SETTLES. Volatility clustering (|r|) and the variance-ratio row are both blind
 # to WHICH SIGN carries the dispersion and the persistence. Three findings, two usable:
-#   - sdRatio: downside exceeds upside on every CRSP era (1.028-1.031, stable to the third
-#     digit) and on 15 of 18 full-history funds (0.986-1.061). The EXCESS is what a row can
-#     grade -- the ratio itself sits so near 1 that a model/real quotient could never miss.
+#   - sdRatio: downside exceeds upside on every CRSP era (1.020-1.028) and on 15 of 18
+#     full-history funds (0.986-1.061). The EXCESS is what a row can grade -- the ratio itself
+#     sits so near 1 that a model/real quotient could never miss.
 #   - levCorr: negative on all 18 funds (-0.17..-0.03) and stable on every CRSP era
-#     (-0.092/-0.093/-0.100). This is the anchorable leverage statistic.
+#     (-0.094/-0.091/-0.101). This is the anchorable leverage statistic.
 #   - betaN/betaP CANNOT ANCHOR, and the columns are committed so that stays settled: the
-#     century flips the sign (levAsym c1926 -0.20, c1954 -0.15, c1990 +0.34 -- the 1930s' giant
+#     century flips the sign (levAsym c1926 -0.17, c1954 -0.30, c1990 +0.36 -- the 1930s' giant
 #     up-days sit inside the same high-volatility stretches as the down-days), and the modern
 #     cross-section spans -0.64..+1.82. The close-only 22-session block regression is not the
 #     intraday statistic Patton & Sheppard read, and it does not inherit their conclusion.
@@ -29,7 +29,10 @@
 #   w2001  2001-08-27.. -- the depth cross-section's window (opens mid-bear; fine here, these
 #          statistics carry no running peak)
 #   c1926/c1954/c1990  CRSP value-weighted US market total return (Mkt-RF + RF), daily, from
-#          Ken French's F-F_Research_Data_Factors_daily, window opening in that year
+#          Ken French's F-F_Research_Data_Factors_daily, window opening in that year; read
+#          LAG-FREE on a `record_bands -unlagged` copy, the daily returns through 1999-03-10 with
+#          the stale-price lag removed, an MA(2) inversion fitted per calendar five-year block
+#          (`unlag_returns`)
 window	ticker	kind	source	years	sdRatio	betaN	betaP	levAsym	levCorr
 wfull	DIA	us-broad	yahoo-adj-close	28.5	1.0124	0.172	0.792	-0.643	-0.0926
 wfull	EFA	intl-broad	yahoo-adj-close	24.9	1.0488	1.376	-0.258	1.461	-0.1135
@@ -67,6 +70,6 @@ w2001	XLP	sector	yahoo-adj-close	24.9	1.0166	1.379	-0.467	2.025	-0.1504
 w2001	XLU	sector	yahoo-adj-close	24.9	1.0271	2.851	-1.790	4.374	-0.1798
 w2001	XLV	sector	yahoo-adj-close	24.9	1.0216	1.139	-0.423	2.181	-0.1097
 w2001	XLY	sector	yahoo-adj-close	24.9	1.0350	1.347	-0.439	1.965	-0.0514
-c1926	CRSP-VW	us-broad	ken-french-daily	104.3	1.0281	0.372	0.559	-0.201	-0.0920
-c1954	CRSP-VW	us-broad	ken-french-daily	72.4	1.0306	0.349	0.476	-0.153	-0.0926
-c1990	CRSP-VW	us-broad	ken-french-daily	36.5	1.0294	0.719	0.351	0.344	-0.1005
+c1926	CRSP-VW	us-broad	ken-french-daily	104.3	1.0197	0.363	0.515	-0.173	-0.0937
+c1954	CRSP-VW	us-broad	ken-french-daily	72.4	1.0206	0.276	0.515	-0.303	-0.0913
+c1990	CRSP-VW	us-broad	ken-french-daily	36.5	1.0275	0.721	0.341	0.358	-0.1010

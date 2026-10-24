@@ -14,15 +14,17 @@
 # blocks, then the median across paths.
 #
 # WHAT IT SETTLES.  QQQ over its whole history reads 0.68 of pooled where every other window
-# and series reads 0.75-0.83: the Nasdaq anchor's 26.9 is a 27-year window whose volatility is
+# and series reads 0.78-0.83: the Nasdaq anchor's 26.9 is a 27-year window whose volatility is
 # ONE episode -- 2000, 2001 and 2002 at 58, 55 and 42% -- and QQQ from 2007 spreads its vol like
 # SPY.  The model's Nasdaq recipe reads 0.81 on 27-year paths with a median year of 19.0, i.e.
-# ON the record's ordinary year; the pooled gap is the bust.  CRSP from 1926 reads 0.75 for the
-# same reason (1929-33).
+# ON the record's ordinary year; the pooled gap is the bust.  CRSP from 1926 reads 0.78, its 1929-33
+# included.
 #
 # Sources: SPY and QQQ, Yahoo Finance's adjusted closes (retrieved 2026-10-04, read through
 # 2026-08-03); CRSP = Ken French F-F_Research_Data_Factors_daily (the 202608 file, read through
-# 2026-06-30), Mkt-RF + RF compounded into a price index, log returns of it.  Measured 2026-09-15,
+# 2026-06-30), Mkt-RF + RF compounded into a price index, log returns of it, read LAG-FREE on a
+# `record_bands -unlagged` copy: its daily returns through 1999-03-10 with the stale-price lag
+# removed, an MA(2) inversion fitted per calendar five-year block (`unlag_returns`).  Measured 2026-09-15,
 # re-read 2026-10-04.  The median of an even count of years is the mean of the two middle ones, the
 # tails are linearly interpolated percentiles, and the top decile is the round(n/10) most volatile
 # years' share of the included years' summed r^2.
@@ -45,27 +47,27 @@ yearvol	QQQ	w2007	ratio	19	0.8163
 yearvol	QQQ	w2007	p10YearVol	19	13.5622
 yearvol	QQQ	w2007	p90YearVol	19	32.9480
 yearvol	QQQ	w2007	topDecileVarShare	19	0.3069
-yearvol	CRSP	w1926	medianYearVol	99	12.8375
-yearvol	CRSP	w1926	pooledVol	26273	17.1400
-yearvol	CRSP	w1926	ratio	99	0.7490
-yearvol	CRSP	w1926	p10YearVol	99	8.2635
-yearvol	CRSP	w1926	p90YearVol	99	25.4258
-yearvol	CRSP	w1926	topDecileVarShare	99	0.4131
-yearvol	CRSP	w1954	medianYearVol	72	12.8715
-yearvol	CRSP	w1954	pooledVol	18245	15.6762
-yearvol	CRSP	w1954	ratio	72	0.8211
-yearvol	CRSP	w1954	p10YearVol	72	8.2706
-yearvol	CRSP	w1954	p90YearVol	72	24.0522
-yearvol	CRSP	w1954	topDecileVarShare	72	0.3565
-yearvol	CRSP	w1990	medianYearVol	36	14.4737
-yearvol	CRSP	w1990	pooledVol	9190	18.1146
-yearvol	CRSP	w1990	ratio	36	0.7990
-yearvol	CRSP	w1990	p10YearVol	36	9.3234
+yearvol	CRSP	w1926	medianYearVol	99	14.3665
+yearvol	CRSP	w1926	pooledVol	26273	18.4887
+yearvol	CRSP	w1926	ratio	99	0.7770
+yearvol	CRSP	w1926	p10YearVol	99	9.4218
+yearvol	CRSP	w1926	p90YearVol	99	26.6164
+yearvol	CRSP	w1926	topDecileVarShare	99	0.3931
+yearvol	CRSP	w1954	medianYearVol	72	13.8781
+yearvol	CRSP	w1954	pooledVol	18245	16.8206
+yearvol	CRSP	w1954	ratio	72	0.8251
+yearvol	CRSP	w1954	p10YearVol	72	9.5012
+yearvol	CRSP	w1954	p90YearVol	72	24.6156
+yearvol	CRSP	w1954	topDecileVarShare	72	0.3246
+yearvol	CRSP	w1990	medianYearVol	36	15.1556
+yearvol	CRSP	w1990	pooledVol	9190	18.3037
+yearvol	CRSP	w1990	ratio	36	0.8280
+yearvol	CRSP	w1990	p10YearVol	36	10.4745
 yearvol	CRSP	w1990	p90YearVol	36	25.2382
-yearvol	CRSP	w1990	topDecileVarShare	36	0.3546
+yearvol	CRSP	w1990	topDecileVarShare	36	0.3473
 yearvol	CRSP	w1999	medianYearVol	27	15.7560
-yearvol	CRSP	w1999	pooledVol	6914	19.5388
-yearvol	CRSP	w1999	ratio	27	0.8064
+yearvol	CRSP	w1999	pooledVol	6914	19.5448
+yearvol	CRSP	w1999	ratio	27	0.8061
 yearvol	CRSP	w1999	p10YearVol	27	11.1219
 yearvol	CRSP	w1999	p90YearVol	27	26.0880
-yearvol	CRSP	w1999	topDecileVarShare	27	0.3441
+yearvol	CRSP	w1999	topDecileVarShare	27	0.3439

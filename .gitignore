@@ -31,6 +31,8 @@ classpathAtfile*
 .lib/
 dist/*
 target/
+rust/target-*/
+*.pre-*
 lib_managed/
 local.conf
 src_managed/

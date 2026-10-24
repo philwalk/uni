@@ -61,6 +61,8 @@ object RecordBands {
     "              rows of `bubblebust-2026-09-24.tsv`: no resampling keeps the structure they measure",
     "-multiyear    print the record's multi-year rows (`multiYearReadings`) instead, the rows of",
     "              `multiyear-2026-09-29.tsv`; with -long under their long-window names",
+    "-profits      THE PROFIT DECLINE ROWS (`ProfitDeclineRows`) of a quarterly FRED series, the rows of",
+    "              `profits-2026-10-19.tsv`: -profits -fred CPATAX.csv -set NAME [-series LABEL] [-header]",
     "-rate         print the two rate rows (`RateBandRows`) of a -fred window instead: the record",
     "              by `rateReadings`, its resamples by `rateResamples`, their own joint band",
     "-bond         print the bond row (`BondBandRows`) of a -yahoo window (TLT) instead: the record",
@@ -82,12 +84,18 @@ object RecordBands {
     "              own reading, no resampling (the statistic straddles a block join in every pair),",
     "              graded among the world's single histories of the window's length [-header]",
     "-stockbond    THE STOCK-BOND ROWS (`StockBondBandRows`, `CpiNewsRow`) for -set, the rows of",
-    "              `stockbond-2026-10-14.tsv`: -nominal DGS10 as a par bond and -french <daily factors>",
+    "              `stockbond-2026-10-18.tsv`: -nominal DGS10 as a par bond and -french <daily factors>",
     "              over 21-session months of the sessions both trade in [-from -to], each month placed",
     "              by -cpi's year-over-year rate of the calendar month before its first session; and",
     "              the CPI news row over [-cpifrom -cpito]; two groups with their own joint bands at the",
-    "              mode's share of -of (default 3) [-resamples -seed -joint -header]; the reported rows",
+    "              mode's share of -of (default 5) [-resamples -seed -joint -header]; the reported rows",
     "              (`StockBondReportedRows`) go to stderr",
+    "-bondstress   THE BOND STRESS SHARE ROW (`BondStressRow`) for -set, a row of",
+    "              `recordbands-2026-09-26.tsv`: the spiral's stress index run on -fred DGS20 as a",
+    "              par bond of -years (20) over every session in [-from -to], a return spanning more",
+    "              than ten calendar days dropped with the state carried across the gap; the share of",
+    "              sessions above 0.5 after a one-year burn-in, in percent, its one-year-block",
+    "              resamples and their band at -of (default 1) [-resamples -seed -joint -header]",
     "-rateafter    THE CONDITIONAL RATE ROWS (`RateAfterRows`): the -fred rate on the equity window's",
     "              session dates, the two years after each 20% decline's trough; the record by",
     "              `rateAfterOfReturns`, its paired block resamples, their own joint band",
@@ -322,7 +330,7 @@ object RecordBands {
     val resamples = opt("-resamples").map(_.toInt).getOrElse(20000)
     val seed = opt("-seed").map(_.toLong).getOrElse(20260918L)
     val joint = opt("-joint").map(_.toDouble).getOrElse(0.10)
-    val of = opt("-of").map(_.toInt).getOrElse(2)
+    val of = opt("-of").map(_.toInt).getOrElse(3)
     val all: Vector[(String, Double, Double)] = (opt("-closes"), opt("-french")) match
       case (Some(f), None) => readCloses(f)
       case (None, Some(f)) =>
@@ -348,17 +356,44 @@ object RecordBands {
     val window = s"${levels(1)._1}..${levels.last._1}"
     val record = MarketSim.volExitOf(days)
     val reads = MarketSim.volExitResamples(days, resamples, seed)
-    eprintln(f"$series%s: ${days.length}%d sessions $window%s; timing ${record(0)}%.4f, interaction ${record(1)}%.4f; " +
+    eprintln(f"$series%s: ${days.length}%d sessions $window%s; timing ${record(0)}%.4f, interaction ${record(1)}%.4f, high-vol fifth ${record(2)}%.4f; " +
              s"$resamples resamples, seed $seed")
     if args.contains("-header") then
       println("set\trow\tseries\twindow\tn\tresamples\trecord\t" +
               MarketSim.RecordBandPcts.map(p => s"p$p").mkString("\t") + "\tjointC\tjointLo\tjointHi")
-    val ks = Vector(0, 1)
+    val ks = Vector(0, 1, 2)
     val (c, edges) = MarketSim.recordBandJoint(reads, ks, joint * ks.length / of)
     for (k, (lo, hi)) <- ks.zip(edges) do
       val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
       println(f"$set%s\t${MarketSim.VolExitRows(k)}%s\t$series%s\t$window%s\t${days.length}%d\t$resamples%d\t${record(k)}%.6f\t" +
               qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
+
+  /** `-profits`: THE PROFIT DECLINE ROWS (`ProfitDeclineRows`; `profits-2026-10-19.tsv`) of a
+    * quarterly FRED series (corporate profits after tax, CPATAX), read by `profitDeclineOf` on
+    * every quarter the file holds, printed for `-set` as a single-history record: set, row, series,
+    * window, n, record. */
+  def profitsMode(args: Array[String]): Unit =
+    def opt(flag: String): Option[String] =
+      val i = args.indexOf(flag)
+      if i < 0 then None else args.lift(i + 1)
+    val file   = opt("-fred").getOrElse(usage("-profits wants -fred FILE"))
+    val set    = opt("-set").getOrElse(usage("-profits wants -set"))
+    val series = opt("-series").getOrElse(fredName(file))
+    val rows   = fredSeries(file)
+    if rows.isEmpty then usage(s"$file holds no quarters")
+    val levels = rows.map(_._2).toArray
+    val window = s"${rows.head._1}..${rows.last._1}"
+    val record = MarketSim.profitDeclineOf(levels)
+    val eps    = MarketSim.profitEpisodes(levels)
+    eprintln(f"$series%s: ${levels.length}%d quarters $window%s; ${eps.length}%d declines of " +
+             f"${100 * MarketSim.ProfitDeclineDepth}%.0f%%+")
+    for e <- eps do
+      val regain = e.regain.map(r => s"${(r - e.trough) * 12 / MarketSim.QuartersPerYear} months").getOrElse("open")
+      eprintln(f"  ${rows(e.peak)._1}%s..${rows(e.trough)._1}%s  size ${100 * e.fall}%5.1f%%  " +
+               f"fall ${(e.trough - e.peak) * 12 / MarketSim.QuartersPerYear}%3d months  regain $regain%s")
+    if args.contains("-header") then println("set\trow\tseries\twindow\tn\trecord")
+    for (name, value) <- MarketSim.ProfitDeclineRows.zip(record) do
+      println(f"$set%s\t$name%s\t$series%s\t$window%s\t${levels.length}%d\t$value%.6f")
 
   /** `-basket`: the ruler from a wide closes file, written to `-out` or printed. */
   def basketMode(args: Array[String]): Unit =
@@ -461,7 +496,7 @@ object RecordBands {
       found.getOrElse(usage(s"$cpiFile: no year-over-year rate before ${first.take(7)}"))
     }
 
-  /** `-stockbond`: THE STOCK-BOND ROWS (`StockBondBandRows`, `CpiNewsRow`; `stockbond-2026-10-14.tsv`)
+  /** `-stockbond`: THE STOCK-BOND ROWS (`StockBondBandRows`, `CpiNewsRow`; `stockbond-2026-10-18.tsv`)
     * for -set: the DGS10 par bond (-nominal) and Ken French's market (-french) over 21-session months
     * of the sessions both trade in [-from, -to], each month placed by -cpi's year-over-year rate of
     * the calendar month before its first session; and the CPI news row over [-cpifrom, -cpito].
@@ -482,7 +517,7 @@ object RecordBands {
     val resamples = num("-resamples", 20000, _.toIntOption, "an integer")
     val seed      = num("-seed", 20260918L, _.toLongOption, "a non-negative integer")
     val joint     = num("-joint", 0.10, _.toDoubleOption, "a share in (0, 1)")
-    val of        = num("-of", 3, _.toIntOption, "a row count")
+    val of        = num("-of", 5, _.toIntOption, "a row count")
     def alpha(k: Int): Double = joint * k / of
     if args.contains("-header") then
       println("set\trow\tseries\twindow\tn\tresamples\trecord\t" +
@@ -499,10 +534,11 @@ object RecordBands {
     val reported = MarketSim.stockBondReported(eqM, bM)
     eprintln(s"${fredName(nomFile)} par bond and the market: ${dates.length} common sessions $window, ${bM.length} months; " +
              s"${rowList(MarketSim.StockBondBandRows, record)}; " +
-             f"reported ${MarketSim.StockBondReportedRows(0)}%s ${reported(0)}%.6f, ${MarketSim.StockBondReportedRows(1)}%s ${reported(1)}%.6f; " +
+             f"reported ${MarketSim.StockBondReportedRows(0)}%s ${reported(0)}%.6f, ${MarketSim.StockBondReportedRows(1)}%s ${reported(1)}%.6f, " +
+             f"${MarketSim.StockBondReportedRows(2)}%s ${reported(2)}%.6f; " +
              s"$resamples resamples, seed $seed")
     printTipsGroup(set, MarketSim.StockBondBandRows, s"${fredName(nomFile)} par bond, French market", window, bM.length,
-                   record, MarketSim.stockBondResamples(eqM, bM, seen, resamples, seed), alpha(2))
+                   record, MarketSim.stockBondResamples(eqM, bM, seen, resamples, seed), alpha(4))
     // the CPI news row over the CPI window
     val cpi = fredSeries(cpiFile).filter((d, _) => d >= cpiFrom && d <= cpiTo)
     if cpi.length < 25 then usage(s"$cpiFile: ${cpi.length} months in the CPI window")
@@ -512,6 +548,43 @@ object RecordBands {
     eprintln(f"${fredName(cpiFile)}%s: ${dlog.length}%d monthly changes $cpiWindow%s; ${MarketSim.CpiNewsRow}%s $news%.4f")
     printTipsGroup(set, Vector(MarketSim.CpiNewsRow), fredName(cpiFile), cpiWindow, dlog.length, Vector(news),
                    MarketSim.cpiNewsResamples(dlog, resamples, seed), alpha(1))
+
+  /** `-bondstress`: THE BOND STRESS SHARE ROW (`BondStressRow`; `recordbands-2026-09-26.tsv`) for
+    * -set: the spiral's stress index run on the -fred yield file as an n-year par bond (-years, 20 by
+    * default) over every session in [-from, -to], a return spanning more than ten calendar days (the
+    * series' gap) dropped with the state carried across it; the share of sessions above 0.5 after a
+    * one-year burn-in, in percent, and its one-year-block resamples. */
+  def bondStressMode(args: Array[String]): Unit =
+    def opt(flag: String): Option[String] =
+      val i = args.indexOf(flag)
+      if i < 0 then None else args.lift(i + 1)
+    def num[T](flag: String, default: T, parse: String => Option[T], msg: String): T =
+      opt(flag).fold(default)(v => parse(v).getOrElse(usage(s"$flag wants $msg")))
+    val fredFile  = opt("-fred").getOrElse(usage("-bondstress wants -fred FILE"))
+    val years     = num("-years", 20.0, _.toDoubleOption, "a number")
+    val set       = opt("-set").getOrElse(usage("-bondstress wants -set"))
+    val from      = opt("-from").getOrElse("")
+    val to        = opt("-to").getOrElse("9999")
+    val resamples = num("-resamples", 20000, _.toIntOption, "an integer")
+    val seed      = num("-seed", 20260918L, _.toLongOption, "a non-negative integer")
+    val joint     = num("-joint", 0.10, _.toDoubleOption, "a share in (0, 1)")
+    val of        = num("-of", 1, _.toIntOption, "a row count")
+    if args.contains("-header") then
+      println("set\trow\tseries\twindow\tn\tresamples\trecord\t" +
+              MarketSim.RecordBandPcts.map(p => s"p$p").mkString("\t") + "\tjointC\tjointLo\tjointHi")
+    val daily = readTreasury(fredFile.asPath.lines.toVector, years)
+    val kept = daily.zipWithIndex.filter: (dr, i) =>
+      dr._1 >= from && dr._1 <= to && (i == 0 || daysFromCivil(dr._1) - daysFromCivil(daily(i - 1)._1) <= 10)
+    val gaps  = daily.count((d, _) => d >= from && d <= to) - kept.length
+    val dates = kept.map(_._1._1)
+    val rets  = kept.map(_._1._2).toArray
+    if rets.length < 2 * 252 then usage(s"$fredFile: ${rets.length} sessions in the window")
+    val window = s"${dates.head}..${dates.last}"
+    val record = MarketSim.bondStressShare(rets)
+    eprintln(f"${fredName(fredFile)}%s as a $years%.0f-year par bond: ${rets.length}%d sessions $window%s, $gaps%d gap returns dropped; " +
+             f"${MarketSim.BondStressRow}%s $record%.4f; $resamples%d resamples, seed $seed%d")
+    printTipsGroup(set, Vector(MarketSim.BondStressRow), s"${fredName(fredFile)} par bond", window, rets.length,
+                   Vector(record), MarketSim.bondStressResamples(rets, resamples, seed), joint / of)
 
   /** `-cpipersist`: THE CPI PERSISTENCE ROW (`CpiPersistenceRow`) of -cpi over the CPI window for
     * -set, the record's own reading: a single-history row, not resampled. */
@@ -658,6 +731,9 @@ object RecordBands {
     if args.contains("-cpipersist") then
       cpiPersistMode(args)
       return
+    if args.contains("-bondstress") then
+      bondStressMode(args)
+      return
     if args.contains("-stockbond") then
       stockBondMode(args)
       return
@@ -666,6 +742,9 @@ object RecordBands {
       return
     if args.contains("-basket") then
       basketMode(args)
+      return
+    if args.contains("-profits") then
+      profitsMode(args)
       return
     if args.contains("-volexit") then
       volexitMode(args)

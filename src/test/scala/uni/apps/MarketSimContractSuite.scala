@@ -336,6 +336,7 @@ class MarketSimContractSuite extends FunSuite:
             if MarketSim.MultiYearRows.contains(r.name) then a.equityYears
             else if MarketSim.TimingRows.contains(r.name) then a.timingYears
             else if MarketSim.BondCrashRows.contains(r.name) then a.bondCrashYears
+            else if MarketSim.ProfitDeclineRows.contains(r.name) then a.profitYears
             else a.bubbleYears
           assertEquals(r.horizonYears, window, s"[${r.name}]'s own window")
           val (lo, hi) = r.historyBand.getOrElse(fail(s"[${r.name}] must carry its joint band"))
@@ -537,33 +538,41 @@ class MarketSimContractSuite extends FunSuite:
     assert(p.sat.isEmpty, "satBeta 0 must produce no satellite series")
   }
 
-  test("the channel gate rows appear only when the channel runs, and can fail") {
-    // The channel rows are not decoration: a leg or a bar that is materially wrong must FAIL the
-    // gate, and a channels-off world must carry none of these rows at all.  Without the second
-    // half the first is cheap -- a row that never appears cannot be wrong.
-    val off = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 8, 40, MarketSim.DefaultSeed), 40)
+  test("the channel rows are placed only when the channel runs, and see a wrong channel") {
+    // The channel rows are not decoration: a leg or a bar that is materially wrong must read
+    // outside the record on every history, and a channels-off world must carry none of these
+    // rows at all.  Without the second half the first is cheap -- a row that never appears
+    // cannot be wrong.
+    val a = MarketSim.SP500Anchors
+    def placed(w: MarketSim.World): (MarketSim.WorldStats, Vector[MarketSim.HistoryRow]) =
+      val sims = MarketSim.simPaths(w, 8, 40, MarketSim.DefaultSeed)
+      val st   = MarketSim.measure(sims, 40)
+      (st, MarketSim.historyRows(a, st, sims, 40, 8, MarketSim.DefaultSeed, w))
+    val (off, rowsOff) = placed(MarketSim.Defaults)
     assert(off.sat.isEmpty && off.bars.isEmpty)
-    val namesOff = MarketSim.gateChecks(MarketSim.SP500Anchors, off).map(_._1)
+    val namesOff = rowsOff.map(_.name) ++ MarketSim.gateChecks(a, off).map(_._1)
     assert(!namesOff.exists(n => n.startsWith("satellite") || n.startsWith("bar ")),
       "a channels-off world must carry no channel rows")
 
     val on = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, rangeScale = 0.63,
                                      rangeDown = 0.09, volIdio = 0.34)
-    val stOn = MarketSim.measure(MarketSim.simPaths(on, 8, 40, MarketSim.DefaultSeed), 40)
+    val (stOn, rowsOn) = placed(on)
     assert(stOn.sat.isDefined && stOn.bars.isDefined)
-    val rowsOn = MarketSim.gateChecks(MarketSim.SP500Anchors, stOn)
-    assert(rowsOn.count(_._1.startsWith("satellite")) >= 9,
-      "the satellite must be graded on its full relational vector")
-    assert(rowsOn.exists(_._1.startsWith("bar ")))
+    assert(rowsOn.count(_.name.startsWith("satellite")) == MarketSim.SatelliteRows.size,
+      "the satellite is placed on its full relational vector")
+    assert(rowsOn.exists(_.name.startsWith("bar ")))
+    assert(!MarketSim.gateChecks(a, stOn).exists(g => g._1.startsWith("satellite") || g._1.startsWith("bar ")),
+      "the channel levels are placement rows, not gates")
 
-    // A leg at more than twice its anchored beta is not a second index; the gate must say so.
-    val stB = MarketSim.measure(MarketSim.simPaths(on.copy(satBeta = 2.6), 8, 40, MarketSim.DefaultSeed), 40)
-    assert(MarketSim.gateChecks(MarketSim.SP500Anchors, stB).exists((n, ok, _) => n.startsWith("satellite") && !ok),
-      "a 2.6-beta leg must fail a satellite row")
+    // A leg at more than twice its anchored beta is not a second index: every history reads it
+    // above the record.
+    val (_, rowsB) = placed(on.copy(satBeta = 2.6))
+    val beta = rowsB.find(_.name == "satellite beta").getOrElse(fail("no satellite beta row"))
+    assert(beta.record.exists(r => beta.reads.forall(_ > r + 0.5)), s"a 2.6-beta leg reads ${beta.reads} against ${beta.record}")
     // A bar sampled at a wildly wrong scale is not a bar.
-    val stW = MarketSim.measure(MarketSim.simPaths(on.copy(rangeScale = 2.0), 8, 40, MarketSim.DefaultSeed), 40)
-    assert(MarketSim.gateChecks(MarketSim.SP500Anchors, stW).exists((n, ok, _) => n.startsWith("bar ") && !ok),
-      "a 3x-scale bar must fail a bar row")
+    val (_, rowsW) = placed(on.copy(rangeScale = 2.0))
+    val range = rowsW.find(_.name == "bar range vs cc vol").getOrElse(fail("no bar range row"))
+    assert(range.record.exists(r => range.reads.forall(_ > r + 0.5)), s"a 3x-scale bar reads ${range.reads} against ${range.record}")
   }
 
   test("the range channel is inert in every frozen release") {
@@ -920,8 +929,20 @@ class MarketSimContractSuite extends FunSuite:
     // and the basket is the caller's alone
     val sp = MarketSim.namedWorld("0.24.5-sp500").get._1
     val nq = MarketSim.namedWorld("0.24.5-nasdaq-basket").get._1
-    assertEquals(MarketSim.ChannelDials.of(sp), MarketSim.SP500Anchors.channelDials)
-    assertEquals(MarketSim.ChannelDials.of(nq), MarketSim.NasdaqAnchors.channelDials)
+    // the published 0.24.5 channel worlds keep the satellite's beta and tail drop they were
+    // verified at (1.2, none); the anchor sets' moved at 0.25.0 (item 62 B), which the 0.25.0
+    // recipes carry with the long bond's cut of the beta state (item 62 A)
+    assertEquals(MarketSim.ChannelDials.of(sp), MarketSim.SP500Anchors.channelDials.copy(satBeta = 1.2, satTailDrop = 0.0))
+    // the published Nasdaq channel world keeps the volume dial it was verified at; the anchor
+    // set's moved to QQQ's at 0.25.0, which `0.25.0-nasdaq` carries
+    assertEquals(MarketSim.ChannelDials.of(nq),
+                 MarketSim.NasdaqAnchors.channelDials.copy(volIdio = 0.34, satBeta = 1.2, satTailDrop = 0.0))
+    assertEquals(MarketSim.namedWorld("0.25.0-nasdaq").get._1.volIdio, MarketSim.NasdaqAnchors.channelDials.volIdio)
+    for (name, a) <- Vector(("0.25.0-sp500", MarketSim.SP500Anchors), ("0.25.0-nasdaq", MarketSim.NasdaqAnchors)) do
+      val r = MarketSim.namedWorld(name).get._1
+      assertEquals(r.satBeta, a.channelDials.satBeta, name)
+      assertEquals(r.ext.satTailDrop, a.channelDials.satTailDrop, name)
+      assertEquals(r.ext.bondBetaCut, MarketSim.BondBetaCut0250, name)
     val d  = MarketSim.Defaults
     val vw = MarketSim.verdictWorld(MarketSim.SP500Anchors, d)
     assertEquals(MarketSim.ChannelDials.of(vw), MarketSim.Sp500ChannelDials)
@@ -931,7 +952,7 @@ class MarketSimContractSuite extends FunSuite:
                          divYield = c.divYield,
                          sectors = c.sectors, sectorIdio = c.sectorIdio, sectorDriftSd = c.sectorDriftSd,
                          sectorDriftHalf = c.sectorDriftHalf, macroPanel = c.macroPanel, bond10 = d.bond10,
-                         ext = vw.ext.copy(tips = d.ext.tips)), d)
+                         ext = vw.ext.copy(tips = d.ext.tips, satTailDrop = d.ext.satTailDrop)), d)
     assertEquals(vw.bond10, MarketSim.VerdictBond10, "the verdict runs the 10-year leg")
     assertEquals(vw.ext.tips, MarketSim.VerdictTips, "and the TIPS leg")
     assertEquals(MarketSim.ChannelDials.of(MarketSim.verdictWorld(MarketSim.NasdaqAnchors, d)),
@@ -1052,14 +1073,19 @@ class MarketSimContractSuite extends FunSuite:
     judged.foreach((k, inDrawdown) => assert(inDrawdown, s"the first divergence (session $k) must sit inside a drawdown"))
   }
 
-  test("the default's verdict grades every channel and the macro panel") {
-    val vw = MarketSim.verdictWorld(MarketSim.SP500Anchors, MarketSim.Defaults)
-    val st = MarketSim.measure(MarketSim.simPaths(vw, 8, 40, MarketSim.DefaultSeed), 40)
-    val rows = MarketSim.gateChecks(MarketSim.SP500Anchors, st)
-    for prefix <- Seq("satellite corr", "bar range vs cc vol", "bar volume sd", "dividend yield",
-                      "bar overnight share", "macro cond build-up") do
-      assert(rows.exists(_._1.startsWith(prefix)), s"the default's verdict has no `$prefix` row")
-    assert(st.basket.isEmpty && !rows.exists(_._1.startsWith("basket")), "the basket grades only against a client's ruler")
+  test("the default's placement rows cover every channel and the macro panel") {
+    val a    = MarketSim.SP500Anchors
+    val vw   = MarketSim.verdictWorld(a, MarketSim.Defaults)
+    val sims = MarketSim.simPaths(vw, 8, 40, MarketSim.DefaultSeed)
+    val st   = MarketSim.measure(sims, 40)
+    val rows = MarketSim.historyRows(a, st, sims, 40, 8, MarketSim.DefaultSeed, vw).map(_.name)
+    for name <- Seq("satellite corr", "bar range vs cc vol", "bar volume sd", MarketSim.DividendRow,
+                    "bar overnight share", "macro cond build-up") do
+      assert(rows.contains(name), s"the default's placement has no `$name` row")
+    val gates = MarketSim.gateChecks(a, st)
+    assert(!gates.exists(g => g._3 == MarketSim.GateClass.Fidelity && g._1.startsWith("satellite")),
+      "the channels are placement rows, not fidelity gates")
+    assert(st.basket.isEmpty && !gates.exists(_._1.startsWith("basket")), "the basket grades only against a client's ruler")
   }
 
   test("each direct extreme reading is what measure reads on that path") {
@@ -1202,20 +1228,32 @@ class MarketSimContractSuite extends FunSuite:
     for (got, want) <- r.zip(pin) do assertEqualsDouble(got, want, 1e-12, s"$got vs $want")
   }
 
-  // The gate rows at the verdict horizon on a small ensemble: the ruler's bands hold the S&P
-  // recipe's legs on every row but the trend rows (its primary carries no 12-month trend), the
-  // Nasdaq channel recipe's on every row, and the mechanism row orders the three correlations.
-  test("the anchored sector legs sit on the ruler and the mechanism row discriminates") {
-    val sp = MarketSim.namedWorld("0.24.5-sp500").get._1
-    val st = MarketSim.measure(MarketSim.simPaths(sp, 8, 100, MarketSim.DefaultSeed), 100)
-    val sec = st.sector.getOrElse(fail("no sector readings with the channel on"))
-    val rows = MarketSim.gateChecks(MarketSim.SP500Anchors, st).filter(_._1.startsWith("sector "))
-    assertEquals(rows.length, 8, "seven bands and the mechanism row")
-    for (n, ok, _) <- rows if !n.startsWith("sector trend") do
-      assert(ok, s"$n: momentum ${sec.momentum} xs sd ${sec.xsSd} corr ${sec.pairCorr}")
+  // The sector rows at the verdict horizon on a small ensemble: the S&P recipe's typical history
+  // reads the record's correlation rows within the old ruler's tolerance (its primary carries no
+  // 12-month trend, so the trend rows are not held), the Nasdaq's are read and not graded, and
+  // the mechanism row orders the three correlations.
+  test("the anchored sector legs read the record's correlations and the mechanism row discriminates") {
+    val a    = MarketSim.SP500Anchors
+    val sp   = MarketSim.namedWorld("0.24.5-sp500").get._1
+    val sims = MarketSim.simPaths(sp, 8, 100, MarketSim.DefaultSeed)
+    val st   = MarketSim.measure(sims, 100)
+    val sec  = st.sector.getOrElse(fail("no sector readings with the channel on"))
+    val gates = MarketSim.gateChecks(a, st).filter(_._1.startsWith("sector "))
+    assertEquals(gates.map(_._3), Vector(MarketSim.GateClass.Mechanism), "the mechanism row alone is a gate")
+    val rows = MarketSim.historyRows(a, st, sims, 100, 8, MarketSim.DefaultSeed, sp)
+    def mid(name: String): (Double, Double) =
+      val r = rows.find(_.name == name).getOrElse(fail(s"no $name row"))
+      (r.reads.sorted.apply(r.reads.size / 2), r.record.getOrElse(fail(s"$name ungraded")))
+    for (name, tol) <- Vector(("sector xs sd / market sd", 0.10), ("sector pair corr", 0.10),
+                              ("sector pair corr worst decile", 0.15), ("sector pair corr middle decile", 0.15)) do
+      val (m, rec) = mid(name)
+      assert(math.abs(m - rec) < tol, s"$name: typical history $m, record $rec")
     assert(sec.pairCorrMid < sec.pairCorrWorst && sec.pairCorrWorst < sec.pairCorr)
-    val nq = MarketSim.namedWorld("0.24.5-nasdaq-basket").get._1
-    val stN = MarketSim.measure(MarketSim.simPaths(nq, 8, 100, MarketSim.DefaultSeed + 1), 100)
-    for (n, ok, _) <- MarketSim.gateChecks(MarketSim.NasdaqAnchors, stN) if n.startsWith("sector ") do
-      assert(ok, n)
+    val nq    = MarketSim.namedWorld("0.24.5-nasdaq-basket").get._1
+    val simsN = MarketSim.simPaths(nq, 8, 100, MarketSim.DefaultSeed + 1)
+    val stN   = MarketSim.measure(simsN, 100)
+    val rowsN = MarketSim.historyRows(MarketSim.NasdaqAnchors, stN, simsN, 100, 8, MarketSim.DefaultSeed + 1, nq)
+    val secN  = rowsN.filter(_.name.startsWith("sector "))
+    assertEquals(secN.map(_.name).toSet, MarketSim.SectorRows.toSet)
+    assert(secN.forall(_.record.isEmpty), "the Nasdaq reads the S&P's industries ungraded")
   }

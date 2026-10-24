@@ -23,8 +23,8 @@
 #
 # MONTH-END levels, as the model's are. Shiller's monthly S&P is a monthly AVERAGE of daily
 # prices, which smooths the rule's signal and overstates the index's persistence at short lags:
-# on the same CRSP series over 1926-2026 the averages read the false-exit return 4.0% against the
-# month ends' 5.8% and 0.55 exits a year against 0.75, the avoided share 65.5 against 64.7; Shiller's
+# on the same CRSP series over 1926-2026 the averages read the false-exit return 4.1% against the
+# month ends' 6.0% and 0.54 exits a year against 0.73, the avoided share 65.4 against 64.8; Shiller's
 # own series 1926-2023 reads 73.1 / 3.6 / 0.57 / 0.77 (`record_bands -timing -shiller`, for comparison).
 #
 # Sources, public:
@@ -38,6 +38,9 @@
 #             calendar month's last session; 1971-02..2026-09 (the last month to the 18th), 668
 #             months, 7 declines. Price indexes.
 #   NDX       the Nasdaq-100's alone, the same way, 1990-01..2026-09, 441 months.
+# LAG-FREE: the computed indexes' daily returns through 1999-03-10 (CRSP, the IXIC, the NDX) are read
+# with the stale-price lag removed, an MA(2) inversion fitted per calendar five-year block
+# (`unlag_returns`, the IXIC and the NDX declared `-index`); `-recorded` reads them as printed.
 # The -yahoo files are `date,adj_close,dlog_adj_close` CSVs, one row a session, the first row the
 # anchor.
 #
@@ -48,22 +51,23 @@
 #       -from 1926-07-01 -to 2026-06-30 -set nasdaq -series CRSP
 #   record_bands -timing -yahoo <data>/IXIC.csv -splice <data>/NDX.csv -at 1985-10-01
 #       -from 1971-02-05 -to 2026-09-18 -set nasdaq -series IXIC+NDX
+#       -index <data>/IXIC.csv -index <data>/NDX.csv
 #   record_bands -timing -yahoo <data>/NDX.csv -from 1990-01-03 -to 2026-09-18
-#       -set nasdaq -series NDX
+#       -set nasdaq -series NDX -index <data>/NDX.csv
 set	row	series	window	n	record
-sp500	sma10 decline avoided %	CRSP	1926-07..2026-06	1200	64.682098
-sp500	sma10 false-exit return %	CRSP	1926-07..2026-06	1200	5.818947
-sp500	sma10 exits per year	CRSP	1926-07..2026-06	1200	0.750000
-sp500	market sign12 trend %/mo	CRSP	1926-07..2026-06	1200	0.656168
-nasdaq	sma10 decline avoided %	CRSP	1926-07..2026-06	1200	64.682098
-nasdaq	sma10 false-exit return %	CRSP	1926-07..2026-06	1200	5.818947
-nasdaq	sma10 exits per year	CRSP	1926-07..2026-06	1200	0.750000
-nasdaq	market sign12 trend %/mo	CRSP	1926-07..2026-06	1200	0.656168
-nasdaq	sma10 decline avoided %	IXIC+NDX	1971-02..2026-09	668	59.807540
-nasdaq	sma10 false-exit return %	IXIC+NDX	1971-02..2026-09	668	7.660919
+sp500	sma10 decline avoided %	CRSP	1926-07..2026-06	1200	64.829032
+sp500	sma10 false-exit return %	CRSP	1926-07..2026-06	1200	5.999646
+sp500	sma10 exits per year	CRSP	1926-07..2026-06	1200	0.730000
+sp500	market sign12 trend %/mo	CRSP	1926-07..2026-06	1200	0.656616
+nasdaq	sma10 decline avoided %	CRSP	1926-07..2026-06	1200	64.829032
+nasdaq	sma10 false-exit return %	CRSP	1926-07..2026-06	1200	5.999646
+nasdaq	sma10 exits per year	CRSP	1926-07..2026-06	1200	0.730000
+nasdaq	market sign12 trend %/mo	CRSP	1926-07..2026-06	1200	0.656616
+nasdaq	sma10 decline avoided %	IXIC+NDX	1971-02..2026-09	668	59.976958
+nasdaq	sma10 false-exit return %	IXIC+NDX	1971-02..2026-09	668	7.675292
 nasdaq	sma10 exits per year	IXIC+NDX	1971-02..2026-09	668	0.808383
-nasdaq	market sign12 trend %/mo	IXIC+NDX	1971-02..2026-09	668	1.100813
+nasdaq	market sign12 trend %/mo	IXIC+NDX	1971-02..2026-09	668	1.049975
 nasdaq	sma10 decline avoided %	NDX	1990-01..2026-09	441	52.586943
-nasdaq	sma10 false-exit return %	NDX	1990-01..2026-09	441	7.673684
+nasdaq	sma10 false-exit return %	NDX	1990-01..2026-09	441	7.685632
 nasdaq	sma10 exits per year	NDX	1990-01..2026-09	441	0.816327
-nasdaq	market sign12 trend %/mo	NDX	1990-01..2026-09	441	1.525398
+nasdaq	market sign12 trend %/mo	NDX	1990-01..2026-09	441	1.519920

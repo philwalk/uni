@@ -62,7 +62,7 @@ class NewsLevSuite extends FunSuite:
     def read(bond: Double): Double =
       MarketSim.measure(MarketSim.simPaths(coupledNews.copy(newsBond = bond), 40, 60, 20260918L), 60).bondGrowth
     val (g0, g3) = (read(0.0), read(0.3))
-    assert(g3 > g0 + 0.5, f"growth-crash rally $g0%.2f -> $g3%.2f")
+    assert(g3 > g0 + 0.5, f"crash rally at 2%% inflation $g0%.2f -> $g3%.2f")
   }
 
   test("a bond that skips news keeps its rally and loosens its tail tie") {
@@ -71,6 +71,8 @@ class NewsLevSuite extends FunSuite:
       val st = MarketSim.measure(MarketSim.simPaths(w, 40, 60, 20260918L), 60)
       (st.bondGrowth, st.tailHedge)
     val ((g0, t0), (g5, t5)) = (read(0.0), read(0.5))
-    assert(t5 > t0 + 0.01, f"tail hedge $t0%.3f -> $t5%.3f")
-    assert(math.abs(g5 - g0) < 1.0, f"growth-crash rally $g0%.2f -> $g5%.2f")
+    // the legs track their yields the session they move, so the tie the skip loosens is the news
+    // legs' alone: a hundredth on this world
+    assert(t5 > t0 + 0.005, f"tail hedge $t0%.3f -> $t5%.3f")
+    assert(math.abs(g5 - g0) < 1.0, f"crash rally at 2%% inflation $g0%.2f -> $g5%.2f")
   }

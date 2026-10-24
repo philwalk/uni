@@ -62,7 +62,7 @@ class TpReplaySuite extends munit.FunSuite:
         val xs = hrFull.bandedByPath(r)
         assertEquals(xs.size, paths, s"$name $r: one per path")
         val get = MarketSim.fitTargets(a).find(_._1 == r).getOrElse(fail("row"))._2
-        val one = MarketSim.measure(Vector(full(2).head(a.bond10Years)), a.bond10Years)
+        val one = MarketSim.measure(Vector(full(2).tail(a.bond10Years)), a.bond10Years)
         assertEquals(bits(xs(2)), bits(get(one)), s"$name $r: path 2 alone")
       assert(st2.bondVol != st.bondVol, s"$name: the move moved the bond")
       assert(keep.bytes > 0L)

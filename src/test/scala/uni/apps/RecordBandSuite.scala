@@ -17,8 +17,8 @@ class RecordBandSuite extends FunSuite:
     * the same columns) without their header */
   private lazy val lines: Vector[String] =
     fixtureLines("recordbands-2026-09-26.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
-      fixtureLines("volexit-2026-10-03.tsv").drop(1) ++ fixtureLines("bond10-2026-10-05.tsv").drop(1) ++
-      fixtureLines("tips-2026-10-11.tsv").drop(1) ++ fixtureLines("stockbond-2026-10-14.tsv").drop(1)
+      fixtureLines("volexit-2026-10-17.tsv").drop(1) ++ fixtureLines("bond10-2026-10-05.tsv").drop(1) ++
+      fixtureLines("tips-2026-10-11.tsv").drop(1) ++ fixtureLines("stockbond-2026-10-18.tsv").drop(1)
 
   private def row(set: String, name: String): Vector[Double] =
     lines.map(_.split('\t').toVector).find(r => r(0) == set && r(1) == name)
@@ -56,8 +56,8 @@ class RecordBandSuite extends FunSuite:
         MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows ++ MarketSim.RateAfterRows ++
           MarketSim.VolExitRows ++ MarketSim.Bond10BandRows ++ MarketSim.CpiBandRows ++ MarketSim.CpiCenturyRows ++
           MarketSim.RealYieldBandRows ++ MarketSim.BreakevenBandRows ++ MarketSim.TipsBandRows ++ MarketSim.RealRateBandRows ++
-          MarketSim.StockBondBandRows ++ Vector(MarketSim.CpiNewsRow),
-        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows, Bond10BandRows, CpiBandRows, CpiCenturyRows, RealYieldBandRows, BreakevenBandRows, TipsBandRows, RealRateBandRows, StockBondBandRows, CpiNewsRow")
+          MarketSim.StockBondBandRows ++ Vector(MarketSim.CpiNewsRow, MarketSim.BondStressRow),
+        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows, Bond10BandRows, CpiBandRows, CpiCenturyRows, RealYieldBandRows, BreakevenBandRows, TipsBandRows, RealRateBandRows, StockBondBandRows, CpiNewsRow, BondStressRow")
       for b <- a.recordBands do
         val r = row(set, b.name)
         assertEquals(b.record, r.head, s"$set ${b.name}: record")
@@ -107,6 +107,29 @@ class RecordBandSuite extends FunSuite:
     val row = Paths.get("test-data/equity-anchors/sectors-2026-09-30.tsv").lines
       .find(_.startsWith("momentum\tindustries10\t12-1\tall\tmean spread")).getOrElse(fail("the 12-1 row"))
     assertEquals(row.split("\t")(5), "0.003923")
+  }
+
+  test("the profit decline anchors are the fixture's records and the reader reads as stated") {
+    val rows = Paths.get("test-data/equity-anchors/profits-2026-10-19.tsv").lines.toVector
+      .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set\t"))
+      .map(_.split('\t').toVector)
+    assertEquals(rows.length, 10, "two sets, five rows, one ruler")
+    for (set, a) <- Vector(("sp500", MarketSim.SP500Anchors), ("nasdaq", MarketSim.NasdaqAnchors))
+        (name, got) <- MarketSim.ProfitDeclineRows.zip(a.profitDecline) do
+      val rec = rows.find(f => f(0) == set && f(1) == name).getOrElse(fail(s"fixture row [$set] $name missing"))
+      assertEqualsDouble(got, rec(5).toDouble, 1e-6, s"$set: $name against the record's")
+      assert(a.profitWindow.endsWith(rec(3)), s"$set: the window ${rec(3)}")
+      assertEquals(a.profitYears, rec(4).toInt / MarketSim.QuartersPerYear, s"$set: the horizon")
+    // a hand series, five years of quarters: flat, a fall of 20% over two quarters, regained in
+    // three, flat again; one decline, 20 a century
+    val lv = Array.fill(8)(100.0) ++ Array(90.0, 80.0, 85.0, 95.0, 100.0) ++ Array.fill(7)(100.0)
+    val r = MarketSim.profitDeclineOf(lv)
+    assertEqualsDouble(r(0), 20.0, 1e-12); assertEqualsDouble(r(1), 20.0, 1e-9)
+    assertEqualsDouble(r(2), 20.0, 1e-9); assertEqualsDouble(r(3), 6.0, 1e-12); assertEqualsDouble(r(4), 9.0, 1e-12)
+    // a fall under the depth is no episode; a series that never regains reads its regain as NaN
+    assert(MarketSim.profitEpisodes(Array(100.0, 95.0, 100.0)).isEmpty)
+    val open = MarketSim.profitDeclineOf(Array.fill(4)(100.0) ++ Array.fill(4)(80.0))
+    assertEqualsDouble(open(0), 50.0, 1e-12); assert(open(4).isNaN)
   }
 
   test("the multi-year anchors are the fixture's records and the statistics read as stated") {
@@ -336,18 +359,30 @@ class RecordBandSuite extends FunSuite:
       16.798312848172113, 17.02219625010289, -0.12963037209238956, 11.437126469063255,
       -0.022101390142453572, -0.012940593813227222, 0.7407002578651204, 29.603735914033912,
       50.766666666666666, 0.025507720490428657, 16.8, -15.548714909190897, -2.6641426084559097,
-      0.6469573924082413, 0.46904973503687153))
+      0.6469573924082413, 0.46904973503687153, 0.8833716844931516))
     assertEquals(MarketSim.yearVolPhaseMean(r), 16.862007639884688)
     val reads = MarketSim.recordResamples(r, 40, 7L)
     def med(v: Seq[Double]): Double = { val f = MarketSim.finiteSorted(v.toArray); f(f.length / 2) }
-    assertEquals((0 until 15).toVector.map(k => med(reads.map(_(k)))), Vector(
+    assertEquals((0 until 16).toVector.map(k => med(reads.map(_(k)))), Vector(
       16.78655352771039, 16.877627553056403, -0.16675076546846718, 11.388024993784173,
       -0.02498629581122743, -0.01046514345997916, 0.7513339475330946, 29.880494878185225,
       50.63333333333333, 0.027222579780510212, 16.8, -26.478692229354827, -3.036702249727999,
-      0.6332136135562098, 0.5270138283992784))
+      0.6332136135562098, 0.5270138283992784, 0.8999023015224383))
     assertEquals(MarketSim.recordBandQuantiles(reads.map(_(10))), Vector(
       8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8,
       16.8, 16.8, 16.8, 25.2, 25.2, 33.6, 33.6, 33.6))
+  }
+
+  test("the bond stress share reads the same in both twins") {
+    // `record_band_tests` pins these same values: a lone 6% fall never lifts the index past 0.5;
+    // eight-session runs of -3% do
+    val r = pinnedSeries
+    assertEquals(MarketSim.bondStressShare(r), 0.0)
+    val runs = Array.tabulate(r.length)(i => if (i % 97) >= 50 && (i % 97) < 58 then -0.03 else r(i))
+    assertEquals(MarketSim.bondStressShare(runs), 6.004366812227074)
+    val reads = MarketSim.bondStressResamples(runs, 40, 7L)
+    def med(v: Seq[Double]): Double = { val f = MarketSim.finiteSorted(v.toArray); f(f.length / 2) }
+    assertEquals(med(reads.map(_(0))), 5.858806404657933)
   }
 
   test("a banded row's real is the record and its miss the band") {
@@ -387,12 +422,14 @@ class RecordBandSuite extends FunSuite:
   }
 
   test("a banded row is read at its record's own horizon") {
-    // the verdict ensemble runs a century; QQQ's band is a 27-year history's spread
+    // the verdict ensemble runs a century; QQQ's band is a 27-year history's spread, read on
+    // the LAST 27 years of each century (`recordWindow`)
     val w     = MarketSim.namedWorld("0.24.4-nasdaq").get._1
     val a     = MarketSim.NasdaqAnchors
     // 24 paths: at 8 the century's median kurtosis sat inside the 27 years' seed noise
-    val st100 = MarketSim.measure(MarketSim.simPaths(w, 24, 100, 7L), 100)
-    val st27  = MarketSim.measure(MarketSim.simPaths(w, 24, 27, 7L), 27)
+    val sims  = MarketSim.simPaths(w, 24, 100, 7L)
+    val st100 = MarketSim.measure(sims, 100)
+    val st27  = MarketSim.measure(sims.map(_.tail(27)), 27)
     val rows  = MarketSim.fidelityRows(a, st100, None, 100, 24, 7L, w)
     def row(n: String) = rows.find(_.name == n).getOrElse(fail(s"no [$n] row")).model
     assertEquals(row("kurtosis"), st27.kurt, "read on the record's 27 years")
@@ -486,9 +523,12 @@ class RecordBandSuite extends FunSuite:
   test("the volatility exit reads hand series as stated") {
     def day(r: Double) = MarketSim.VolExitDay(r, r, 0.0, 1.0)
     val calm = Vector.tabulate(600)(i => day(if i % 2 == 0 then 0.002 else -0.001))
-    assertEquals(MarketSim.volExitOf(calm), Vector(0.0, 0.0))
+    val calmRows = MarketSim.volExitOf(calm)
+    assertEquals(calmRows.take(2), Vector(0.0, 0.0))
+    assert(calmRows(2) > 0.0, s"a calm index that drifts up earns ${calmRows(2)} in its volatile fifth")
     val wild = Vector.tabulate(600)(i => day(if i % 2 == 0 then 0.03 else -0.031))
     val timing = MarketSim.volExitOf(wild)(0)
+    assert(MarketSim.volExitOf(wild)(2) < 0.0, s"the volatile fifth of a series that falls when wild earns ${MarketSim.volExitOf(wild)(2)}")
     assert(timing > 0.0, "cash beats an index that loses in its swings")
     val start = MarketSim.VolExitWindow + 1
     assert(MarketSim.volExitOf(wild.take(start + MarketSim.DaysPerYear - 1))(0).isNaN)
@@ -520,7 +560,7 @@ class RecordBandSuite extends FunSuite:
     val rows = MarketSim.reportedRecordRows(a, Some(main), 8, main.length, MarketSim.DefaultSeed, w)
     assertEquals(rows.map(r => (r.window, r.row.name)),
                  ("B 8y", "bubble coupling 3y") +: MarketSim.TimingRows.map(("A 4y", _)))
-    val xs = main.map(p => MarketSim.timingOfPath(p.head(4).price)(2)).filter(!_.isNaN)
+    val xs = main.map(p => MarketSim.timingOfPath(p.tail(4).price)(2)).filter(!_.isNaN)
     val sorted = xs.filter(_.isFinite).sorted
     assertEquals(rows(3).row.model, sorted(sorted.size / 2))
     assertEquals((rows(3).row.horizonYears, rows(3).row.nHistories), (4, xs.size))

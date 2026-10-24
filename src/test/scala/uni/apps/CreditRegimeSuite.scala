@@ -38,21 +38,22 @@ class CreditRegimeSuite extends FunSuite:
     assert(on.vol > base.vol + 0.003, f"equity vol ${base.vol}%.4f -> ${on.vol}%.4f")
   }
 
-  /** Read PAIRED, both runs' bond over the declines of the run without the reversal (each
-    * classified by the record's rule on that run's CPI), since the reversal moves the bond by a
-    * point or two per decline (-1.6 here, growth -0.1) against medians tens of points deep. */
-  test("the slow bond leg, reversed, deepens the bond's inflation crashes") {
+  /** Read PAIRED, both runs' bond over the declines of the run without the reversal, split by the
+    * inflation each was seen under on that run's CPI (`crashSeen`), since the reversal moves the
+    * bond by a point or two per decline against moves tens of points deep; a Theil-Sen slope on
+    * the paired differences reads zero, most pairs being unchanged. */
+  test("the slow bond leg, reversed, deepens the bond's crashes with the inflation seen") {
     val off = MarketSim.simPaths(recipe, 40, 60, 20260918L)
     val on  = MarketSim.simPaths(recipe.copy(slowBondInfl = 1.0), 40, 60, 20260918L)
     val moves = off.zip(on).flatMap { (a, b) =>
       MarketSim.episodes(a.price, 15.0).flatMap { ep =>
         def mv(s: Array[Double]) = math.log(s(ep.trough) / s(ep.peak)) * 100.0
-        MarketSim.crashIsInflation(a.cpi, ep).map(infl => (infl, mv(b.bond) - mv(a.bond)))
+        MarketSim.crashSeen(a.cpi, ep).map(seen => (seen >= 4.0, mv(b.bond) - mv(a.bond)))
       }
     }
     def mean(v: Vector[Double]) = v.sum / v.length
-    val infl   = mean(moves.collect { case (true, d) => d })
-    val growth = mean(moves.collect { case (false, d) => d })
-    assert(infl < -0.8, f"inflation declines: the bond moves $infl%.2f points with the leg reversed")
-    assert(math.abs(growth) < 0.5, f"growth declines: the bond moves $growth%.2f points with the leg reversed")
+    val high = mean(moves.collect { case (true, d) => d })
+    val low  = mean(moves.collect { case (false, d) => d })
+    assert(high < -0.8, f"declines seen under 4%%+ inflation: the bond moves $high%.2f points with the leg reversed")
+    assert(math.abs(low) < 0.5, f"declines seen under less: the bond moves $low%.2f points with the leg reversed")
   }

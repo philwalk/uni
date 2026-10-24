@@ -99,24 +99,27 @@ class DividendSuite extends FunSuite:
         s"${a.name}: the anchored yield must sit inside its own band")
   }
 
-  test("the gate grades the level only when the dial is on, and the dial is an identity parameter") {
+  test("the dividend row is placed only when the dial is on, and the dial is an identity parameter") {
     // At the verdict horizon: the yield is normalized by the century's mean fundamental/price, and
     // a 20-year path's own mean sits well below it, so a short ensemble reads the dial low.
-    val a   = MarketSim.SP500Anchors
-    val off = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 100, MarketSim.DefaultSeed), 100)
-    assert(off.divYieldMean.isNaN)
-    assert(!MarketSim.gateChecks(a, off).exists(_._1.startsWith("dividend yield")),
+    val a = MarketSim.SP500Anchors
+    def placed(w: MarketSim.World): (MarketSim.WorldStats, Option[MarketSim.HistoryRow]) =
+      val sims = MarketSim.simPaths(w, 4, 100, MarketSim.DefaultSeed)
+      val st   = MarketSim.measure(sims, 100)
+      (st, MarketSim.historyRows(a, st, sims, 100, 4, MarketSim.DefaultSeed, w).find(_.name == MarketSim.DividendRow))
+    val (off, offRow) = placed(MarketSim.Defaults)
+    assert(off.divYieldMean.isNaN && offRow.isEmpty,
       "a dividends-off world must carry no dividend row, or its verdict is not byte-identical")
-    val on  = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults.copy(divYield = a.divYield), 4, 100,
-                MarketSim.DefaultSeed), 100)
-    val row = MarketSim.gateChecks(a, on).find(_._1.startsWith("dividend yield"))
-      .getOrElse(fail("no dividend row with the dial on"))
-    assert(row._2, s"the anchored dial must pass its own band: mean ${on.divYieldMean}, row ${row._1}")
-    assertEquals(row._3, MarketSim.GateClass.Fidelity)
-    val far = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults.copy(divYield = 9.0), 4, 100,
-                MarketSim.DefaultSeed), 100)
-    assert(!MarketSim.gateChecks(a, far).find(_._1.startsWith("dividend yield")).exists(_._2),
-      "a yield outside the record's annual means must fail the row")
+    assert(!MarketSim.gateChecks(a, off).exists(_._1.startsWith("dividend yield")))
+    val (on, onRow) = placed(MarketSim.Defaults.copy(divYield = a.divYield))
+    val row = onRow.getOrElse(fail("no dividend row with the dial on"))
+    assertEquals(row.record, Some(a.divYield))
+    assertEquals(row.horizon, a.divYears)
+    assert(row.reads.size == 4 && row.reads.forall(r => r > a.divYieldBand._1 && r < a.divYieldBand._2),
+      s"the anchored dial reads inside the record's annual means: mean ${on.divYieldMean}, reads ${row.reads}")
+    val (_, farRow) = placed(MarketSim.Defaults.copy(divYield = 9.0))
+    assert(farRow.exists(_.reads.forall(_ > a.divYieldBand._2)),
+      "a yield outside the record's annual means reads outside them on every history")
     assert(MarketSim.IdentityParams.contains("divYield"))
     assert(!MarketSim.CalibrateRanges.exists(_._1 == "divYield"))
   }

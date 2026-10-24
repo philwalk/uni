@@ -11,23 +11,26 @@
 #
 # WHY PHASE-AVERAGED, new in this vintage.  Non-overlapping blocks have to start somewhere, and on
 # one historical series that arbitrary choice was worth as much as the statistic.  Measured on the
-# CRSP century: offset zero gave vr60 1.175 while the 60 offsets span 1.057..1.333, and vr250 gave
-# 1.564 against a span of 0.955..1.613.  The shipped rows sat at or near the TOP of their phase
+# CRSP century as printed: offset zero gave vr60 1.175 while the 60 offsets span 1.057..1.333, and
+# vr250 gave 1.564 against a span of 0.955..1.613 (lag-free: 1.014 against 0.909..1.153, and 1.348
+# against 0.818..1.390).  The shipped rows sat at or near the TOP of their phase
 # range on three rungs of four, and a single observation of phase is the whole difference between
 # this file's predecessor (vr60 1.175) and ITS predecessor (1.143) on the same data.  Averaging
 # over every offset removes a free parameter nobody chose.  A model path is unaffected in practice
 # -- an ensemble already averages phases across paths -- so this tightens the RECORD side: the
-# cross-section's vr250 range falls from 0.240..1.564 to 0.474..1.255, and the bands with it.
+# cross-section's vr250 range falls from 0.240..1.564 to 0.474..1.255 (0.474..1.107 lag-free), and
+# the bands with it.
 #
 # WHAT THIS FILE SETTLES.  Volatility clustering is measured on |r| and is blind to signed
 # persistence, so nothing else in the target set stops the model from manufacturing a trend.
-# Modern series mean-revert mildly at one to six months (vr60 0.55-1.15 across 18 instruments and
-# two windows, vr120 0.43-1.30); the pre-war century trends mildly (1.17 at both short rungs).
-# QQQ and SPY over their full histories are indistinguishable, which is why the bands are shared
-# across anchor sets rather than carried per asset.  At 250 sessions the record itself spans
-# 0.24-1.56, so that rung cannot discriminate; it is graded inside the profile row rather than
-# dropped, so a world clears the ladder as a shape and never rung by rung.  The two short slopes
-# vr60-vr20 (-0.24..+0.10) and vr120-vr60 (-0.26..+0.16) are the shape the boxes cannot see.
+# Modern series mean-revert mildly at one to six months (vr60 0.58-0.98 across 18 instruments and
+# two windows, vr120 0.49-1.09), and so does CRSP read lag-free: 0.88-0.90 on every rung from 1954,
+# about 1.0 over the century (0.97 and 1.01 at the two short rungs; 1.12 and 1.18 as printed, the
+# pre-1999 index's stale-price lag).  QQQ and SPY over their full histories differ by 0.17 at 60
+# sessions, more than half the 0.26 between the CRSP century and 1990-2026, so the envelopes derived
+# here are printed, not graded: each set grades the four rungs on its own record band
+# (`recordbands-2026-10-20.tsv`).  At 250 sessions the cross-section spans 0.47-1.11.  The two short
+# slopes vr60-vr20 (-0.20..+0.05) and vr120-vr60 (-0.15..+0.15) are the shape the boxes cannot see.
 #
 # Measured 2026-09-11, superseding persistence-2026-09-02.tsv, which carried the same 39 readings
 # at block offset zero; every row here is that row phase-averaged, on the same data and windows.
@@ -44,7 +47,11 @@
 #   c1926/c1954/c1990  CRSP value-weighted US market TOTAL return -- Ken French's
 #          F-F_Research_Data_Factors_daily, (1 + (Mkt-RF + RF)/100) compounded into
 #          a price index, then log returns of it -- windows opening 1926-07-01, 1954-01-04 and
-#          1990-01-02, through 2026-06-30
+#          1990-01-02, through 2026-06-30.  LAG-FREE: read on a `record_bands -unlagged` copy of
+#          the file, its daily returns through 1999-03-10 with the stale-price lag removed, an MA(2)
+#          inversion fitted per calendar five-year block (`unlag_returns`).  Its identifying
+#          assumption sets the signed lag-1 (`ac1`) to zero before the cut, so the three eras' ac1
+#          is the post-1999 reversion diluted by their pre-cut share; the funds are read as printed.
 #   years  the calendar span of the window
 #
 # Fund series are Yahoo Finance's daily adjusted closes -- the same source and definition as the
@@ -89,6 +96,6 @@ w2001	XLP	sector	yahoo-adj-close	24.9	0.734	0.604	0.586	0.556	-0.0927
 w2001	XLU	sector	yahoo-adj-close	24.9	0.821	0.641	0.646	0.662	-0.0741
 w2001	XLV	sector	yahoo-adj-close	24.9	0.767	0.623	0.528	0.517	-0.0473
 w2001	XLY	sector	yahoo-adj-close	24.9	0.869	0.768	0.751	0.729	-0.0462
-c1926	CRSP-VW	us-broad	ken-french-daily	100.0	1.118	1.179	1.169	1.255	+0.0471
-c1954	CRSP-VW	us-broad	ken-french-daily	72.5	1.019	1.007	1.033	1.034	+0.0232
-c1990	CRSP-VW	us-broad	ken-french-daily	36.5	0.819	0.757	0.758	0.796	-0.0577
+c1926	CRSP-VW	us-broad	ken-french-daily	100.0	0.968	1.015	1.006	1.079	-0.0225
+c1954	CRSP-VW	us-broad	ken-french-daily	72.5	0.892	0.877	0.898	0.898	-0.0404
+c1990	CRSP-VW	us-broad	ken-french-daily	36.5	0.804	0.742	0.744	0.781	-0.0654

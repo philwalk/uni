@@ -246,3 +246,17 @@ pub fn num2string(xx: &Big, dec: i32, factor: f64) -> String {
 pub fn big2double(xx: &Big) -> f64 {
     if isBad(xx) { f64::NAN } else { xx.toDouble() }
 }
+
+#[cfg(test)]
+mod java_format_f_tests {
+    use super::java_format_f;
+
+    /// Shortest digits ending in 5 round half-up, as Java's formatter does, where Rust's own
+    /// `{:.6}` would read the exact binary value (2892.88660949999985) and round down.
+    #[test]
+    fn shortest_digit_ties_round_half_up() {
+        assert_eq!(java_format_f(2892.8866095, 0, 6), "2892.886610");
+        assert_eq!(java_format_f(47084.9765485, 0, 6), "47084.976549");
+        assert_eq!(java_format_f(-2892.8866095, 0, 6), "-2892.886610");
+    }
+}

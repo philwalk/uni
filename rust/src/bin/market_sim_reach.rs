@@ -92,7 +92,13 @@ fn coord(r: &Range, x: f64) -> f64 {
 
 fn from_coord(r: &Range, y: f64) -> f64 {
     let y = y.max(coord(r, r.1)).min(coord(r, r.2));
-    ms::from_search_coord(r.0, y).max(r.1).min(r.2)
+    let x = ms::from_search_coord(r.0, y);
+    // a cap's range is off to its tightest in its tightness (`ms::SEARCH_INV_DIALS`)
+    if ms::SEARCH_INV_DIALS.contains(&r.0) {
+        x
+    } else {
+        x.max(r.1).min(r.2)
+    }
 }
 
 /// One step of a dial, in its search coordinates.

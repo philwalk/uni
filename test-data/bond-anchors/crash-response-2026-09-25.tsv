@@ -1,13 +1,14 @@
 # What a long Treasury DID across the equity drawdowns of the last 24 years, on the model bond's
 # footing: for every equity peak-to-trough decline of 15% or worse, the bond's LOG return over the
-# same span, in percent, and the fund's empirical duration over that span. The model's bond is a
-# 13.5-year bond (`DURATION_REF`), so each episode is read as bondPct x 13.5 / duration -- an
-# unscaled TLT number reads a 13.5-year bond against a 17-year fund's move -- and the regime medians
-# are +7.0 growth (five episodes) and -27.9 inflation (the one 2022 episode).  REPORTED beside the
-# graded `bond growth-crash` and `bond infl-crash` rows, never graded: six episodes, one of them
-# inflation, are too few to grade.  The graded records are the same reading since 1962
+# same span, in percent, the fund's empirical duration over that span and the inflation the decline
+# was seen under. The model's bond is a 13.5-year bond (`DURATION_REF`), so each episode is read as
+# bondPct x 13.5 / duration -- an unscaled TLT number reads a 13.5-year bond against a 17-year
+# fund's move -- and the crash fit (`crash_fit`: Theil-Sen of the scaled moves on cpiTrough, by the
+# model's own median) reads +7.10 at 2% inflation and -6.07 per point. REPORTED beside the graded
+# `bond crash at 2% infl` and `bond crash per % infl` rows, never graded: six episodes, one of them
+# seen above 4%, are too few to grade. The graded records are the same reading since 1962
 # (crash-response-1962-2026-10-05.tsv, crash-response-1962-hitec-2026-10-06.tsv).
-# `BondCrashSuite` / `bond_crash_tests` re-derive both medians from the rows below.
+# `BondCrashSuite` / `bond_crash_tests` re-derive the fit from the rows below.
 #
 # Equity SPY, bond TLT, daily Yahoo adjusted closes over their overlap, 2002-07-30..2026-08-03.
 #
@@ -17,12 +18,14 @@
 #   bondPct, so it is the like-for-like scale; the fund's published effective duration moved
 #   between 15 and 19 over these years (14.89 on 2026-08-22, ishares-2026-08-22.tsv).
 #
-# regime: inflation when CPI year over year ROSE over the decline and stood at 4% or more at the
-#   trough, else growth (the graded records' rule): 2022 is the era's one inflation episode.
-peak	trough	equityPct	bondPct	duration	regime
-2002-08-22	2002-10-09	-18.9	6.6	12.8	growth
-2007-10-09	2009-03-09	-55.2	22.4	14.2	growth
-2018-09-20	2018-12-24	-19.3	4.4	16.5	growth
-2020-02-19	2020-03-23	-33.7	13.3	17.6	growth
-2022-01-03	2022-10-12	-24.5	-34.7	16.8	inflation
-2025-02-19	2025-04-08	-18.8	0.8	16.9	growth
+# cpiPeak / cpiTrough: CPI year over year at the peak and the trough, percent (FRED CPIAUCSL, the
+#   last monthly observation dated on or before the day against the one twelve months earlier).
+# regime: inflation when CPI year over year rose over the decline and stood at 4% or more at the
+#   trough, else growth -- informational: the fit reads cpiTrough, not the regime.
+peak	trough	equityPct	bondPct	duration	cpiPeak	cpiTrough	regime
+2002-08-22	2002-10-09	-18.9	6.6	12.8	1.75	2.03	growth
+2007-10-09	2009-03-09	-55.2	22.4	14.2	3.61	-0.45	growth
+2018-09-20	2018-12-24	-19.3	4.4	16.5	2.33	2.00	growth
+2020-02-19	2020-03-23	-33.7	13.3	17.6	2.34	1.49	growth
+2022-01-03	2022-10-12	-24.5	-34.7	16.8	7.56	7.76	inflation
+2025-02-19	2025-04-08	-18.8	0.8	16.9	2.80	2.33	growth

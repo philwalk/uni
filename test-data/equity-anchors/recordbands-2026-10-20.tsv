@@ -1,0 +1,141 @@
+# THE RECORD BANDS: every fidelity row one daily record can be read the model's way, with that
+# record's own sampling spread -- where the statistic lands over moving one-year-block resamples of
+# the record.  A verdict row that carries a band misses when the model falls outside its joint band
+# (jointLo..jointHi) and reports its percentile among the resamples, and its `real` is this file's
+# `record`.  `RecordBandSuite` /
+# `record_band_tests` re-derive the shipped `RecordBand` literals and the typical-year anchors from
+# this file.  Editing a row moves the shipped bands.
+#
+# record     the row's statistic on the whole window, by `seriesReadings` / `series_readings`: the
+#            functions the model reads a path with.  The typical year's is `yearVolPhaseMean`, the
+#            median-year vol averaged over all 252 block phases: on one series the phase is worth as
+#            much as the gap the row measures (QQQ 18.2 to 21.5; calendar years, which the anchor
+#            used to read, 18.3).
+# p0..p100   the statistic over 20000 resamples, each the window's own length, built from whole
+#            252-session blocks at uniformly drawn starts (`NumPyRng`, seed 20260918) and read the
+#            same way; `pctile`'s index rule.
+# jointC     the joint band's half-width in rank, c: per resample the largest distance of any of the
+# jointLo    window's rows' mid-ranks from 1/2, at its 1 - alpha quantile; each row's band is its
+# jointHi    resamples at 1/2 - c and 1/2 + c (`record_band_joint` / `recordBandJoint`).  A set's
+#            rows miss together at most 10% of the time: alpha is 0.10 split over the set's record
+#            windows by their rows (QQQ's 14 at 0.0824, its 2 DFF rows at 0.0118 and its TLT row at 0.0059;
+#            the S&P's 14 at 0.0737, its 2 century rows, its 2 DFF rows and its TLT row at 0.0105, 0.0105
+#            and 0.0053).  Each row's own p5..p95 held QQQ's fourteen rows' resamples all at once 40.2% of
+#            the time.  The Nasdaq's downside vol excess and vol-timing edge read the long tech record in
+#            their own family (`volstate-2026-10-20.tsv`), outside this split.
+#
+# nasdaq  QQQ, Yahoo Finance's adjusted closes (retrieved 2026-10-04): daily log returns
+#         1999-03-11..2026-08-20, the window the Nasdaq set's levels were measured over.  The file's
+#         first row is the anchor price and carries no return.
+# sp500   CRSP value-weighted US market total return from Ken French's
+#         F-F_Research_Data_Factors_daily (202608): Mkt-RF + RF compounded into an index without a
+#         leading 1.0, then its log returns, so the window's first session drops out.  1954-2026
+#         for every row but clustering, which the set reads over the century, 1926-2026.  Read
+#         LAG-FREE: the daily returns through 1999-03-10 with the stale-price lag removed, an MA(2)
+#         inversion fitted per calendar five-year block (`unlag_returns`; `-recorded` reads them as
+#         printed).  QQQ and TLT are funds, read as printed.
+# DFF    the daily effective federal funds rate (FRED's full run, fredgraph.csv?id=DFF, fetched
+#         2026-09-25), the rate rows' record for both sets, read on Monday-Friday dates over the set's own
+#         equity window.  A level, so no session drops out.
+# TLT     the bond row's record for both sets: Yahoo Finance's adjusted closes (retrieved
+#         2026-10-04), daily log returns 2002-07-31..2026-08-03.
+#
+# WHERE A LOSS TARGET IS NOT THIS RECORD, and stays as it is (the verdict carries both):
+#   variance ratio 60d     1.00 in both sets, a theory value: the model has no mean-reversion
+#                          channel
+#   sp500 crashes/century  20.7, between the century's 19.2 and 1954-2026's 24.9
+#   sp500 median depth %   -21.5, the mean of the two middle episodes of 18; the model's median
+#                          takes the upper middle, -21.0
+# The S&P's equity vol (16.8), kurtosis (20.5) and return per vol (0.643) targets are this file's
+# lag-free 1954-2026 records.
+#
+# vol-timing edge pts/yr   the consumer's canonical volatility-timing rule (`volTimingOf` / `vol_timing_of`):
+#            hold the index when its 24-session realized vol is below the series' own 60th
+#            percentile of it, cash at 0 at or above the 80th, keep the position between, decided
+#            on the vol through t and held over t+1; the rule's log growth minus buy-and-hold's,
+#            points a year, from the first full window on.  The first CONDITIONAL row; anchor-free
+#            by construction.  Added 2026-09-24 (PLAN item 33); every earlier row's record and
+#            percentiles reproduce the 2026-09-18 file, the joint bands span the new row.
+#
+# short rate %             the rate path's mean, percent (`rateReadings` / `rate_readings`), and
+# rate floor share %       the share of its sessions under 0.50%, percent: the record's carry and its
+#            time at the zero bound, which the bond's carry, the equity's markdown and a levered
+#            fund's financing read.  Added 2026-09-25 (PLAN item 34); every earlier row's record and
+#            percentiles reproduce the 2026-09-24 file, and every joint band is re-split over 15 rows.
+#
+# variance ratio 120d      the 60-day row's statistic at 120 and 250 sessions (`varianceRatio` /
+# variance ratio 250d      `variance_ratio`): the long end consumer request 1 grades, where QQQ's ratio
+#            rises with the horizon and the worlds' falls.  Added 2026-09-26; every earlier row's
+#            record and percentiles reproduce the 2026-09-25 file, every joint band re-split over 18.
+#
+# variance ratio 20d       the same ratio at 20 sessions, the short rung the retired variance-ratio profile gate
+#            boxed; the calibrated membership rule places it with the other rungs.  Added 2026-10-18; every
+#            earlier row's record and percentiles reproduce the 2026-10-04 file, every joint band re-split over 19.
+#
+# The Nasdaq set's downside vol excess % and vol-timing edge pts/yr left this file 2026-10-20 for the
+#            long tech record (`volstate-2026-10-20.tsv`); every other row's record and percentiles
+#            reproduce the 2026-10-18 file, and the Nasdaq's joint bands re-split over its 17 rows.
+#
+# Generated by `rust/src/bin/record_bands.rs` (twin: `jsrc/recordBands.sc`), measured 2026-09-26,
+# the QQQ and TLT rows re-read 2026-10-04, the 20-day row and every joint band 2026-10-18 from the same files,
+# the CRSP rows re-read lag-free 2026-10-23.  -yahoo files are `date,adj_close,dlog_adj_close`, one row
+# a session, the first carrying no return:
+#   record_bands -set nasdaq -series QQQ -yahoo <QQQ.csv> -from 1999-03-10 -to 2026-08-20 -of 17
+#       -rows <every QQQ row but the downside vol excess and the vol-timing edge>
+#   record_bands -set nasdaq -series DFF -fred <FRED DFF, full run> -rate
+#       -from 1999-03-11 -to 2026-08-20 -of 17
+#   record_bands -set sp500 -series DFF -fred <FRED DFF, full run> -rate -from 1954-07-01 -to 2026-06-30 -of 19
+#   record_bands -set nasdaq -series TLT -yahoo <TLT.csv> -bond -from 2002-07-30 -to 2026-08-03 -of 17
+#   record_bands -set sp500 -series TLT -yahoo <TLT.csv> -bond -from 2002-07-30 -to 2026-08-03 -of 19
+# The QQQ and TLT files end where they stand; to read past those dates each continues on its published
+# proxy, spliced after the last date (`-splice FILE -at DATE`): QQQ on Ken French's daily HiTec industry,
+# `-splice <french>/10_Industry_Portfolios_Daily.CSV -column HiTec -at 2026-08-20 -to <later>`; TLT on the
+# 20-year constant-maturity Treasury built from FRED's DGS20, `-splice <FRED DGS20> -at 2026-08-03 -to <later>`.
+#   record_bands -set sp500 -series CRSP -french <data>/french/F-F_Research_Data_Factors_daily.csv
+#       -from 1954-01-04 -to 2026-06-30 -rows <every row but the two clustering rows> -of 19
+#   record_bands -set sp500 -series CRSP -french <same> -from 1926-07-01 -to 2026-06-30
+#       -rows "clustering lag 1,clustering lag 20" -of 19
+# THE BOND STRESS SHARE (item 62): the simulator's bond stress index run on FRED's DGS20 as a 20-year par
+# bond over every session since 1962 (the one return spanning the 1987-1993 gap dropped, the state carried),
+# the share of sessions above 0.5 after a one-year burn-in, in percent; the same row for both sets, with its
+# own joint band. It replaces the mechanism gate that held a floor at this band's edge.
+#   record_bands -set sp500|nasdaq -bondstress -fred <FRED DGS20> -years 20
+set	row	series	window	n	resamples	record	p0	p1	p5	p10	p15	p20	p25	p30	p35	p40	p45	p50	p55	p60	p65	p70	p75	p80	p85	p90	p95	p99	p100	jointC	jointLo	jointHi
+nasdaq	equity vol %	QQQ	1999-03-11..2026-08-20	6904	20000	26.901577	16.978037	20.483349	22.226065	23.163097	23.809253	24.323456	24.768740	25.187079	25.575208	25.933828	26.295105	26.644481	27.006345	27.360214	27.761210	28.142004	28.557870	29.048477	29.609973	30.314645	31.408600	33.344450	38.171757	0.495625	19.901372	34.168670
+nasdaq	typical-year vol %	QQQ	1999-03-11..2026-08-20	6904	20000	19.966713	13.846234	16.530707	17.397078	17.811599	18.258337	18.684510	18.960351	19.291152	19.432688	19.564064	19.701482	19.854883	19.941735	20.137221	20.451535	20.913599	21.279221	21.646616	22.343636	22.857745	23.444964	24.674639	34.834256	0.495625	16.095590	26.282722
+nasdaq	return per vol	QQQ	1999-03-11..2026-08-20	6904	20000	0.380553	-0.403388	-0.129890	0.005006	0.082489	0.131686	0.172962	0.208764	0.243087	0.272005	0.298493	0.328610	0.356969	0.387892	0.416830	0.447033	0.480692	0.515387	0.552254	0.597192	0.653093	0.741078	0.899654	1.220561	0.495625	-0.174480	0.963258
+nasdaq	kurtosis	QQQ	1999-03-11..2026-08-20	6904	20000	9.554070	4.711036	6.775437	7.594671	7.971104	8.252674	8.487022	8.688472	8.854258	9.015805	9.168505	9.321964	9.484194	9.639484	9.806452	9.972343	10.150002	10.336830	10.564881	10.827992	11.171733	11.720846	12.734709	16.207478	0.495625	6.340955	13.249198
+nasdaq	clustering lag 1	QQQ	1999-03-11..2026-08-20	6904	20000	0.292768	0.105961	0.200377	0.232370	0.246569	0.255754	0.262515	0.268260	0.272927	0.277222	0.281234	0.285201	0.288836	0.292466	0.295868	0.299370	0.303208	0.307275	0.311632	0.316687	0.322957	0.332082	0.349404	0.393200	0.495625	0.183166	0.355912
+nasdaq	clustering lag 20	QQQ	1999-03-11..2026-08-20	6904	20000	0.248802	0.046058	0.124547	0.160758	0.177522	0.187920	0.195602	0.201786	0.207376	0.212243	0.216783	0.220706	0.224758	0.228607	0.232376	0.236301	0.240175	0.244480	0.249019	0.254204	0.260077	0.268726	0.284754	0.335159	0.495625	0.108526	0.292013
+nasdaq	variance ratio 60d	QQQ	1999-03-11..2026-08-20	6904	20000	0.831558	0.514834	0.632326	0.689445	0.719287	0.739068	0.754811	0.768353	0.778940	0.789056	0.798778	0.808301	0.816911	0.825511	0.834846	0.844107	0.853961	0.864270	0.875894	0.889136	0.906583	0.931117	0.982527	1.086122	0.495625	0.605156	0.999994
+nasdaq	up-day share %	QQQ	1999-03-11..2026-08-20	6904	20000	54.777163	50.867980	52.901721	53.463614	53.774410	53.982816	54.143003	54.283217	54.407693	54.521625	54.631518	54.740061	54.840588	54.944574	55.048812	55.155316	55.270821	55.395579	55.526431	55.678509	55.874636	56.166181	56.691423	58.066860	0.495625	52.618563	56.899563
+nasdaq	leverage corr	QQQ	1999-03-11..2026-08-20	6904	20000	-0.107111	-0.195599	-0.165953	-0.148921	-0.139763	-0.133214	-0.128036	-0.123638	-0.119485	-0.115678	-0.111994	-0.108430	-0.104824	-0.101165	-0.097354	-0.093575	-0.089341	-0.084974	-0.080282	-0.074603	-0.067438	-0.056780	-0.037189	0.001314	0.495625	-0.172421	-0.028397
+nasdaq	crashes/century	QQQ	1999-03-11..2026-08-20	6904	20000	25.550406	3.650058	3.650058	10.950174	18.250290	18.250290	21.900348	25.550406	25.550406	29.200463	29.200463	32.850521	32.850521	32.850521	36.500579	36.500579	40.150637	40.150637	43.800695	43.800695	47.450753	51.100811	58.400927	73.001159	0.495625	3.650058	62.050985
+nasdaq	median depth %	QQQ	1999-03-11..2026-08-20	6904	20000	-22.796651	-98.929999	-79.792945	-49.366832	-36.464964	-32.654502	-28.633858	-28.559365	-28.469611	-25.233363	-24.944570	-23.318045	-22.796651	-22.796651	-22.768316	-22.768316	-21.764667	-21.285608	-19.542987	-18.285740	-17.266635	-16.104397	-15.859029	-15.000011	0.495625	-91.781581	-15.609339
+nasdaq	variance ratio 120d	QQQ	1999-03-11..2026-08-20	6904	20000	0.923272	0.382528	0.541003	0.633352	0.688093	0.723496	0.750007	0.773776	0.795781	0.814282	0.831841	0.849017	0.865293	0.882173	0.899942	0.916731	0.934867	0.953161	0.974375	0.999842	1.030191	1.075804	1.161100	1.335886	0.495625	0.502454	1.191545
+nasdaq	variance ratio 250d	QQQ	1999-03-11..2026-08-20	6904	20000	1.106648	0.322401	0.481016	0.602654	0.674201	0.723050	0.761262	0.794594	0.823584	0.852794	0.880536	0.907210	0.934726	0.960711	0.989172	1.017198	1.048521	1.082140	1.121157	1.166464	1.225195	1.317712	1.487674	1.877279	0.495625	0.437579	1.572481
+nasdaq	variance ratio 20d	QQQ	1999-03-11..2026-08-20	6904	20000	0.800414	0.645735	0.709777	0.735493	0.749556	0.759163	0.766548	0.773092	0.778933	0.784482	0.789780	0.794907	0.799694	0.804643	0.809806	0.814935	0.820691	0.826983	0.833694	0.841554	0.851648	0.866307	0.895700	0.970213	0.495625	0.697875	0.909747
+nasdaq	short rate %	DFF	1999-03-11..2026-08-20	7161	20000	2.136466	0.776798	1.235883	1.463321	1.590816	1.672375	1.741374	1.802569	1.855851	1.905629	1.953942	1.997838	2.043160	2.090443	2.138789	2.189316	2.242692	2.300256	2.364969	2.440335	2.535389	2.677798	2.958886	3.576963	0.496525	1.103040	3.116154
+nasdaq	rate floor share %	DFF	1999-03-11..2026-08-20	7161	20000	37.313224	5.962854	19.061584	24.661360	27.761486	29.828236	31.490015	32.900433	34.171205	35.358190	36.475353	37.606480	38.709677	39.743053	40.860215	42.019271	43.178327	44.477028	45.971233	47.674906	49.783550	52.981427	59.460969	75.715682	0.496525	16.268678	62.393520
+nasdaq	bond depth vs vol	TLT	2002-07-31..2026-08-03	6040	20000	1.029058	0.144525	0.471084	0.647434	0.752934	0.828321	0.889520	0.948798	1.000965	1.050809	1.094922	1.139144	1.183328	1.226545	1.273320	1.323439	1.375117	1.435521	1.499504	1.570602	1.657597	1.785308	1.965573	2.304314	0.497075	0.373351	2.071095
+nasdaq	bond stress share %	DGS20 par bond	1962-01-03..2026-10-01	14482	20000	0.660576	0.000000	0.035137	0.091356	0.147576	0.189740	0.224877	0.260014	0.295151	0.330288	0.365425	0.400562	0.428672	0.463809	0.498946	0.541110	0.583275	0.632467	0.688686	0.758960	0.850316	0.990864	1.271961	2.094167	0.450225	0.091356	0.990864
+sp500	equity vol %	CRSP	1954-01-05..2026-06-30	18244	20000	16.820747	13.754063	14.781532	15.328211	15.629711	15.857730	16.031020	16.183305	16.324410	16.456452	16.583633	16.697906	16.812565	16.935315	17.059403	17.189090	17.330357	17.487614	17.650497	17.851870	18.111472	18.507805	19.239667	21.407898	0.496575	14.513585	19.631075
+sp500	typical-year vol %	CRSP	1954-01-05..2026-06-30	18244	20000	14.006915	11.556472	12.531283	12.920723	13.107670	13.210511	13.310495	13.413434	13.521989	13.654744	13.766653	13.987344	14.149909	14.250427	14.379994	14.493633	14.615026	14.703818	14.798243	14.901537	15.100966	15.429237	15.962256	17.877783	0.496575	12.318597	16.619338
+sp500	return per vol	CRSP	1954-01-05..2026-06-30	18244	20000	0.642868	0.088725	0.335585	0.419972	0.466367	0.498614	0.521400	0.542910	0.562300	0.580360	0.597822	0.614042	0.630378	0.646003	0.662528	0.680268	0.698571	0.718152	0.740436	0.765043	0.799177	0.849823	0.941706	1.163062	0.496575	0.292071	0.999415
+sp500	kurtosis	CRSP	1954-01-05..2026-06-30	18244	20000	20.523346	5.752405	7.287199	9.132716	10.459835	11.450039	12.338158	13.237927	14.346062	16.237802	17.984438	18.901179	19.666440	20.365129	21.123409	22.030061	23.221480	24.805752	26.521613	28.202123	30.318715	33.636590	40.454596	60.057727	0.496575	6.858491	43.781260
+sp500	clustering lag 1	CRSP	1926-07-02..2026-06-30	26273	20000	0.286219	0.190034	0.220253	0.238919	0.248664	0.255388	0.260720	0.265096	0.269024	0.272551	0.276041	0.279575	0.282815	0.286047	0.289397	0.292923	0.296412	0.300373	0.304673	0.309511	0.315627	0.324835	0.342696	0.386289	0.497275	0.208310	0.353488
+sp500	clustering lag 20	CRSP	1926-07-02..2026-06-30	26273	20000	0.209525	0.108155	0.138002	0.153372	0.161840	0.167468	0.172028	0.175771	0.179207	0.182214	0.185415	0.188224	0.190994	0.193608	0.196405	0.199244	0.202056	0.205043	0.208665	0.212552	0.217531	0.224367	0.236556	0.267489	0.497275	0.127862	0.245254
+sp500	variance ratio 60d	CRSP	1954-01-05..2026-06-30	18244	20000	0.876738	0.693214	0.765817	0.794978	0.811740	0.823918	0.833535	0.841679	0.849244	0.856154	0.862373	0.869116	0.874894	0.881017	0.887269	0.893804	0.901049	0.908621	0.917151	0.927484	0.940381	0.960600	0.998670	1.099491	0.496575	0.746460	1.018957
+sp500	downside vol excess %	CRSP	1954-01-05..2026-06-30	18244	20000	2.067075	-7.190142	-4.087398	-2.442985	-1.576274	-0.947413	-0.424222	0.028640	0.420089	0.831648	1.212033	1.573876	1.930377	2.281021	2.666235	3.084421	3.509860	3.973919	4.493450	5.077572	5.892127	7.068838	9.397716	16.871394	0.496575	-4.916067	10.571132
+sp500	up-day share %	CRSP	1954-01-05..2026-06-30	18244	20000	54.275665	51.993848	53.039464	53.394909	53.578889	53.699022	53.794582	53.882508	53.954740	54.022862	54.085560	54.150653	54.212696	54.273316	54.337674	54.400132	54.470562	54.545455	54.629884	54.725903	54.844919	55.029423	55.354981	56.159560	0.496575	52.853844	55.538462
+sp500	leverage corr	CRSP	1954-01-05..2026-06-30	18244	20000	-0.091278	-0.144169	-0.122699	-0.113006	-0.108099	-0.105070	-0.102577	-0.100445	-0.098555	-0.096974	-0.095399	-0.093953	-0.092578	-0.091189	-0.089797	-0.088396	-0.087026	-0.085359	-0.083509	-0.081599	-0.079119	-0.075323	-0.067743	-0.038151	0.496575	-0.127600	-0.063131
+sp500	crashes/century	CRSP	1954-01-05..2026-06-30	18244	20000	24.862969	8.287656	15.194036	17.956588	19.337865	20.719141	20.719141	22.100417	22.100417	23.481693	23.481693	24.862969	24.862969	24.862969	26.244245	26.244245	27.625521	27.625521	29.006797	29.006797	30.388073	31.769349	35.913177	45.582109	0.496575	13.812760	37.294453
+sp500	median depth %	CRSP	1954-01-05..2026-06-30	18244	20000	-20.993105	-43.522128	-33.243777	-30.251849	-27.760786	-26.819929	-25.827254	-25.085998	-24.312907	-23.450989	-22.720029	-22.196834	-21.981851	-21.981851	-21.637968	-21.053196	-20.993105	-20.747571	-20.642216	-20.446132	-20.308346	-19.557597	-19.060289	-16.376040	0.496575	-34.216281	-18.519014
+sp500	vol-timing edge pts/yr	CRSP	1954-01-05..2026-06-30	18244	20000	-4.498379	-8.628549	-6.982706	-6.153416	-5.702227	-5.401016	-5.160316	-4.936200	-4.742593	-4.566252	-4.405279	-4.243637	-4.078243	-3.915902	-3.744587	-3.580413	-3.404275	-3.211935	-2.999224	-2.753603	-2.437495	-1.960218	-1.051621	1.521998	0.496575	-7.415949	-0.554688
+sp500	variance ratio 120d	CRSP	1954-01-05..2026-06-30	18244	20000	0.898289	0.588865	0.703602	0.752846	0.780657	0.799465	0.814391	0.827569	0.839511	0.850713	0.861719	0.871656	0.881694	0.891659	0.901360	0.911489	0.923197	0.935686	0.949867	0.965685	0.986553	1.017462	1.078466	1.293321	0.496575	0.680502	1.113420
+sp500	variance ratio 250d	CRSP	1954-01-05..2026-06-30	18244	20000	0.897728	0.508798	0.629503	0.696058	0.733633	0.759450	0.782051	0.800883	0.817179	0.833068	0.847955	0.864081	0.879754	0.894937	0.910538	0.925839	0.943557	0.963226	0.984672	1.009977	1.041935	1.094619	1.192717	1.610316	0.496575	0.594513	1.251512
+sp500	variance ratio 20d	CRSP	1954-01-05..2026-06-30	18244	20000	0.891976	0.773690	0.821151	0.840951	0.851846	0.859109	0.865229	0.870524	0.875124	0.879423	0.883463	0.887483	0.891393	0.895185	0.899244	0.903142	0.907564	0.912318	0.917187	0.923371	0.931227	0.943088	0.964938	1.019557	0.496575	0.810297	0.975632
+sp500	short rate %	DFF	1954-07-01..2026-06-30	18784	20000	4.595174	3.172289	3.724572	3.985210	4.123637	4.212128	4.284050	4.352584	4.413407	4.470442	4.524520	4.573902	4.620935	4.669148	4.717381	4.771603	4.827784	4.889457	4.956948	5.038634	5.141448	5.290178	5.573231	6.381581	0.497225	3.561732	5.806048
+sp500	rate floor share %	DFF	1954-07-01..2026-06-30	18784	20000	14.565588	2.507453	6.308560	8.507240	9.774276	10.642036	11.355409	11.983603	12.537266	13.074957	13.575383	14.086457	14.576235	15.044719	15.561116	16.072189	16.615204	17.243399	17.908859	18.728705	19.734881	21.268101	24.382453	31.079642	0.497225	4.998935	26.192504
+sp500	bond depth vs vol	TLT	2002-07-31..2026-08-03	6040	20000	1.029058	0.144525	0.471084	0.647434	0.752934	0.828321	0.889520	0.948798	1.000965	1.050809	1.094922	1.139144	1.183328	1.226545	1.273320	1.323439	1.375117	1.435521	1.499504	1.570602	1.657597	1.785308	1.965573	2.304314	0.497375	0.370719	2.074886
+sp500	bond stress share %	DGS20 par bond	1962-01-03..2026-10-01	14482	20000	0.660576	0.000000	0.035137	0.091356	0.147576	0.189740	0.224877	0.260014	0.295151	0.330288	0.365425	0.400562	0.428672	0.463809	0.498946	0.541110	0.583275	0.632467	0.688686	0.758960	0.850316	0.990864	1.271961	2.094167	0.450225	0.091356	0.990864

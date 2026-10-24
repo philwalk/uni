@@ -1,17 +1,20 @@
 # Long-horizon variance ratios of the CRSP US market total return, on `uni.apps.MarketSim.varianceRatio`'s
 # definition: vr(q) = Var(non-overlapping q-session sums) / (q * Var(daily)), sample variances (n-1),
-# LOG daily returns, series truncated to a whole number of blocks. The vr20/vr60 columns REPRODUCE
-# persistence-2026-08-29.tsv's c-rows to the third decimal, which is this file's control: the same
-# pipeline, re-run 2026-08-30 from the 202606-vintage F-F_Research_Data_Factors_daily (Mkt-RF + RF).
-# (persistence-2026-09-02.tsv re-measured those c-rows with the twins' own functions and reads
-# 1.169 / 1.175 at c1926 against the 1.166 / 1.143 here; that pipeline's construction was not recorded
-# and could not be reproduced. The rows below were not re-measured; the negative they settle does
-# not depend on the third decimal.)
+# LOG daily returns, series truncated to a whole number of blocks. On the file as printed, the
+# vr20/vr60 columns REPRODUCE persistence-2026-08-29.tsv's c-rows to the third decimal, which is this
+# file's control: the same pipeline, re-run 2026-08-30 from the 202606-vintage
+# F-F_Research_Data_Factors_daily (Mkt-RF + RF). (persistence-2026-09-02.tsv re-measured those c-rows
+# with the twins' own functions and reads 1.169 / 1.175 at c1926 against this pipeline's 1.166 / 1.143;
+# that pipeline's construction was not recorded and could not be reproduced. The negative the rows
+# settle does not depend on the third decimal.) The rows below are read LAG-FREE, on a `record_bands
+# -unlagged` copy of the file: the daily returns through 1999-03-10 with the stale-price lag removed,
+# an MA(2) inversion fitted per calendar five-year block (`unlag_returns`).
 #
 # WHY THIS FILE SETTLES A NEGATIVE. The 60d variance-ratio row is blind past its own horizon, and the
 # 0.22.1 disaster channel moved the model's century-path vr(5y) from 0.89 to 1.15 unwatched. These
 # columns were measured to anchor that horizon and CANNOT: the record's long-horizon readings are
-# era-split with the sign flipping between windows (vr1260: 0.730 for the century, 1.152 post-1954)
+# era-split with the sign flipping between windows (vr1260: 0.623 for the century, 0.997 post-1954,
+# 1.046 since 1990)
 # and a window of n non-overlapping blocks carries relative noise ~ sqrt(2/(n-1)) — 32% for the
 # century's 20 five-year blocks, 39% for c1954's 14 — so no window pins a value the model's own
 # per-century spread (p5-p95 roughly 0.45-2.9) does not already contain. The model's 1.15 sits
@@ -21,6 +24,6 @@
 #
 # nblocks(q) = sessions div q for the vr1260 column, stated because it IS the precision.
 window	years	vr20	vr60	vr252	vr1260	blocks1260
-c1926	104.3	1.166	1.143	1.454	0.730	20
-c1954	72.4	1.050	1.002	1.001	1.152	14
-c1990	36.5	0.770	0.815	0.926	1.068	7
+c1926	104.3	1.013	0.986	1.245	0.623	20
+c1954	72.4	0.920	0.874	0.870	0.997	14
+c1990	36.5	0.753	0.798	0.907	1.046	7

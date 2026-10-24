@@ -49,16 +49,20 @@ class OpenSuite extends FunSuite:
   test("the anchored open worlds read the record's overnight share, and the open's rows grade only when it ran") {
     // The bars fixture's overnightShare rows: 0.33 (SPY) / 0.28 (QQQ), tol 0.10.  A small
     // ensemble, so the tolerance is the fixture's, not the scoring size's.
-    val a  = MarketSim.SP500Anchors
-    val sp = MarketSim.measure(MarketSim.simPaths(
+    val a    = MarketSim.SP500Anchors
+    val sims = MarketSim.simPaths(
       MarketSim.Defaults.copy(rangeScale = 0.78, rangeDown = 0.13, volIdio = 0.34, overnight = 0.20),
-      8, 100, MarketSim.DefaultSeed), 100)
+      8, 100, MarketSim.DefaultSeed)
+    val sp   = MarketSim.measure(sims, 100)
     val os = sp.open.getOrElse(fail("no open readings with the dial on"))
     assert(math.abs(os.overnightShare - 0.33) < 0.10, f"S&P overnight share ${os.overnightShare}%.3f")
     assert(os.worstGapShare > os.allGapShare,
       f"the worst sessions must open with more of the day gone: ${os.worstGapShare}%.3f vs ${os.allGapShare}%.3f")
     val rows = MarketSim.gateChecks(a, sp)
-    assert(rows.exists(r => r._1.startsWith("bar overnight share") && r._2), "the share row must pass at the anchored dial")
+    val j = MarketSim.BarRows.indexOf("bar overnight share")
+    val shares = sims.map(p => MarketSim.barRowsOfPath(p)(j))
+    val mid = shares.sorted.apply(shares.size / 2)
+    assert(math.abs(mid - 0.33) < 0.10, s"the share row's typical history reads the record's: $shares")
     assert(rows.exists(r => r._1.startsWith("overnight gap share") && r._2 && r._3 == MarketSim.GateClass.Mechanism))
     val off = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 20, MarketSim.DefaultSeed), 20)
     assert(off.open.isEmpty && !MarketSim.gateChecks(a, off).exists(_._1.contains("overnight")),

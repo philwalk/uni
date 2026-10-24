@@ -5,7 +5,12 @@ import munit.FunSuite
 /** The verdict's one-value rule and the flips' reach.  The Rust twin's `verdict_reading_tests`
   * makes the same checks. */
 class VerdictReadingsSuite extends FunSuite:
-  lazy val world = MarketSim.namedWorld("0.24.4-nasdaq").get._1
+  // a world whose bond is anchored (its volatility inside the funds' range, where the depth relation
+  // is defined), so the bond's depth gate is among the table gates: the recipe with its term noise
+  // at two thirds, the legs tracking their yields the session they move
+  lazy val world =
+    val w = MarketSim.namedWorld("0.25.0-nasdaq").get._1
+    w.copy(ext = w.ext.copy(termVol = w.ext.termVol * 0.67))
   lazy val st    = MarketSim.measure(MarketSim.simPaths(world, 8, 27, MarketSim.DefaultSeed), 27)
   val a = MarketSim.NasdaqAnchors
 
@@ -20,13 +25,11 @@ class VerdictReadingsSuite extends FunSuite:
     val hot = MarketSim.gateChecksAt(a, st, Map("equity vol %" -> 50.0, "kurtosis" -> 50.0,
                                                 "clustering lag 1" -> 0.5))
     assert(!row(hot, MarketSim.GateClass.Realism, "equity vol"))
-    assert(!row(hot, MarketSim.GateClass.Fidelity, "equity vol"))
     assert(!row(hot, MarketSim.GateClass.Realism, "kurtosis"))
     assert(!row(hot, MarketSim.GateClass.Realism, "clustering"))
     // and the table's own value where the ensemble's would fail
     val calm = MarketSim.gateChecksAt(a, st.copy(vol = 0.50), Map("equity vol %" -> 26.0))
     assert(row(calm, MarketSim.GateClass.Realism, "equity vol"))
-    assert(row(calm, MarketSim.GateClass.Fidelity, "equity vol"))
   }
 
   test("the table gates are the gates a table reading can change") {
@@ -37,8 +40,8 @@ class VerdictReadingsSuite extends FunSuite:
     for (o, b) <- own.zip(blind) do
       if MarketSim.gateReadsTable(o._1) then assert(!b._2, s"${o._1} reads the table and cannot pass without it")
       else assertEquals(o, b, s"${o._1} reads the ensemble alone")
-    // vol in two classes, one gate for each of the other five, and the bond's depth
-    assertEquals(own.count(g => MarketSim.gateReadsTable(g._1)), 8)
+    // the four realism gates a table reading can change: vol, kurtosis, clustering, crash rate
+    assertEquals(own.count(g => MarketSim.gateReadsTable(g._1)), 4)
   }
 
   test("the gate bands are the band gates, in gate order") {
@@ -53,10 +56,10 @@ class VerdictReadingsSuite extends FunSuite:
       assertEquals(g(k)._3, b.cls, b.name)
       k + 1
     }
-    // the table's reading, the channels' and the panel's lags are all there
+    // the table's reading is there; the channels and the panel are placement rows, not gates
     def has(p: String): Boolean = bands.exists(_.name.startsWith(p))
     assert(bands.exists(b => b.name.startsWith("equity vol") && b.reading == 50.0))
-    assert(has("satellite beta") && has("macro spread lag") && has("macro vol premium"))
+    assert(!has("satellite") && !has("macro spread lag") && !has("macro vol premium"))
   }
 
   test("bandedOf keeps exactly the rows that carry a record band") {
@@ -79,4 +82,28 @@ class VerdictReadingsSuite extends FunSuite:
     val (fair, x) = (fairs.last, -0.004)
     val r = m.predict(fair, x)
     assertEqualsDouble(m.predict(fair, x - 2.0 * r / m.liquidity), -r, 1e-15)
+  }
+
+  test("the value cap binds the pull only while it points up") {
+    val m = new MarketSim.Market(0.07, 3.2, 12.0 / 12.2, 6.1, 0.12, 0.25, 0.0)
+    val (gap, damp) = (0.30, 0.8)
+    val free = m.valuePull(gap, damp)
+    assertEquals(free, 0.07 * gap * damp)
+    m.valueCap = 0.005
+    assertEquals(m.valuePull(gap, damp), 0.005)
+    assertEquals(m.valuePull(0.01, damp), 0.07 * 0.01 * damp)
+    assertEquals(m.valuePull(-gap, damp), 0.07 * -gap * damp)
+    m.valueCap = 0.0
+    assertEquals(m.valuePull(gap, damp), free)
+    // the falling-fundamental cap binds only with the session's flag up, and never downward
+    m.valueCapFall = 0.002
+    assertEquals(m.valuePull(gap, damp), free)
+    m.fundFalling = true
+    assertEquals(m.valuePull(gap, damp), 0.002)
+    assertEquals(m.valuePull(-gap, damp), 0.07 * -gap * damp)
+    // both caps on: the tighter binds
+    m.valueCap = 0.005
+    assertEquals(m.valuePull(gap, damp), 0.002)
+    m.valueCapFall = 0.0
+    assertEquals(m.valuePull(gap, damp), 0.005)
   }

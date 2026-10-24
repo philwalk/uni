@@ -65,8 +65,10 @@ object MarketSimSearch:
     "              ;   archive's spread, the report's CLOSED rule, a block being an eighth of the",
     "              ;   run and at least 75 generations, so never before generation 300",
     "              ;   (default 2; 0 = never stop on its own)",
-    "-dead D       ; dead zone in anchor sds; a row inside it scores 0 (default 0.5).  At 1.0 a",
-    "              ;   calibrated world scores 0 on every row and the objective goes flat",
+    "-dead D       ; the price, in anchor sds, of a fidelity gate the placement does not cover (the",
+    "              ;   valuation dispersion band, a client ruler's basket rows) and the size of",
+    "              ;   regression the log names",
+    "              ;   (default 0.5); an infeasible read's logged score is still the dead-zone sum",
     "-seed S       ; base seed (default 20260813)",
     "-holdout K    ; re-score every archive member on K seeds the search never selected on, at",
     "              ;   the recorded ensemble, and exit",
@@ -103,10 +105,14 @@ object MarketSimSearch:
     "              ;   realism,mechanism, the verdict's own).  With fidelity the bands a search",
     "              ;   otherwise only prices gate too, which every member of a calibration set has to",
     "              ;   pass anyway; realism is always in",
+    "-record F     ; a record OVERRIDE, row<TAB>value a line: the rows named read these as their",
+    "              ;   records in the placement and the score (the reference's too), so a synthetic",
+    "              ;   record cut from one history of a designed world can be fitted and the fit judged",
+    "              ;   (-validate -record F): the overfit check. Named in the objective digest",
     "-noregressset F ; -noregress against a SET's median member: F as -seedworlds, one read each",
-    "-noregress R  ; price every row a candidate holds further from its record than recipe R does,",
-    "              ;   by the difference (R read at the search's ensemble, the mean of six reads):",
-    "              ;   the release rule, which a dead zone alone lets every row drift inside",
+    "-noregress R  ; price every graded row whose CRPS exceeds recipe R's on that row by the",
+    "              ;   difference (R read at the search's ensemble, the mean of six reads, which also",
+    "              ;   set the yardstick): the release rule, so no row drifts out unpaid",
     "-fix DIALS    ; comma-separated dials (e.g. 'disasterSize,disasterOvershoot') every child keeps",
     "              ;   at its parent's value, so at the seed's: the dials read off the record rather",
     "              ;   than solved.  The draws are made as without it, so the other dials step alike",
@@ -123,6 +129,12 @@ object MarketSimSearch:
     "              ;   must hold inside their bands on every read of its primary arm to be feasible:",
     "              ;   the rows a release has to close, which a priced miss lets a search trade away.",
     "              ;   The seed worlds are exempt (they root the lineages); -holdout holds them to it",
+    "              ;   MEMBERSHIP is the placement (the calibrated rule, docs/MarketSimWorlds.md): on",
+    "              ;   every read of its primary arm the record must be a typical single history of the",
+    "              ;   candidate over every graded row at once, p > 0.10; a read it fails is infeasible,",
+    "              ;   the log naming the units.  THE SCORE of a feasible read is the record's CRPS under",
+    "              ;   the read's single histories summed over the graded rows, each in its yardstick",
+    "              ;   (the record's own resample sd, else the reference world's history sd)",
     "-fidelity L   ; comma-separated PxY ensembles (e.g. 20x40,30x60).  Score the frozen pool at",
     "              ;   -paths/-years and at each of these, report how well each RANKS the worlds",
     "              ;   against the reference and what it costs, and exit.  Measured against 60x80:",
@@ -155,7 +167,7 @@ object MarketSimSearch:
   def deadZone(sds: Double): Double = sds * MarketSim.SdRelRef
 
   /** HOW A READ IS PRICED beyond feasibility: the dead zone, and with `-noregress` the outgoing
-    * recipe's distance from the record on every fitness row (`referenceDistances`).  A row the
+    * recipe's CRPS on every graded row (`referenceOf`).  A row the
     * candidate holds as close to its record as the recipe costs nothing; a row further out costs the
     * difference, whatever the dead zone says.  The release rule is exactly that comparison, and a
     * dead zone alone let every row drift half an anchor sd for free, which is how a search whose
@@ -210,15 +222,31 @@ object MarketSimSearch:
                              /** THE PROJECTED ROW (`-project DIAL:ROW`): its reading on every read
                                * (`Read.held`), from which the next child's dial is solved instead of
                                * stepped */
-                             projectRow: Option[String] = None):
+                             projectRow: Option[String] = None,
+                             /** THE YARDSTICK each graded row's CRPS is summed in (`crpsRows`): the
+                               * record's own resample sd where the row carries a record band, else
+                               * the reference world's single-history sd (`referenceOf`), frozen in
+                               * the checkpoint so widening a candidate's spread cannot improve its
+                               * score.  A row with no yardstick is scored in its own read's sd. */
+                             yardstick: Map[String, Double] = Map.empty,
+                             /** THE PLACEMENT AS A GATE: a read the record is not a typical history
+                               * of is infeasible.  Off for the seed worlds (`withoutGap`), which root
+                               * the lineages and are exempt as they are from `-gap`: a re-solve has
+                               * to start from the recipe that fails. */
+                             place: Boolean = true,
+                             /** THE RECORD OVERRIDE (`-record FILE`): the graded rows' records the
+                               * placement and the CRPS read, where the file names them
+                               * (`recordOverrides`); the overfit check's synthetic record.  Applied
+                               * to every history read, the reference's included. */
+                             records: Option[Map[String, Double]] = None):
     /** the same dead zone without the reference or the gap rows: the transport arm's pricing */
     def plain: Objective =
       copy(reference = None, gap = Vector.empty, classes = MarketSim.GateDefault, watch = Vector.empty,
            hold = Vector.empty, stage = 0, stageCheck = false, projectRow = None)
     /** the same pricing with the gap rows watched, not gated: the seed worlds' (see `main`), read
-      * whole, since they root the lineages and set the bars */
+      * whole, since they root the lineages and set the bars; the placement reported, not gated */
     def withoutGap: Objective =
-      copy(gap = Vector.empty, watch = gap, hold = Vector.empty, stage = 0, stageCheck = false)
+      copy(gap = Vector.empty, watch = gap, hold = Vector.empty, stage = 0, stageCheck = false, place = false)
     /** the same judgement read whole: what a staged read applies to its prefix */
     def unstaged: Objective = copy(stage = 0, stageCheck = false)
 
@@ -261,24 +289,105 @@ object MarketSimSearch:
     * this one unforced. */
   def candidateSeed(base: Long, slot: Long): Long = base + CandidateOffset + slot * ReadStride
 
-  /** The outgoing recipe's distance from the record on every fitness row: the mean of
-    * `NoregressReads` reads at the search's own ensemble, each priced as `oneRead` prices a
-    * candidate (`recordDistances`). */
-  def referenceDistances(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
-                         base: Long): Vector[(String, Double)] =
-    val reads = (1 to NoregressReads).toVector.map: j =>
-      readDistances(w, anchors, paths, years, base + NoregressOffset + j * ReadStride)
-    reads.head.indices.toVector.map(i => (reads.head(i)._1, reads.map(_(i)._2).sum / reads.length))
+  /** A reference: the yardstick and the reference's CRPS per graded row, each in row order. */
+  type Reference = (Vector[(String, Double)], Vector[(String, Double)])
 
-  /** One read's distance from the record on every fitness row, priced as `oneRead` prices a
-    * candidate (`recordDistances`). */
-  def readDistances(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
-                    s: Long): Vector[(String, Double)] =
-    val main = MarketSim.simPaths(w, paths, years, s)
+  /** THE REFERENCE WORLD READ: `NoregressReads` reads at the search's own ensemble on the reference
+    * stream; the yardstick over them pooled (`yardstickFrom`), and each graded row's CRPS in that
+    * yardstick as the mean over the reads, priced as `readPaths` prices a candidate. */
+  def referenceOf(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int, base: Long,
+                  records: Option[Map[String, Double]]): Reference =
+    val reads = (1 to NoregressReads).toVector.map: j =>
+      historyRead(w, anchors, paths, years, base + NoregressOffset + j * ReadStride, records)
+    val yard = yardstickFrom(anchors, reads)
+    val ym = yard.toMap
+    val per = reads.map(r => crpsRows(r, ym))
+    val crps = per.head.map: (name, _) =>
+      val xs = per.flatMap(p => p.find(_._1 == name).map(_._2))
+      (name, xs.sum / xs.length)
+    (g8Rows(yard), g8Rows(crps))
+
+  /** Rows at eight significant digits, as the checkpoint writes every number: a fresh run, a
+    * resumed one (which reads the text) and the other twin all price against the same digits. */
+  def g8Rows(rows: Vector[(String, Double)]): Vector[(String, Double)] =
+    rows.map((n, v) => (n, f"$v%.8g".toDouble))
+
+  /** One read's history rows: the verdict world's ensemble at seed `s`, every graded row per
+    * history at its record's horizon. */
+  def historyRead(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int, s: Long,
+                  records: Option[Map[String, Double]]): Vector[MarketSim.HistoryRow] =
+    val vw = MarketSim.verdictWorld(anchors, w)
+    val main = MarketSim.simPaths(vw, paths, years, s)
     val st = MarketSim.measure(main, years)
-    val hr = MarketSim.horizonReadings(anchors, st, Some(main), years, paths, s, w, extremeToo = true)
-    val (_, rows) = MarketSim.fitness(anchors, st, hr.extremeScores)
-    MarketSim.recordDistances(anchors, rows, hr.banded)
+    val rows = MarketSim.historyRows(anchors, st, main, years, paths, s, w)
+    records.fold(rows)(over => MarketSim.overrideRecords(rows, over))
+
+  /** Each graded row's CRPS of the record under the read's single histories, in its yardstick
+    * (`Objective.yardstick`; the read's own sd where a row has none); a row without two finite
+    * readings is left out, as the placement leaves it unread. */
+  def crpsRows(hrows: Vector[MarketSim.HistoryRow], yard: Map[String, Double]): Vector[(String, Double)] =
+    hrows.flatMap: r =>
+      r.record.flatMap: rec =>
+        val c = MarketSim.crps(r.reads, rec)
+        if c.isNaN then None
+        else
+          val unit = yard.getOrElse(r.name, historySd(r.reads))
+          Option.when(unit > 0.0)((r.name, c / unit))
+
+  /** The sd of the finite readings, 0 under two of them. */
+  def historySd(xs: Vector[Double]): Double =
+    val v = xs.filter(_.isFinite)
+    if v.length < 2 then 0.0
+    else
+      val m = v.sum / v.length
+      math.sqrt(v.map(x => (x - m) * (x - m)).sum / (v.length - 1))
+
+  /** THE YARDSTICK over the reference's pooled reads: a banded row's is the record's own resample
+    * sd (`recordSd`), any other graded row's the pooled histories' sd.  In row order. */
+  def yardstickFrom(anchors: MarketSim.Anchors, reads: Vector[Vector[MarketSim.HistoryRow]]): Vector[(String, Double)] =
+    reads.head.filter(_.record.isDefined).map: r =>
+      val unit = MarketSim.recordSd(anchors, r.name).getOrElse:
+        historySd(reads.flatMap(rd => rd.find(_.name == r.name).fold(Vector.empty[Double])(_.reads)))
+      (r.name, unit)
+
+  /** The reference cached in `reference.tsv` under `digest`, at eight significant digits as the
+    * checkpoint writes every number: the twins' readings differ in the last ulps, and a fresh run, a
+    * resumed one and the other twin all price against this text.  Rows are matched by name to the
+    * graded rows this build knows (`historyRowNames`). */
+  def cachedReference(dir: String, digest: String): Option[Reference] =
+    val cachePath = s"$dir/reference.tsv".asPath
+    Option.when(cachePath.exists)(cachePath.lines.toVector).flatMap: ls =>
+      if !ls.headOption.contains(s"digest\t$digest") then None
+      else
+        val names = historyRowNames
+        // a malformed line or an unknown kind voids the cache; an unknown row is passed over
+        val parsed = ls.tail.foldLeft(Option((Vector.empty[(String, Double)], Vector.empty[(String, Double)]))):
+          (acc, l) =>
+            acc.flatMap: (yard, crps) =>
+              l.split("\t", -1) match
+                case Array(kind, n, v, _*) =>
+                  v.toDoubleOption.flatMap: x =>
+                    if !names.contains(n) then Some((yard, crps))
+                    else kind match
+                      case "yard" => Some((yard :+ (n, x), crps))
+                      case "crps" => Some((yard, crps :+ (n, x)))
+                      case _      => None
+                case _ => None
+        parsed.filter(_._1.nonEmpty)
+
+  def writeReference(dir: String, digest: String, r: Reference): Unit =
+    s"$dir/reference.tsv".asPath.writeLines(
+      s"digest\t$digest" +: (r._1.map((n, v) => f"yard\t$n\t$v%.8g") ++ r._2.map((n, v) => f"crps\t$n\t$v%.8g")))
+
+  /** Every graded row name a history read can carry: the fit targets, the macro panel's, the bars',
+    * the sectors', the satellite's and the dividend row.  The -noregress reference is read back
+    * filtered to this list, and its digest is part of the objective's, so a graded row missing here
+    * makes a resumed run disagree with the fresh one. */
+  def historyRowNames: Vector[String] =
+    (MarketSim.fitTargets(MarketSim.anchorsNamed("sp500")).map(_._1) ++
+      MarketSim.fitTargets(MarketSim.anchorsNamed("nasdaq")).map(_._1) ++
+      MarketSim.macroPlacementRows(MarketSim.anchorsNamed("sp500")).map(_._1) ++
+      MarketSim.BarRows ++ MarketSim.SectorRows ++ MarketSim.SatelliteRows :+ MarketSim.DividendRow).distinct.sorted
 
   /** The median of `xs`: the middle value, or the mean of the middle two. */
   def median(xs: Vector[Double]): Double =
@@ -318,33 +427,23 @@ object MarketSimSearch:
     * kept in `reference.tsv` under a digest of the set, the ensemble and the seed, since a set loop
     * restarts the harness every round. */
   def setReference(rows: Vector[(String, World)], fileText: String, anchors: MarketSim.Anchors,
-                   paths: Int, years: Int, base: Long, dir: String): (String, Vector[(String, Double)]) =
-    val digest = fnv(s"$fileText|${anchors.name}|$paths|$years|$base")
-    val namesNow = MarketSim.fitTargets(anchors).map(_._1)
-    val cachePath = s"$dir/reference.tsv".asPath
-    val cached = Option.when(cachePath.exists)(cachePath.lines.toVector).flatMap { ls =>
-      Option.when(ls.headOption.contains(s"digest\t$digest")) {
-        ls.tail.flatMap { l =>
-          l.split("\t", 2) match
-            case Array(n, v) if namesNow.contains(n) => v.toDoubleOption.map(n -> _)
-            case _ => None
-        }
-      }.filter(_.nonEmpty)
-    }
-    cached match
+                   paths: Int, years: Int, base: Long, dir: String, records: Option[Map[String, Double]],
+                   recordName: String): (String, Reference) =
+    val digest = fnv(s"$fileText|${anchors.name}|$paths|$years|$base|crps$recordName")
+    cachedReference(dir, digest) match
       case Some(r) => (digest, r)
       case None =>
         val reads = rows.zipWithIndex.map { case ((_, w), k) =>
-          readDistances(w, anchors, paths, years, base + NoregressOffset + (NoregressReads + 1 + k) * ReadStride)
+          historyRead(w, anchors, paths, years, base + NoregressOffset + (NoregressReads + 1 + k) * ReadStride, records)
         }
-        // at eight significant digits, as the checkpoint writes every number: the twins' readings
-        // differ in the last ulps, and a fresh run, a resumed one and the other twin all price against
-        // this text
-        val r = reads.head.indices.toVector.map { i =>
-          val m = median(reads.map(_(i)._2))
-          (reads.head(i)._1, f"$m%.8g".toDouble)
-        }
-        cachePath.writeLines(s"digest\t$digest" +: r.map((n, v) => f"$n\t$v%.8g"))
+        // the set's pooled predictive sd is the yardstick where a row has no record band
+        val yard = yardstickFrom(anchors, reads)
+        val ym = yard.toMap
+        val per = reads.map(r => crpsRows(r, ym))
+        val crps = per.head.map: (name, _) =>
+          (name, median(per.flatMap(p => p.find(_._1 == name).map(_._2))))
+        val r = (g8Rows(yard), g8Rows(crps))
+        writeReference(dir, digest, r)
         (digest, r)
 
   def dialsOf(w: World): Vector[Double] = ranges.map((_, _, _, _, get) => get(w))
@@ -437,13 +536,12 @@ object MarketSimSearch:
     * has not passed.  The DESCRIPTORS are the mean instead -- they describe the world, where `raw`
     * deliberately describes its worst seed. */
   final case class Read(feasible: Boolean,
-                        /** THE OBJECTIVE: `sum(max(0, term - dead))` over every row of every arm.
-                          * Inside the record's own error a row contributes nothing; outside it
-                          * every row counts, and a row cannot be bought below the dead zone
-                          * because its excess is paid in full.  The worst row alone put no
-                          * pressure on any other, and an archive built on it drifted out to the
-                          * binding row's level on every row (median member 5 rows past the dead
-                          * zone against the default's 1). */
+                        /** THE OBJECTIVE of a feasible read: the record's CRPS under the read's
+                          * single histories, summed over every graded row in its yardstick
+                          * (`crpsRows`, the release rule's score), plus one dead zone per failed
+                          * fidelity gate the placement does not cover and the regressions against
+                          * `-noregress`; an infeasible read's is `fitness`'s dead-zone sum, for the
+                          * log. */
                         score: Double,
                         /** The worst row's term, and its name: what a member is furthest from,
                           * for the reports. */
@@ -582,13 +680,8 @@ object MarketSimSearch:
       else MarketSim.gateChecksAt(anchors, st, banded)
     val bad  = checks.count((_, ok, cls) => !ok && obj.classes.contains(cls))
     val gated = bad == 0
-    // THE FIDELITY BANDS THAT ARE NOT FITNESS ROWS -- the macro panel's, the channels', the
-    // variance-ratio profile, the bond's -- were invisible to the search: neither gated (a
-    // fidelity band flips on a seed at 60 paths, and feasibility has to hold on every seed) nor
-    // scored (no fitness row reads them).  An archive built blind to them had 139 of 145 members
-    // failing one, and a recipe has to pass every class.  Each failed band now costs one dead
-    // zone, the one priced term in the score: a flip on one seed is a nudge, a band a member sits
-    // outside on every seed is a row's worth of excess.  Named in `gateFail` for a feasible
+    // THE FIDELITY GATES THE PLACEMENT DOES NOT COVER -- the valuation dispersion band and a
+    // client ruler's basket rows -- each cost one dead zone, named in `gateFail` for a feasible
     // candidate, so the log says which.
     val fidFail = checks.collect { case (nm, false, MarketSim.GateClass.Fidelity) => s"fidelity: $nm" }
     // THE RECORD BANDS, read at the record's own horizon: a miss costs a dead zone, as a failed
@@ -608,29 +701,41 @@ object MarketSimSearch:
         case (nm, bar) if holdDistance(anchors, nm, hr, st).forall(_ > bar) => nm
       }
       else Vector.empty[String]
-    val feasible = gated && gapMiss.isEmpty && holdMiss.isEmpty
-    val bandMiss = MarketSim.recordBandTerms(anchors, banded).filter((_, t) => feasible && t > 0.0)
+    // THE MEMBERSHIP RULE: the record placed among this read's single histories over every graded
+    // row (`placement`, the calibrated rule); a read the record is not a typical history of is
+    // infeasible, whatever its rows score.  Read once the gates, the gap and the held rows pass,
+    // so a rejected candidate never pays for it.
+    val placed =
+      if gated && gapMiss.isEmpty && holdMiss.isEmpty then
+        val read  = MarketSim.historyRows(anchors, st, main, years, paths, s, w)
+        val hrows = obj.records.fold(read)(over => MarketSim.overrideRecords(read, over))
+        val pl = MarketSim.placement(hrows, MarketSim.PlacementAlpha)
+        Some((pl, crpsRows(hrows, obj.yardstick)))
+      else None
+    val feasible = placed.exists((pl, _) => !obj.place || pl.verdict != MarketSim.PlacementVerdict.Fail)
     val ex = if feasible then hr.extremeScores else Map.empty[String, Double]
     val (total, allRows) = MarketSim.fitness(anchors, st, ex)
-    // AGAINST THE OUTGOING RECIPE (`-noregress`): each row's excess over the recipe's distance from
-    // its record, in `fitness` row order as the reference was taken
-    val regress = obj.reference match
-      case Some(reference) if feasible =>
-        MarketSim.recordDistances(anchors, allRows, banded).zip(reference)
-          .map { case ((name, d), (_, r)) => (name, math.max(0.0, d - r)) }
-      case _ => Vector.empty[(String, Double)]
+    // AGAINST THE OUTGOING RECIPE (`-noregress`): each graded row's CRPS over the recipe's
+    val crps = placed.fold(Vector.empty[(String, Double)])(_._2)
+    val regress = if feasible then regressions(obj, crps) else Vector.empty[(String, Double)]
     val rows = allRows.filter((nm, _, _, _) => feasible || !MarketSim.extremeTargetNames.contains(nm))
     val raw = rows.map((nm, _, _, term) => (term, nm)).max
-    // in row order, a plain left fold, as the Rust harness's `sum` is; then the fidelity bands,
-    // then the record bands, then the regressions
-    val score = rows.map((_, _, _, term) => math.max(0.0, term - dead)).sum + dead * fidFail.length +
-      bandMiss.map((_, t) => dead + t).sum + regress.map(_._2).sum
-    // the log names a regression past a dead zone; smaller ones are priced but not listed
+    // a feasible read: the summed CRPS in row order, a plain left fold, as the Rust harness's `sum`
+    // is; then the uncovered fidelity gates, then the regressions.  An infeasible read keeps
+    // `fitness`'s dead-zone sum, so the log still ranks rejections
+    val score =
+      if feasible then crps.map(_._2).sum + dead * fidFail.length + regress.map(_._2).sum
+      else rows.map((_, _, _, term) => math.max(0.0, term - dead)).sum
+    // a feasible read names the units it is thin on (the placement's own failures), and (a seed
+    // world) the ones it fails; the log names a regression past a dead zone, smaller ones are
+    // priced but not listed
     val gateFail =
-      (if feasible then fidFail ++ bandMiss.map((nm, _) => s"band: $nm")
-       else if gated then gapMiss.map(nm => s"gap: $nm") ++ holdMiss.map(nm => s"hold: $nm")
-       else MarketSim.GateClass.values.toVector.filter(obj.classes.contains)
-              .flatMap(cls => checks.collect { case (nm, false, c) if c == cls => nm })) ++
+      (placed match
+         case Some((pl, _)) if feasible => fidFail ++ pl.failures
+         case Some((pl, _)) => pl.failures
+         case None if gated => gapMiss.map(nm => s"gap: $nm") ++ holdMiss.map(nm => s"hold: $nm")
+         case None => MarketSim.GateClass.values.toVector.filter(obj.classes.contains)
+                        .flatMap(cls => checks.collect { case (nm, false, c) if c == cls => nm })) ++
         regress.collect { case (nm, e) if e > dead => s"regress: $nm" }
     Read(feasible, score, raw._1, raw._2, descOf(st), total, gateFail = gateFail, watchMiss = watchMiss,
          held = held)
@@ -698,6 +803,15 @@ object MarketSimSearch:
             case _ => usage(s"-fidelity wants PxY pairs of integers, got [$e]")
         case _ => usage(s"-fidelity wants PxY pairs, got [$e]")
     }
+
+  /** AGAINST THE OUTGOING RECIPE (`-noregress`): each graded row's CRPS in excess of the recipe's
+    * on that row (`referenceOf`), in the read's row order; a row the reference did not read costs
+    * nothing; empty without a reference. */
+  def regressions(obj: Objective, crps: Vector[(String, Double)]): Vector[(String, Double)] =
+    obj.reference.fold(Vector.empty[(String, Double)]): reference =>
+      crps.map: (name, c) =>
+        val r = reference.find(_._1 == name).fold(Double.PositiveInfinity)(_._2)
+        (name, math.max(0.0, c - r))
 
   // ---- transport ------------------------------------------------------------------------------
 
@@ -805,7 +919,8 @@ object MarketSimSearch:
 
   def objectiveDigest(anchors: MarketSim.Anchors, transport: Option[Transport],
                       noregress: Option[(String, Vector[(String, Double)])],
-                      gap: Vector[String], hold: Vector[(String, Double)] = Vector.empty): String =
+                      gap: Vector[String], hold: Vector[(String, Double)] = Vector.empty,
+                      yardstick: Vector[(String, Double)] = Vector.empty, recordName: String = ""): String =
     val rows = (anchors +: transport.map(_.anchors).toVector).flatMap { a =>
       (a.name +: MarketSim.fitTargets(a).map((name, _, target, weight) =>
         f"$name|$target%.8g|$weight%.8g")) ++
@@ -819,6 +934,8 @@ object MarketSimSearch:
       Option.when(gap.nonEmpty)("gap|" + gap.mkString(",")) ++
       // written only when a row is held, so an archive built before `-hold` keeps its digest
       Option.when(hold.nonEmpty)("hold|" + holdText(hold)) ++
+      // the membership rule and the score's units: an archive built under another rule is refused
+      (f"placement|${MarketSim.PlacementAlpha}%.8g$recordName" +: yardstick.map((row, u) => f"yard|$row|$u%.8g")) ++
       noregress.toVector.flatMap((name, ref) =>
         s"noregress|$name" +: ref.map((row, d) => f"reg|$row|$d%.8g"))
     val text = rows.map(_ + "\n").mkString
@@ -1110,6 +1227,7 @@ object MarketSimSearch:
     var fix = ""
     var seedSet = ""
     var stage = 0; var stageCheck = 0; var project = ""; var seedWorlds = ""; var noregressSet = ""
+    var record = ""
     var transportWeight = 0.25
     var cov = 0.0; var covShrink = 0.3
     eachArg(args.toSeq, usage) {
@@ -1147,6 +1265,8 @@ object MarketSimSearch:
       case "-project"    => project = consumeNext
       case "-seedworlds" => seedWorlds = consumeNext
       case "-noregressset" => noregressSet = consumeNext
+      case "-record"  => record = consumeNext
+      case "-depth" => usage("-depth is retired: membership is the placement, the calibrated rule, on every read")
       case "-fidelity"  => fidelity = consumeNext
       case a          => usage(s"unrecognized arg [$a]")
     }
@@ -1262,12 +1382,17 @@ object MarketSimSearch:
       sys.exit(0)
 
 
+    // THE RECORD OVERRIDE (`-record`): the overfit check's synthetic record, named in every digest
+    val records: Option[Map[String, Double]] = Option.when(record.nonEmpty)(MarketSim.recordOverrides(record))
+    val recordName =
+      if record.isEmpty then ""
+      else "|record:" + fnv(scala.util.Try(record.asPath.contentAsString).getOrElse(""))
     // THE REFERENCE (`-noregress`): the outgoing recipe read at this ensemble, before any candidate;
     // checked in every mode, read only where a candidate is scored (a search, `-holdout`)
     if noregress.nonEmpty && noregressSet.nonEmpty then
       usage("-noregress and -noregressset each set the reference; give one")
     // `set:<digest>` names a set reference in the checkpoint and the objective digest
-    val (noregressName, reference) =
+    val (noregressName, referenceFull): (String, Option[Reference]) =
       if noregressSet.nonEmpty then
         val baseWorld = carrier.getOrElse(usage("-noregressset wants a -seeds world to carry the other dials"))
         val rows = worldRows(noregressSet, baseWorld, "-noregressset")
@@ -1275,9 +1400,9 @@ object MarketSimSearch:
         if prune || exportTo.nonEmpty then (noregress, None)
         else
           val text = scala.util.Try(noregressSet.asPath.contentAsString).getOrElse("").replace("\r", "")
-          val (digest, r) = setReference(rows, text, anchors, paths, years, base, out)
+          val (digest, r) = setReference(rows, text, anchors, paths, years, base, out, records, recordName)
           println(s"noregress: the median member of $noregressSet (${rows.length} worlds) at $paths x " +
-                  s"${years}y; a row further from its record costs the difference")
+                  s"${years}y; a row's CRPS over the median member's costs the difference")
           (s"set:$digest", Some(r))
       else
         val ref = Option.when(noregress.nonEmpty) {
@@ -1287,12 +1412,30 @@ object MarketSimSearch:
             usage(s"-noregress $noregress is anchored to another set than [$anchorSpec]")
           w
         }.filter(_ => !prune && exportTo.isEmpty).map { w =>
-          val r = referenceDistances(w, anchors, paths, years, base)
+          val digest = fnv(s"$noregress|${anchors.name}|$paths|$years|$base|crps$recordName")
+          val r = cachedReference(out, digest).getOrElse:
+            val r = referenceOf(w, anchors, paths, years, base, records)
+            writeReference(out, digest, r)
+            r
           println(s"noregress: $noregress at $paths x ${years}y, the mean of $NoregressReads reads; " +
-                  "a row further from its record costs the difference")
+                  "a row's CRPS over the recipe's costs the difference")
           r
         }
         (noregress, ref)
+    // THE YARDSTICK: the reference's, or the first seed world's read the same way, frozen in the
+    // checkpoint; `-export` and `-prune` score nothing and carry none
+    val (yardstick, reference): (Vector[(String, Double)], Option[Vector[(String, Double)]]) =
+      referenceFull match
+        case Some((yard, crps)) => (yard, Some(crps))
+        case None if prune || exportTo.nonEmpty => (Vector.empty, None)
+        case None =>
+          val (_, w) = pool.headOption.getOrElse(usage("no seed world to set the yardstick from"))
+          val digest = fnv(s"yard|${MarketSim.worldDigest(w)}|${anchors.name}|$paths|$years|$base$recordName")
+          val (yard, _) = cachedReference(out, digest).getOrElse:
+            val r = referenceOf(w, anchors, paths, years, base, records)
+            writeReference(out, digest, r)
+            r
+          (yard, None)
     // THE GAP ROWS (`-gap`): each must name a graded row of this anchor set -- a record band or a
     // fitness row
     val gapRows = gap.split(",").toVector.map(_.trim).filter(_.nonEmpty).map { g =>
@@ -1327,7 +1470,7 @@ object MarketSimSearch:
     if stage > 0 && stageCheck > 0 then usage("-stage and -stagecheck each set the prefix; give one")
     val obj = Objective(deadZone(dead), reference, gapRows, MarketSim.parseGate(gate), hold = holdRows,
                         stage = math.max(stage, stageCheck), stageCheck = stageCheck > 0,
-                        projectRow = projection.map(_._2))
+                        projectRow = projection.map(_._2), yardstick = yardstick.toMap, records = records)
 
     // `-export`, `-prune` and `-holdout` read no candidate, so they carry the archive's own scheme
     // (see `candidateSeed`): one written before the key was searched a path stride apart
@@ -1349,7 +1492,8 @@ object MarketSimSearch:
     // score nothing, so they carry the archive's own and never read the reference
     val objective = readState(out).get("objective") match
       case Some(recorded) if prune || exportTo.nonEmpty => recorded
-      case _ => objectiveDigest(anchors, transport, obj.reference.map(r => (noregressName, r)), obj.gap, obj.hold)
+      case _ => objectiveDigest(anchors, transport, obj.reference.map(r => (noregressName, r)), obj.gap, obj.hold,
+                                yardstick, recordName)
     val settings = Vector("paths" -> paths.toString, "years" -> years.toString,
                           "reps" -> reps.toString, "sigma" -> f"$sigma%.4f",
                           "dead" -> f"$dead%.4f", "keep" -> keep.toString,
@@ -1459,6 +1603,8 @@ object MarketSimSearch:
                   f"score ${r.score}%7.3f  raw ${r.raw}%7.3f  ${r.worst}")
           // a rejected seed names the gates it failed: its worst row is a fitness row, not the reason
           if !r.feasible then println(s"    fails: ${r.gateFail.mkString("; ")}")
+          val thin = r.gateFail.filter(_.startsWith("placement: "))
+          if r.feasible && thin.nonEmpty then println(s"    ${thin.mkString("; ")}")
           if r.watchMiss.nonEmpty then println(s"    misses gap rows: ${r.watchMiss.mkString(", ")}")
           (nm, w, r)
         }

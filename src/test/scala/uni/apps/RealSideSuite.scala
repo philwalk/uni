@@ -82,14 +82,72 @@ class RealSideSuite extends FunSuite:
   }
 
   test("the yield's beta on the market moves the bond against the market") {
-    val w = MarketSim.namedWorld("0.25.0-sp500").map(_._1).getOrElse(fail("recipe"))
-    assert(w.ext.yieldBeta == 0.0 && w.ext.termVol > 0.0)
+    // the recipe with the channel off: it carries a beta of its own
+    val w0 = MarketSim.namedWorld("0.25.0-sp500").map(_._1).getOrElse(fail("recipe"))
+    val w  = w0.copy(ext = w0.ext.copy(yieldBeta = 0.0, yieldLag = 0.0))
+    assert(w.ext.termVol > 0.0)
     val off = MarketSim.simulate(w, 20, MarketSim.DefaultSeed)
     val on  = MarketSim.simulate(w.copy(ext = w.ext.copy(yieldBeta = 0.05)), 20, MarketSim.DefaultSeed)
     assert(!off.bond.sameElements(on.bond))
     val cOff = monthlyCorr(off.price, off.bond)
     val cOn  = monthlyCorr(on.price, on.bond)
     assert(cOn < cOff - 0.2, s"monthly corr $cOn against $cOff at zero")
+  }
+
+  test("the volatility feedback makes declines persist after spikes") {
+    // the recipe with the feedback off: it carries one of its own
+    val w0  = MarketSim.namedWorld("0.25.0-nasdaq").map(_._1).getOrElse(fail("recipe"))
+    val w   = w0.copy(ext = w0.ext.copy(volFeedback = 0.0))
+    val off = MarketSim.simulate(w, 30, MarketSim.DefaultSeed)
+    val on  = MarketSim.simulate(w.copy(ext = w.ext.copy(volFeedback = 1.0)), 30, MarketSim.DefaultSeed)
+    assert(!off.price.sameElements(on.price))
+    val a = MarketSim.volExitOf(MarketSim.volExitDaysOfPath(off))
+    val b = MarketSim.volExitOf(MarketSim.volExitDaysOfPath(on))
+    assert(b(0) > a(0) && b(2) < a(2), s"timing ${b(0)} vs ${a(0)}, high-vol return ${b(2)} vs ${a(2)}")
+  }
+
+  test("the anchoring moves the regime from the breakeven to the real yield") {
+    val w0  = MarketSim.namedWorld("0.25.0-nasdaq").map(_._1).getOrElse(fail("recipe"))
+    // the recipe anchored on the breakeven alone: it carries an anchoring of its own
+    val w   = w0.copy(ext = w0.ext.copy(tips = 8.0, expAnchor = 1.0))
+    assert(w.ext.termVol > 0.0)
+    val off = MarketSim.simulate(w, 20, MarketSim.DefaultSeed)
+    val on  = MarketSim.simulate(w.copy(ext = w.ext.copy(expAnchor = 0.5)), 20, MarketSim.DefaultSeed)
+    assert(off.price.sameElements(on.price) && off.bond.sameElements(on.bond) && !off.tips10.sameElements(on.tips10))
+    def sd(x: Array[Double]): Double =
+      val d = (21 until x.length by 21).map(i => x(i) - x(i - 21))
+      val m = d.sum / d.length
+      math.sqrt(d.map(v => (v - m) * (v - m)).sum / (d.length - 1))
+    assert(sd(on.expInfl10) < sd(off.expInfl10) && sd(on.realYield10) > sd(off.realYield10),
+      s"expectation ${sd(on.expInfl10)} vs ${sd(off.expInfl10)}, real yield ${sd(on.realYield10)} vs ${sd(off.realYield10)}")
+  }
+
+  test("the beta moves the breakeven and not the real yield") {
+    val w0  = MarketSim.namedWorld("0.25.0-nasdaq").map(_._1).getOrElse(fail("recipe"))
+    val w   = w0.copy(ext = w0.ext.copy(tips = 8.0, yieldBeta = 0.0, yieldLag = 0.0))
+    val off = MarketSim.simulate(w, 20, MarketSim.DefaultSeed)
+    val on  = MarketSim.simulate(w.copy(ext = w.ext.copy(yieldBeta = 0.05)), 20, MarketSim.DefaultSeed)
+    def sd(x: Array[Double]): Double =
+      val d = (21 until x.length by 21).map(i => x(i) - x(i - 21))
+      val m = d.sum / d.length
+      math.sqrt(d.map(v => (v - m) * (v - m)).sum / (d.length - 1))
+    val (b0, b1) = (sd(off.expInfl10), sd(on.expInfl10))
+    val (r0, r1) = (sd(off.realYield10), sd(on.realYield10))
+    assert(b1 > b0 * 1.05 && r1 < r0 * 1.05, s"breakeven $b0 -> $b1, real yield $r0 -> $r1")
+  }
+
+  test("the yield's lag deepens the correlation over the quarter") {
+    val w    = MarketSim.namedWorld("0.25.0-sp500").map(_._1).getOrElse(fail("recipe"))
+    val fast = w.copy(ext = w.ext.copy(yieldBeta = 0.05, yieldLag = 0.0))
+    val slow = fast.copy(ext = fast.ext.copy(yieldLag = 21.0))
+    def deep(p: MarketSim.Path): (Double, Double) =
+      val eq = MarketSim.monthlySums(MarketSim.dailyReturns(p.price))
+      val b  = MarketSim.monthlySums(MarketSim.dailyReturns(p.bond))
+      val r  = MarketSim.stockBondReadings(eq, b, Array.fill(eq.length)(1.0))
+      (r(0), r(2))
+    val a = deep(MarketSim.simulate(fast, 20, MarketSim.DefaultSeed))
+    val c = deep(MarketSim.simulate(slow, 20, MarketSim.DefaultSeed))
+    assert(c._1 > a._1 && c._2 < a._2, s"lagged $c against instant $a")
   }
 
   /** the correlation of the two series' 21-session log returns */
@@ -134,27 +192,33 @@ class RealSideSuite extends FunSuite:
   /** THE STOCK-BOND ROWS: equal series correlate at one, and with the inflation seen never moving
     * the slope is undefined; a bond that follows the equity when the inflation seen is high and
     * opposes it when low reads a slope of about one half a point over a four-point gap; the
-    * rolling rows see a correlation that never changes sign. */
+    * rolling rows see a correlation that never changes sign; equal series deepen by nothing, and
+    * a bond that follows the equity one month late correlates over quarters far more than over
+    * months and over years no more. */
   test("the stock-bond rows read a regime switch") {
     val n    = 120
     val eq   = Array.tabulate(n)(i => ((i * 7919) % 13).toDouble / 13.0 - 0.5)
     val flat = Array.fill(n)(3.0)
     val same = MarketSim.stockBondReadings(eq, eq, flat)
-    assert(near(same(0), 1.0) && same(1).isNaN, s"$same")
+    assert(near(same(0), 1.0) && near(same(1), 0.0), s"$same")
+    assert(near(same(2), 0.0) && near(same(3), 0.0), s"$same")
+    val late = Array.tabulate(n)(i => eq((i + n - 1) % n))
+    val lag  = MarketSim.stockBondReadings(eq, late, flat)
+    assert(lag(2) > 0.25 && math.abs(lag(3)) < 0.1, s"a month's lag deepens over quarters, not years: $lag")
     val seen = Array.tabulate(n)(i => if i % 2 == 0 then 5.0 else 1.0)
     val b    = eq.zip(seen).map((e, s) => if s >= 3.0 then e else -e)
     val flip = MarketSim.stockBondReadings(eq, b, seen)
-    assert(flip(1) > 0.4 && flip(1) < 0.6, s"slope ${flip(1)}")
+    assert(flip(1) > 0.5 && flip(1) <= 1.0, s"corr with the inflation seen ${flip(1)}")
     val rep = MarketSim.stockBondReported(eq, eq)
-    assert(near(rep(0), 0.0) && near(rep(1), 0.0), s"$rep")
+    assert(near(rep(0), 0.0) && near(rep(1), 0.0) && near(rep(2), 1.0), s"$rep")
     val few = MarketSim.stockBondReadings(eq.take(20), eq.take(20), seen.take(20))
-    assert(few(1).isNaN, s"under two years: ${few(1)}")
+    assert(few(1).isNaN && few(2).isNaN && few(3).isNaN, s"under two years: $few")
   }
 
   /** THE CPI NEWS ROW: a level whose monthly change spreads ten times more whenever the prior
-    * year's rate was high reads a ratio well above one (the rate seen lags a block's start by up
-    * to a year, which blurs the ten-fold ratio toward two); the noise on the low level instead
-    * reads below one; a rate that never moves has no split. */
+    * year's rate was high reads a share well above a half (the rate seen lags a block's start by
+    * up to a year, which blurs the ten-fold ratio toward two); the noise on the low level instead
+    * reads below a half; a rate that never moves has no split. */
   test("the CPI news row reads the noise by the rate seen") {
     def blocks(noiseOf: Int => (Double, Double)): Array[Double] =
       (0 until 4).toArray.flatMap { block =>
@@ -162,9 +226,9 @@ class RealSideSuite extends FunSuite:
         Array.tabulate(60)(i => level + (if i % 2 == 0 then noise else -noise))
       }
     val r = MarketSim.cpiNewsReading(blocks(block => if block % 2 == 0 then (0.001, 0.001) else (0.01, 0.01)))
-    assert(r > 1.5 && r < 10.0, s"high months spread more than the low: $r")
+    assert(r > 0.6 && r < 0.91, s"high months spread more than the low: $r")
     val inverse = MarketSim.cpiNewsReading(blocks(block => if block % 2 == 0 then (0.001, 0.005) else (0.01, 0.0005)))
-    assert(inverse < 0.7, s"low months spread more than the high: $inverse")
+    assert(inverse < 0.41, s"low months spread more than the high: $inverse")
     val flat = Array.tabulate(72)(i => if i % 2 == 0 then 0.004 else 0.002)
     assert(MarketSim.cpiNewsReading(flat).isNaN && MarketSim.cpiNewsReading(flat.take(20)).isNaN)
   }

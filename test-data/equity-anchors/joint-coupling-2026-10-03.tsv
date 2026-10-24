@@ -2,7 +2,10 @@
 # which JointCouplingSuite / joint_coupling_tests re-derive from this file. Editing a graded
 # row moves the shipped test bands. Measured from Yahoo Finance's daily history (adjusted closes,
 # daily simple returns, inner-joined) over 1999-03-10..2026-08-31; the w1993 rows read the
-# Nasdaq-100 index (^NDX, price only) against SPY from 1993-01-29, for the longer window.
+# Nasdaq-100 index (^NDX, price only) against SPY from 1993-01-29, for the longer window, the NDX
+# read LAG-FREE on a `record_bands -unlagged` copy (its daily returns through 1999-03-10 with the
+# stale-price lag removed, an MA(2) inversion fitted per calendar five-year block, `unlag_returns`);
+# SPY and QQQ are funds.
 #
 # Conventions (one codebase measured both this record and the model's grading):
 #   corr        Pearson correlation of daily simple returns
@@ -38,6 +41,16 @@
 # window's 14.1 belongs to SPY at 19.2%. Same philosophy as the depth rungs: grade each
 # world at its own volatility.
 #
+# THE PLACEMENT RECORDS (the m1999 rows, added 2026-10-18 from the same frozen local copies, the
+# same window): the satellite rows the calibrated membership rule places each world's single
+# histories against, read THE MODEL'S WAY -- daily LOG returns, as `satRowsOfPath` / `sat_rows_of_path`
+# read a path -- so a record and a history are one statistic. corr, absCorr, beta, volRatio as above
+# on log returns; kurtRatio the satellite's kurtosis (mean z^4 / mean z^2 squared) over the primary's;
+# ac1Ratio / ac20Ratio the |r| autocorrelation ratios at lags 1 and 20; relTrend63/126/252 the
+# lag-1 autocorrelation of successive non-overlapping 63-, 126- and 252-session changes of
+# log(satellite / primary); sessions the window's joined session count, the length a history is
+# cut to. The depth and crash records stay the w1999 rows (prices, not returns).
+#
 # The `tol` column is the twins' test band half-width (median of 4 model paths, 100y, daily
 # simple returns, default seed family). Rows with `-` are documentation and grading-time
 # anchors (the python grader over -jointemit output owns the distribution and conditioning
@@ -60,8 +73,8 @@ w1999	beta252p95	1.92	-
 w1999	residKurt	16.9	-
 w1999	residA20	0.346	-
 w1999	perYearCorrSd	0.050	-
-w1993	corr	0.839	-
-w1993	corrCalm	0.799	-
+w1993	corr	0.838	-
+w1993	corrCalm	0.795	-
 w1993	corrStress	0.855	-
 w1999	refDriftPrimary	0.082386	-
 w1999	refDriftSat	0.102569	-
@@ -83,3 +96,14 @@ b2014	crashRatio	2.000	-
 b2019	d5Ratio	1.139	-
 b2019	d10Ratio	1.168	-
 b2019	crashRatio	1.000	-
+m1999	sessions	6912	-
+m1999	relTrend63	0.0515	-
+m1999	relTrend126	0.1761	-
+m1999	relTrend252	-0.2931	-
+m1999	corr	0.8528	-
+m1999	absCorr	0.7730	-
+m1999	beta	1.1927	-
+m1999	volRatio	1.3986	-
+m1999	kurtRatio	0.6666	-
+m1999	ac1Ratio	1.0236	-
+m1999	ac20Ratio	1.1324	-
