@@ -81,7 +81,9 @@ object MarketSimReach:
 
   def fromCoord(r: Range, y0: Double): Double =
     val y = math.min(coord(r, r._3), math.max(coord(r, r._2), y0))
-    math.min(r._3, math.max(r._2, MarketSim.fromSearchCoord(r._1, y)))
+    val x = MarketSim.fromSearchCoord(r._1, y)
+    // a cap's range is off to its tightest in its tightness (`MarketSim.SearchInvDials`)
+    if MarketSim.SearchInvDials.contains(r._1) then x else math.min(r._3, math.max(r._2, x))
 
   /** One step of a dial, in its search coordinates. */
   def stepOf(r: Range, sigma: Double): Double = sigma * (coord(r, r._3) - coord(r, r._2))

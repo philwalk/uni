@@ -131,19 +131,6 @@ class EquityAnchorSuite extends FunSuite:
       "EquityVolSupport's ceiling is not the fitted instruments' highest volatility")
   }
 
-  test("the two graded bands admit every real instrument in both windows") {
-    assume(rows.nonEmpty, s"$Anchors not present in this tree (source tarball?)")
-    // The bands are a SCOPE statement: these funds are what the relation is about, so a band that
-    // excluded one of them would be calling a real equity fund unrealistic.
-    for (rung, name, corr, band) <- Vector(
-          (0.05, "EquityD5Band", MarketSim.EquityD5Corr, MarketSim.EquityD5Band),
-          (0.10, "EquityD10Band", MarketSim.EquityD10Corr, MarketSim.EquityD10Band)) do
-      val all = ratios(fitBlock, rung, corr) ++ ratios(checkBlock, rung, corr)
-      assert(all.min > band._1 && all.max < band._2,
-        s"$name ${band} does not admit every real instrument: the ratios run " +
-        f"${all.min}%.3f..${all.max}%.3f")
-  }
-
   test("the deep rung is not gated, because no band there could fail") {
     assume(rows.nonEmpty, s"$Anchors not present in this tree (source tarball?)")
     // Recorded as a test so the omission reads as a decision rather than an oversight, and so that

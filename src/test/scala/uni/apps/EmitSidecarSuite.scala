@@ -161,6 +161,80 @@ class EmitSidecarSuite extends FunSuite:
     assert(names.forall(MarketSim.emitColumnKnown))
   }
 
+  test("a batch is refused whole before any file is written") {
+    val (years, seed) = (2, 20260825L)
+    val w    = MarketSim.Defaults
+    val p    = MarketSim.simulate(w, years, seed)
+    val st   = MarketSim.measure(Vector(p), years)
+    val rows = MarketSim.fidelityRows(MarketSim.SP500Anchors, st, None, years, 1, seed, w)
+    val v    = onePathVerdict(w, p, st, rows)
+    val spec = MarketSim.EmitSpec(w, years, seed, "")
+    val dir  = java.nio.file.Files.createTempDirectory("emitBatch")
+    val emit = s"${dir.posx}/batch.tsv"
+    try
+      val poisoned = MarketSim.simulate(w, years, seed + 7919L)
+      poisoned.price(3) = Double.NaN
+      val refused = MarketSim.writeEmittedBatch(MarketSim.SP500Anchors, emit, Vector(p, poisoned), 0, spec, v)
+      assertEquals(refused,
+        Left(s"path 1 holds a non-finite value; nothing written to ${MarketSim.indexedName(emit, 1, 3)}"))
+      assertEquals(dir.toFile.list().length, 0, "nothing written")
+      val q = MarketSim.simulate(w, years, seed + 7919L)
+      val names = MarketSim.writeEmittedBatch(MarketSim.SP500Anchors, emit, Vector(p, q), 0, spec, v)
+        .getOrElse(fail("written"))
+      assertEquals(names, Vector(MarketSim.indexedName(emit, 0, 3), MarketSim.indexedName(emit, 1, 3)))
+      for f <- names do
+        assert(f.asPath.isFile, f)
+        assert(MarketSim.sidecarName(f).asPath.isFile, s"$f sidecar")
+    finally
+      Option(dir.toFile.listFiles).foreach(_.foreach(_.delete()))
+      dir.delete()
+  }
+
+  // Every optional column the TSV carries is named in `ungradedChannelSeries`, and the base columns
+  // in `gradedSeries` -- so a consumer cannot read a verdict as covering a series it never examined.
+  // The channels are ON here precisely because that is the trap: with them off, the disclosure is
+  // vacuously right.
+  test("the gate names every series it did not grade") {
+    val (years, seed) = (2, 20260825L)
+    val w    = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, rangeScale = 0.63, volIdio = 0.34)
+    val p    = MarketSim.simulate(w, years, seed)
+    val st   = MarketSim.measure(Vector(p), years)
+    val rows = MarketSim.fidelityRows(MarketSim.SP500Anchors, st, None, years, 1, seed, w)
+    val dir  = java.nio.file.Files.createTempDirectory("emitScope")
+    val tsv  = s"${dir.posx}/scope.tsv"
+    val json = MarketSim.sidecarName(tsv)
+    val (header, side) =
+      try
+        MarketSim.writeEmitted(MarketSim.SP500Anchors, tsv, p, 0, MarketSim.EmitSpec(w, years, seed, ""),
+          onePathVerdict(w, p, st, rows))
+        (tsv.asPath.lines.head, json.asPath.lines.toVector)
+      finally
+        tsv.asPath.delete()
+        json.asPath.delete()
+        dir.delete()
+    val declared = side.filter(l => l.trim.startsWith("\"gradedSeries\"") || l.trim.startsWith("\"ungradedChannelSeries\""))
+    assertEquals(declared.size, 2, "both scope fields must be present")
+    val cols = header.split('\t').toVector
+    // the graded half must name series the file actually carries
+    for col <- Vector("price", "bond") do assert(cols.contains(col), s"graded series $col must be an emitted column")
+    // COVERAGE: every emitted channel column is either graded or declared ungraded.  A channel is
+    // graded exactly when its readings exist: the placement rows and the sidecar's `verdictSeries`
+    // share that condition
+    val (graded, ungraded) = (declared(0), declared(1))
+    def gradedBy(col: String): Boolean = col match
+      case "logSat"              => st.sat.isDefined
+      case "logHigh" | "logLow"  => st.bars.isDefined
+      case "logVolume"           => st.bars.exists(_.volSd.isFinite)
+      case _                     => false
+    for col <- Vector("logSat", "logHigh", "logLow", "logVolume") do
+      assert(gradedBy(col) || ungraded.contains(col), s"$col is neither graded (no readings) nor declared ungraded")
+      // and the graded list must SAY so: a verdict computed from a column that the scope record
+      // does not name is the original defect inverted
+      assertEquals(gradedBy(col), graded.contains(col),
+        s"$col: gradedSeries must list exactly the channel columns the verdict reads")
+    assert(!ungraded.contains("log"), "every channel here is graded; nothing should be declared ungraded")
+  }
+
   test("emitColumnKnown takes the TSV's columns and no other") {
     for c <- Vector("price", "inflPress", "logSat", "divYield", "logBasket", "logName12", "logSector10",
                     "macroOutput", "nullMacroSpread") do

@@ -16,9 +16,10 @@ class RecordBandSuite extends FunSuite:
   /** the record-band fixture's rows, then the conditional rate rows' (`rateafter-2026-09-30.tsv`,
     * the same columns) without their header */
   private lazy val lines: Vector[String] =
-    fixtureLines("recordbands-2026-09-26.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
-      fixtureLines("volexit-2026-10-17.tsv").drop(1) ++ fixtureLines("bond10-2026-10-05.tsv").drop(1) ++
-      fixtureLines("tips-2026-10-11.tsv").drop(1) ++ fixtureLines("stockbond-2026-10-18.tsv").drop(1)
+    fixtureLines("recordbands-2026-10-20.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
+      fixtureLines("volexit-2026-10-20.tsv").drop(1) ++ fixtureLines("volstate-2026-10-20.tsv").drop(1) ++
+      fixtureLines("bond10-2026-10-05.tsv").drop(1) ++ fixtureLines("tips-2026-10-11.tsv").drop(1) ++
+      fixtureLines("stockbond-2026-10-18.tsv").drop(1)
 
   private def row(set: String, name: String): Vector[Double] =
     lines.map(_.split('\t').toVector).find(r => r(0) == set && r(1) == name)
@@ -73,6 +74,52 @@ class RecordBandSuite extends FunSuite:
       assertEqualsDouble(a.upShare, up, 0.1, s"$set: up-day share against the record's")
       val vt = row(set, "vol-timing edge pts/yr").head
       assertEqualsDouble(a.volTiming, vt, 1e-6, s"$set: vol-timing edge against the record's")
+      if set == "nasdaq" then
+        // the Nasdaq's downside loss target follows its graded record, the long tech record, as
+        // the vol-timing edge's does; the S&P's stays the asymmetry fixture's
+        val dv = row(set, "downside vol excess %").head
+        assertEqualsDouble(a.semiExcess, dv, 1e-6, s"$set: downside vol excess against the record's")
+  }
+
+  // THE VOLATILITY STATE's rows are one family on their own window (item 62): the Nasdaq's the
+  // long tech record at 72 years, not its 27-year equity window, the S&P's its equity window; the
+  // Nasdaq's reference readings are the QQQ window's records as the fixture reads them.
+  test("the vol state rows read their own window and the reference is the QQQ window's") {
+    val a = MarketSim.NasdaqAnchors
+    assertEquals(a.volStateYears, 72)
+    assertNotEquals(a.volStateYears, a.equityYears)
+    for n <- MarketSim.VolStateRows do
+      assertEquals(MarketSim.recordBandYears(a, n), a.volStateYears, s"[$n]")
+    assert(MarketSim.anchorGroups(a).exists((w, y, ns) =>
+        w == a.volStateWindow && y == a.volStateYears && ns == MarketSim.VolStateRows),
+      "the family is one anchor group on its own window")
+    val sp = MarketSim.SP500Anchors
+    assertEquals((sp.volStateWindow, sp.volStateYears), (sp.equityWindow, sp.equityYears))
+    assert(sp.volStateReference.isEmpty)
+    val rec = a.volStateReference.getOrElse(fail("the Nasdaq reports QQQ's own window"))
+    assertEquals(rec, MarketSim.VolStateQqqRecord)
+    // the reference is the fixture's reading of the QQQ window alone, under the reference rows' names
+    for (name, k) <- MarketSim.VolStateReferenceRows.zipWithIndex do
+      assertEquals(row("nasdaq", name).head, rec(k), s"[$name]")
+  }
+
+  test("the vol state reader and resampler are the rows' own") {
+    // the family's reader is the five rows' own functions, and its resampler takes the blocks the
+    // exit's and the record bands' resamplers take
+    def bits(x: Double): Long = java.lang.Double.doubleToRawLongBits(x)
+    val r     = pinnedSeries
+    val exits = r.toVector.map(x => MarketSim.VolExitDay(x, x, 0.02, 1.0))
+    val days  = r.toVector.zip(exits).map((x, e) => MarketSim.VolStateDay(x, e))
+    val exit3 = MarketSim.volExitOf(exits)
+    val want  = Vector(MarketSim.semiExcessOf(r), MarketSim.volTimingOf(r)) ++ exit3
+    assertEquals(MarketSim.volStateOf(days).map(bits), want.map(bits))
+    val ours  = MarketSim.volStateResamples(days, 5, 20260918L)
+    val exit  = MarketSim.volExitResamples(exits, 5, 20260918L)
+    val bands = MarketSim.recordResamples(r, 5, 20260918L)
+    for k <- 0 until 5 do
+      for j <- 0 until 3 do assertEquals(bits(ours(k)(j + 2)), bits(exit(k)(j)), s"resample $k")
+      assertEquals(bits(ours(k)(0)), bits(bands(k)(7)), s"resample $k")
+      assertEquals(bits(ours(k)(1)), bits(bands(k)(12)), s"resample $k")
   }
 
   /** Thirty years of `pinnedSeries`' draws, for the rows a year is one observation of. */

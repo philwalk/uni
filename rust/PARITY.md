@@ -127,6 +127,19 @@ With that in place, marketSim is byte-identical across `-emit`, `-validate`, `-b
 practical rule for a new script is: transcendental noise is only a parity risk in
 identically-zero columns, and blanking the sign there removes it.
 
+**The simulation goes further: its paths are the same bits, not only the same digits.** Every
+`exp`, `log` and `pow` that builds or evolves a path goes through `exp_det` / `ln_det` /
+`pow_det` (`expDet` / `lnDet` / `powDet`): the state, the emitted series and the
+`-emitvolparts` cells. A platform call there lets a one-ulp difference enter the state
+and compound. The readers, statistics of finished paths, keep the platform functions under
+the rendering rule above. One source of a bit difference remains, kept on purpose: `randn`
+calls the platform `log1p` in its tail and the platform `exp` in its wedge-acceptance test.
+Rust's match NumPy's bit for bit, so the generator reproduces NumPy's stream and that stream
+is a third reference; the JVM's differ by one ulp on about 2.5 tail draws per million, and a
+wedge flip, never observed, would desynchronise the stream after it (see
+`numpy_rng_parity.rs`). Making them deterministic would end the NumPy match where
+`exp_det`'s ~2 ulp differ from C's; the decision is twin identity against NumPy identity.
+
 ## A table's ORDER can be a parity surface
 
 `-calibrate` draws one uniform per searchable dial from a single stream, in the order the

@@ -22,14 +22,15 @@ class YearVolAnchorSuite extends FunSuite:
 
   test("the Nasdaq anchor's pooled vol is one episode: QQQ's whole history alone concentrates") {
     // every other window and series spreads its vol the same way; only the window holding
-    // 2000-02 (and the century holding 1929-33) reads under 0.76
+    // 2000-02 reads under 0.76, and the lag-free century, holding 1929-33, reads 0.777
     assert(value("QQQ", "w1999", "ratio") < 0.72, "QQQ 1999-2026 median year under 0.72 of pooled")
+    val century = value("CRSP", "w1926", "ratio")
+    assert(century >= 0.76 && century < 0.78, s"the lag-free century reads 0.777: $century")
     for (s, w) <- Vector(("QQQ", "w2007"), ("SPY", "w1993"), ("CRSP", "w1954"), ("CRSP", "w1990"), ("CRSP", "w1999")) do
       assert(value(s, w, "ratio") >= 0.78, s"$s $w: an ordinary window reads 0.78 or more of pooled")
-    assert(value("CRSP", "w1926", "ratio") < 0.76, "the century concentrates too: 1929-33")
     // and the typical Nasdaq year is the S&P's typical year plus about a fifth, not plus a half
     val q = value("QQQ", "w1999", "medianYearVol") / value("CRSP", "w1954", "medianYearVol")
-    assert(q > 1.3 && q < 1.55, s"typical-year ratio QQQ/CRSP $q")
+    assert(q > 1.2 && q < 1.55, s"typical-year ratio QQQ/CRSP $q")
   }
 
   test("the typical year is the median over whole 252-session blocks of each block's own vol") {

@@ -27,7 +27,10 @@ class PathNeedsSuite extends FunSuite:
   }
 
   test("every banded row is read on each path alone") {
-    for (recipe, set) <- Vector(("0.24.6-sp500", "sp500"), ("0.24.6-nasdaq", "nasdaq")) do
+    // and each reading is held to the full cut's over the ensemble too
+    val recipes = Vector(("0.24.6-sp500", "sp500"), ("0.24.6-nasdaq", "nasdaq"), ("0.25.0-sp500", "sp500"),
+                         ("0.25.0-nasdaq", "nasdaq"))
+    for (recipe, set) <- recipes do
       val a  = MarketSim.anchorsNamed(set)
       val vw = MarketSim.verdictWorld(a, MarketSim.namedWorld(recipe).map(_._1).getOrElse(fail("recipe")))
       val (paths, years, seed) = (5, 100, 7L)
@@ -36,15 +39,22 @@ class PathNeedsSuite extends FunSuite:
       val hr   = MarketSim.horizonReadings(a, st, Some(main), years, paths, seed, vw, extremeToo = false)
       val banded = MarketSim.fitTargets(a).filter((n, _, _, _) => a.recordBands.exists(_.name == n))
       assertEquals(hr.bandedByPath.size, banded.size, s"$set: every banded row")
+      val horizons = banded.map((n, _, _, _) => MarketSim.recordBandYears(a, n)).distinct
+      val whole = horizons.map(h => h -> MarketSim.measure(main.map(_.tail(h)), h)).toMap
+      // each path's cut measured once per horizon, every row read off it
+      val single = MarketSim.parMap(for h <- horizons; k <- 0 until paths yield (h, k))((h, k) =>
+        (h, k) -> MarketSim.measure(Vector(main(k).tail(h)), h)).toMap
       for (name, get, _, _) <- banded do
         val h  = MarketSim.recordBandYears(a, name)
         val xs = hr.bandedByPath(name)
         assertEquals(xs.size, paths, s"$set $name: one per path")
         for (x, k) <- xs.zipWithIndex do
-          val alone = get(MarketSim.measure(Vector(main(k).tail(h)), h))
+          val alone = get(single((h, k)))
           assert(same(x, alone), s"$set $name path $k: $x alone $alone")
         val finite = xs.count(_.isFinite)
         assert(finite * 2 > paths, s"$set $name: $finite of $paths paths read")
+        val full = get(whole(h))
+        assert(same(hr.banded(name), full), s"$set $name: ${hr.banded(name)} over the full cuts $full")
   }
 
   test("the extreme readings come one per path in path order") {

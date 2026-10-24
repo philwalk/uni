@@ -3343,6 +3343,28 @@ fn fnum(v: &str, flag: &str) -> f64 {
         .unwrap_or_else(|_| usage(&format!("{flag} wants a number, got [{v}]")))
 }
 
+/// The (generation, descriptors) of every admitted candidate in a `log.tsv`'s text. The admitted
+/// flag is read by its position after the descriptors, not as the line's last cell: columns
+/// appended after it (the ledger) would otherwise hide every admission.
+fn admitted_trace(log: &str) -> Vec<(u64, Vec<f64>)> {
+    let nd = DESC_NAMES.len();
+    log.lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            if f.len() < 10 + nd || f[9 + nd] != "true" {
+                return None;
+            }
+            let at: u64 = f[0].parse().ok()?;
+            let desc: Vec<f64> = f[8..8 + nd]
+                .iter()
+                .map(|x| x.parse().unwrap_or(f64::NAN))
+                .collect();
+            Some((at, desc))
+        })
+        .collect()
+}
+
 // ---- main -------------------------------------------------------------------------------------
 
 #[expect(
@@ -4650,25 +4672,8 @@ fn main() {
     }
     // THE SPREAD TRACE the stopping rule reads: the descriptors of every candidate admitted so
     // far, by generation, rebuilt from the log on a resume so the rule reads the whole run
-    let nd = DESC_NAMES.len();
     let mut trace: Vec<(u64, Vec<f64>)> = read_text(&format!("{}/log.tsv", c.out))
-        .map(|t| {
-            t.lines()
-                .skip(1)
-                .filter_map(|l| {
-                    let f: Vec<&str> = l.split('\t').collect();
-                    if f.len() < 10 + nd || f[f.len() - 1] != "true" {
-                        return None;
-                    }
-                    let at: u64 = f[0].parse().ok()?;
-                    let desc: Vec<f64> = f[8..8 + nd]
-                        .iter()
-                        .map(|x| x.parse().unwrap_or(f64::NAN))
-                        .collect();
-                    Some((at, desc))
-                })
-                .collect()
-        })
+        .map(|t| admitted_trace(&t))
         .unwrap_or_default();
     // a running seed-noise estimate from each candidate's spread across its own reps, carried across generations
     let mut noise_sum = nsum0;
@@ -5685,5 +5690,35 @@ mod membership_tests {
         assert_eq!(drift[0].0, "membership");
         prior.insert("membership".to_string(), MEMBERSHIP.to_string());
         assert!(drifted(&settings, &prior).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+
+    /// A log line as the search writes it: the eight leading cells, the descriptors, the gate's
+    /// failure, the admitted flag and the ledger's cells.
+    fn line(g: u64, admitted: bool, ledger: &str) -> String {
+        let desc: Vec<String> = (0..DESC_NAMES.len()).map(|k| format!("{k}.5")).collect();
+        format!(
+            "{g}\t7\tm\ttrue\t1.000000\t1.000000\t-\t0.100\t{}\t-\t{admitted}\t{ledger}",
+            desc.join("\t")
+        )
+    }
+
+    /// A resume rebuilds every admission whatever follows the flag, and none of the rejections.
+    #[test]
+    fn trace_reads_the_admitted_flag_by_position() {
+        let log = format!(
+            "header\n{}\n{}\n{}\n",
+            line(0, true, "0.25 0.5"),
+            line(1, false, "true"),
+            line(2, true, "")
+        );
+        let trace = admitted_trace(&log);
+        assert_eq!(trace.iter().map(|t| t.0).collect::<Vec<_>>(), [0, 2]);
+        assert_eq!(trace[0].1.len(), DESC_NAMES.len());
+        assert!((trace[0].1[1] - 1.5).abs() < 1e-12);
     }
 }

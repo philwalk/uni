@@ -609,179 +609,22 @@ fn news_damp_at(news_rate: f64, news_size: f64) -> f64 {
 
 /// The conditional-vol multiplier the diffusion's noise carries, read from the states as they
 /// stood before the session: the log-vol state's level-preserving factor, the leverage kick and
-/// the vol response, each only when its dial is on, and the shared vol's multiplier in their
-/// place (`World::shared_vol`). `news_scale` sizes news by it.
+/// the vol response, each only when its dial is on. `news_scale` sizes news by it.
 fn news_vol_multiplier(
     w: &World,
     log_vol: f64,
     vol_norm: f64,
     kick_s: f64,
     vol_resp_s: f64,
-    shared_m: f64,
 ) -> f64 {
-    let mut m = (log_vol - vol_norm).exp();
+    let mut m = exp_det(log_vol - vol_norm);
     if w.leverage > 0.0 {
-        m *= (w.leverage * kick_s).exp();
+        m *= exp_det(w.leverage * kick_s);
     }
     if w.vol_resp > 0.0 {
-        m *= (w.vol_resp * vol_resp_s).exp();
-    }
-    if shared_vol_on(w) {
-        m *= shared_m;
+        m *= exp_det(w.vol_resp * vol_resp_s);
     }
     m
-}
-
-/// `World::shared_vol`'s switch: either weight above 0, or the drawdown vol's (`World::dd_vol`).
-fn shared_vol_on(w: &World) -> bool {
-    w.shared_vol > 0.0 || w.shared_vol_size > 0.0 || w.dd_vol > 0.0
-}
-
-/// The standard normal cdf, from the complementary error function's Chebyshev fit (fractional
-/// error under 1.2e-7).
-fn std_normal_cdf(x: f64) -> f64 {
-    let y = -x / std::f64::consts::SQRT_2;
-    let t = 1.0 / (1.0 + 0.5 * y.abs());
-    let poly = -1.265_512_23
-        + t * (1.000_023_68
-            + t * (0.374_091_96
-                + t * (0.096_784_18
-                    + t * (-0.186_288_06
-                        + t * (0.278_868_07
-                            + t * (-1.135_203_98
-                                + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77))))))));
-    let e = t * (-y * y + poly).exp();
-    0.5 * if y >= 0.0 { e } else { 2.0 - e }
-}
-
-/// The mean `World::dd_vol_mid`'s read takes from a session, returned: a move D ~ N(0, s^2)
-/// scaled by exp(a max(0, -D)) has mean -a s^2 exp(a^2 s^2 / 2) Phi(a s).
-fn dd_mid_comp(a: f64, s: f64) -> f64 {
-    let x = a * s;
-    a * s * s * (0.5 * x * x).exp() * std_normal_cdf(x)
-}
-
-/// `World::dd_vol_mid`'s draws: the session's standardized draws, taken at its open from their
-/// own streams, which the session then reads in place of drawing.
-#[derive(Clone, Copy)]
-struct DdDraws {
-    z: f64,
-    z_body: f64,
-    news_u: f64,
-    slow_z: f64,
-    bust_e: f64,
-    jump_u: f64,
-    jump_z: f64,
-    jump_chi: f64,
-}
-
-impl DdDraws {
-    /// Each stream's draws for the session, in the order the session reads them; the jump's t is
-    /// drawn every session, so the stream's use does not depend on the multiplier.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one stream per channel, each the session's own"
-    )]
-    fn draw(
-        w: &World,
-        rng: &mut NumPyRng,
-        skew_rng: &mut NumPyRng,
-        nrng: &mut NumPyRng,
-        slow_rng: &mut NumPyRng,
-        bust_rng: &mut NumPyRng,
-        jrng: &mut NumPyRng,
-        skew_a: f64,
-        skew_b: f64,
-    ) -> Self {
-        let z = rng.randn();
-        let z_body = if w.noise_skew > 0.0 {
-            skewed_shock(z, skew_rng.randn(), w.noise_skew, skew_a, skew_b)
-        } else {
-            z
-        };
-        let news_u = if w.news_rate > 0.0 {
-            nrng.next_f64()
-        } else {
-            1.0
-        };
-        let slow_z = if w.slow_share > 0.0 {
-            slow_rng.randn()
-        } else {
-            0.0
-        };
-        let bust_e = if w.bust_amp > 0.0 {
-            bust_rng.randn()
-        } else {
-            0.0
-        };
-        let (jump_u, jump_z, jump_chi) = if w.jump_var > 0.0 {
-            let u = jrng.next_f64();
-            let jz = jrng.randn();
-            let mut chi = 0.0f64;
-            for _ in 0..JUMP_NU {
-                let g = jrng.randn();
-                chi += g * g;
-            }
-            (u, jz, chi)
-        } else {
-            (1.0, 0.0, 1.0)
-        };
-        Self {
-            z,
-            z_body,
-            news_u,
-            slow_z,
-            bust_e,
-            jump_u,
-            jump_z,
-            jump_chi,
-        }
-    }
-
-    /// The move the draws price at the open's multiplier `m` and its conditional sd, as the
-    /// shared vol's update reads a session: the diffusion's, the slow channel's and the bust
-    /// swing's scales per unit of the multiplier, the news rate and the liquidity all the
-    /// previous session's; `news_size` and `jump_lam` are the news size and jump rate at `m`.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the previous session's scales, one per channel"
-    )]
-    fn priced(
-        &self,
-        w: &World,
-        m: f64,
-        liq: f64,
-        u_pre: f64,
-        u_slow: f64,
-        u_bust: f64,
-        p_news: f64,
-        news_size: f64,
-        jump_lam: f64,
-    ) -> (f64, f64) {
-        let scale = jump_scale(w);
-        let jump = if self.jump_u < jump_lam {
-            let nu = JUMP_NU as f64;
-            let t = self.jump_z / (self.jump_chi / nu).sqrt() / (nu / (nu - 2.0)).sqrt();
-            (t - w.jump_skew) * scale
-        } else {
-            0.0
-        };
-        let news = if self.news_u < p_news {
-            -news_size
-        } else {
-            0.0
-        };
-        let mv = liq * (u_pre * m * self.z_body + jump)
-            + u_slow * m * self.slow_z
-            + u_bust * m * self.bust_e
-            + news;
-        let var = (u_pre * m * liq).powi(2)
-            + jump_lam * scale * scale * (1.0 + w.jump_skew * w.jump_skew) * liq * liq
-            + (u_slow * m).powi(2)
-            + (u_bust * m).powi(2)
-            + p_news * news_size * news_size;
-        (mv, var.sqrt())
-    }
 }
 
 /// A day flip's expected gain per unit of the day's sd at `q0` = 1:
@@ -811,90 +654,6 @@ fn news_budget_refusal(news_rate: f64, news_size: f64) -> Option<String> {
         ))
     } else {
         None
-    }
-}
-
-/// The variance of the volatility response's per-session reading at a unit-normal return,
-/// `Var(min(max(-z, 0), 4))`: the reading `vr_u` centres at 0.399.
-const VOL_RESP_INPUT_VAR: f64 = 0.340_790_505_672_873_4;
-
-/// THE VOLATILITY RESPONSE REPRICED's share of the diffusion budget (`World::vol_reprice_resp`):
-/// `K^2 vol_resp^2 V / SIGMA_N^2`, V the state's per-session input variance -- `v` when given
-/// (above 0), else the unit-normal closed form through the attack EWMA's `(1 - A) / (1 + A)`.
-fn vol_reprice_share(k: f64, vol_resp: f64, attack: f64, v: f64) -> f64 {
-    let v = if v > 0.0 {
-        v
-    } else if attack > 0.0 {
-        VOL_RESP_INPUT_VAR * (1.0 - attack) / (1.0 + attack)
-    } else {
-        VOL_RESP_INPUT_VAR
-    };
-    k * k * vol_resp * vol_resp * v / (SIGMA_N * SIGMA_N)
-}
-
-/// THE VOLATILITY REPRICING's share of the diffusion budget (`World::vol_reprice`): its
-/// per-session move is `-K dlog_vol`, `dlog_vol = (phi - 1) log_vol + sigma_v eps` on the
-/// stationary AR(1), so the move's variance is exactly `K^2 2 sigma_v^2 / (1 + phi)` (`sigma_v`
-/// the vol of vol, `phi` its persistence), over `SIGMA_N^2`.
-fn vol_reprice_x_share(k: f64, vol_of_vol: f64, vol_persist: f64) -> f64 {
-    k * k * 2.0 * vol_of_vol * vol_of_vol / ((1.0 + vol_persist) * SIGMA_N * SIGMA_N)
-}
-
-/// THE VOLATILITY LEVEL REPRICED's share of the diffusion budget (`World::vol_reprice_level`):
-/// with `s2 = sigma_v^2 / (1 - phi^2)` the state's stationary variance (`vol_norm`),
-/// `v = exp(log_vol - s2)` has `E[v^2] = 1` and `E[v_t v_t-1] = exp(-s2 (1 - phi))`, so the
-/// move's variance is exactly `K^2 2 (1 - exp(-s2 (1 - phi)))`, over `SIGMA_N^2`.
-fn vol_reprice_level_share(k: f64, vol_of_vol: f64, vol_persist: f64) -> f64 {
-    let s2 = (vol_of_vol * vol_of_vol) / 1e-9f64.max(1.0 - vol_persist * vol_persist);
-    k * k * 2.0 * (1.0 - (-s2 * (1.0 - vol_persist)).exp()) / (SIGMA_N * SIGMA_N)
-}
-
-/// The share of the diffusion budget the news channel and the repricings use: `a + f (b_r + b_x +
-/// b_l)`, `f` the probe's dispersal (`World::vol_reprice_disp`). At `f` = 1 it is `a + b_r + b_x +
-/// b_l` in that order, so the damp is the one the repricings carried before the override.
-fn repricing_budget_used(a: f64, f: f64, b_r: f64, b_x: f64, b_l: f64) -> f64 {
-    if f == 1.0 {
-        a + b_r + b_x + b_l
-    } else {
-        a + f * (b_r + b_x + b_l)
-    }
-}
-
-/// The news channel's share of the diffusion budget, `news_rate / 252 x news_size^2 /
-/// SIGMA_N^2`; 0 with the channel off.
-fn news_share(news_rate: f64, news_size: f64) -> f64 {
-    if news_rate > 0.0 {
-        (news_rate / DAYS_PER_YEAR as f64) * news_size * news_size / (SIGMA_N * SIGMA_N)
-    } else {
-        0.0
-    }
-}
-
-/// The diffusion's damp with every displacer on: `sqrt(1 - a - b_r - b_x - b_l)`, the news
-/// channel's share, the repriced response's, the volatility repricing's and the level's, 0 once
-/// they consume the budget. `news_damp_at` itself while every repricing is off, so an off world
-/// is bit-identical.
-fn diffusion_damp_at(w: &World) -> f64 {
-    if w.vol_reprice_resp > 0.0 || w.vol_reprice > 0.0 || w.vol_reprice_level > 0.0 {
-        let b_r = vol_reprice_share(
-            w.vol_reprice_resp,
-            w.vol_resp,
-            w.vol_resp_attack,
-            w.vol_reprice_v,
-        );
-        let b_x = vol_reprice_x_share(w.vol_reprice, w.vol_of_vol, w.vol_persist);
-        let b_l = vol_reprice_level_share(w.vol_reprice_level, w.vol_of_vol, w.vol_persist);
-        (1.0 - repricing_budget_used(
-            news_share(w.news_rate, w.news_size),
-            w.vol_reprice_disp,
-            b_r,
-            b_x,
-            b_l,
-        ))
-        .max(0.0)
-        .sqrt()
-    } else {
-        news_damp_at(w.news_rate, w.news_size)
     }
 }
 
@@ -933,6 +692,11 @@ const INFL_REGIME_EDGE: f64 = 0.005;
 pub const CRASH_SEEN_REF: f64 = 2.0;
 /// the declines a crash fit needs (`crash_fit`)
 pub const CRASH_MIN_EPISODES: usize = 3;
+/// THE RECORD'S RESOLUTION of the inflation seen, yoy in pp: one step of CPI-U's last published
+/// digit (three decimals) moves the year-over-year rate by about this much at today's index level
+/// (ten times it in 1962). A pair of declines seen closer than this defines no slope the record
+/// could measure (`crash_fit`): on a near-flat inflation the quotient reads millions per point.
+pub const CRASH_SEEN_RES: f64 = 3e-4;
 
 /// THE CREDIT-TRIGGERED VOL REGIME's constants (see `credit_regime`). The credit growth gap
 /// (`borrow - lev_slow`) has a stationary sd of 0.104 on the Nasdaq recipes (measured over 45
@@ -967,19 +731,6 @@ pub fn default_world() -> World {
         vol_of_vol: 0.028,
         vol_pull: 0.0,
         vol_pull_step: true,
-        one_vol_in: false,
-        one_vol_out: false,
-        shared_vol: 0.0,
-        shared_vol_size: 0.0,
-        shared_vol_phi: 0.98,
-        shared_vol_cap: 2.0,
-        shared_vol_centre: None,
-        shared_vol2: 0.0,
-        shared_vol_size2: 0.0,
-        shared_vol_phi2: 0.995,
-        dd_vol: 0.0,
-        dd_vol_half: 252.0,
-        dd_vol_mid: false,
         recovery_drag: 8.5,
         recovery_floor: 0.10,
         halt_limit: 0.25,
@@ -1011,19 +762,11 @@ pub fn default_world() -> World {
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
-        boom_fade_vol: 0.0,
-        overshoot_base: 0.0,
-        overshoot_base_rate: 0.0,
-        disaster_vol_rise: 0.0,
-        disaster_vol_half: 5.0,
-        disaster_feed: 0.0,
         delev_rate: 0.0,
         delev_from: 2.0,
         delev_size: 0.2,
         delev_len: 0.1,
         spread_dd: 0.0,
-        spread_trend: 0.0,
-        spread_noise: 1.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
         boom_rate: 0.0,
@@ -1185,11 +928,6 @@ pub fn default_world() -> World {
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
-        vol_reprice: 0.0,
-        vol_reprice_resp: 0.0,
-        vol_reprice_v: 0.0,
-        vol_reprice_level: 0.0,
-        vol_reprice_disp: 1.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -1241,19 +979,6 @@ fn v0_19_2() -> World {
         vol_of_vol: 0.011,
         vol_pull: 0.0,
         vol_pull_step: false,
-        one_vol_in: false,
-        one_vol_out: false,
-        shared_vol: 0.0,
-        shared_vol_size: 0.0,
-        shared_vol_phi: 0.98,
-        shared_vol_cap: 2.0,
-        shared_vol_centre: None,
-        shared_vol2: 0.0,
-        shared_vol_size2: 0.0,
-        shared_vol_phi2: 0.995,
-        dd_vol: 0.0,
-        dd_vol_half: 252.0,
-        dd_vol_mid: false,
         recovery_drag: 0.0,
         recovery_floor: 1.0,
         halt_limit: 0.0,
@@ -1347,19 +1072,11 @@ fn v0_19_2() -> World {
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
-        boom_fade_vol: 0.0,
-        overshoot_base: 0.0,
-        overshoot_base_rate: 0.0,
-        disaster_vol_rise: 0.0,
-        disaster_vol_half: 5.0,
-        disaster_feed: 0.0,
         delev_rate: 0.0,
         delev_from: 2.0,
         delev_size: 0.2,
         delev_len: 0.1,
         spread_dd: 0.0,
-        spread_trend: 0.0,
-        spread_noise: 1.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
         boom_rate: 0.0,
@@ -1392,11 +1109,6 @@ fn v0_19_2() -> World {
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
-        vol_reprice: 0.0,
-        vol_reprice_resp: 0.0,
-        vol_reprice_v: 0.0,
-        vol_reprice_level: 0.0,
-        vol_reprice_disp: 1.0,
         easing: 0.045,
         unwind: 0.35,
         floorhold: 0.0,
@@ -1452,19 +1164,6 @@ fn v0_24_1() -> World {
         vol_of_vol: 0.028,
         vol_pull: 0.0,
         vol_pull_step: false,
-        one_vol_in: false,
-        one_vol_out: false,
-        shared_vol: 0.0,
-        shared_vol_size: 0.0,
-        shared_vol_phi: 0.98,
-        shared_vol_cap: 2.0,
-        shared_vol_centre: None,
-        shared_vol2: 0.0,
-        shared_vol_size2: 0.0,
-        shared_vol_phi2: 0.995,
-        dd_vol: 0.0,
-        dd_vol_half: 252.0,
-        dd_vol_mid: false,
         leverage: 0.1,
         down_shock: 0.0,
         jump_skew: 0.65,
@@ -1508,19 +1207,11 @@ fn v0_24_1() -> World {
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
-        boom_fade_vol: 0.0,
-        overshoot_base: 0.0,
-        overshoot_base_rate: 0.0,
-        disaster_vol_rise: 0.0,
-        disaster_vol_half: 5.0,
-        disaster_feed: 0.0,
         delev_rate: 0.0,
         delev_from: 2.0,
         delev_size: 0.2,
         delev_len: 0.1,
         spread_dd: 0.0,
-        spread_trend: 0.0,
-        spread_noise: 1.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
         boom_rate: 0.0,
@@ -1560,11 +1251,6 @@ fn v0_24_1() -> World {
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
-        vol_reprice: 0.0,
-        vol_reprice_resp: 0.0,
-        vol_reprice_v: 0.0,
-        vol_reprice_level: 0.0,
-        vol_reprice_disp: 1.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2031,11 +1717,6 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
-        vol_reprice: 0.0,
-        vol_reprice_resp: 0.0,
-        vol_reprice_v: 0.0,
-        vol_reprice_level: 0.0,
-        vol_reprice_disp: 1.0,
         infl_size: 0.081,
         ..recipe_0245_nasdaq(nq_0244)
     }
@@ -2752,19 +2433,6 @@ fn v0_23_0() -> World {
         vol_of_vol: 0.022,
         vol_pull: 0.0,
         vol_pull_step: false,
-        one_vol_in: false,
-        one_vol_out: false,
-        shared_vol: 0.0,
-        shared_vol_size: 0.0,
-        shared_vol_phi: 0.98,
-        shared_vol_cap: 2.0,
-        shared_vol_centre: None,
-        shared_vol2: 0.0,
-        shared_vol_size2: 0.0,
-        shared_vol_phi2: 0.995,
-        dd_vol: 0.0,
-        dd_vol_half: 252.0,
-        dd_vol_mid: false,
         recovery_drag: 8.5,
         recovery_floor: 0.10,
         halt_limit: 0.25,
@@ -2790,19 +2458,11 @@ fn v0_23_0() -> World {
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
-        boom_fade_vol: 0.0,
-        overshoot_base: 0.0,
-        overshoot_base_rate: 0.0,
-        disaster_vol_rise: 0.0,
-        disaster_vol_half: 5.0,
-        disaster_feed: 0.0,
         delev_rate: 0.0,
         delev_from: 2.0,
         delev_size: 0.2,
         delev_len: 0.1,
         spread_dd: 0.0,
-        spread_trend: 0.0,
-        spread_noise: 1.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
         boom_rate: 0.0,
@@ -2903,11 +2563,6 @@ fn v0_23_0() -> World {
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
-        vol_reprice: 0.0,
-        vol_reprice_resp: 0.0,
-        vol_reprice_v: 0.0,
-        vol_reprice_level: 0.0,
-        vol_reprice_disp: 1.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -2940,19 +2595,6 @@ fn v0_22_1() -> World {
         vol_of_vol: 0.027,
         vol_pull: 0.0,
         vol_pull_step: false,
-        one_vol_in: false,
-        one_vol_out: false,
-        shared_vol: 0.0,
-        shared_vol_size: 0.0,
-        shared_vol_phi: 0.98,
-        shared_vol_cap: 2.0,
-        shared_vol_centre: None,
-        shared_vol2: 0.0,
-        shared_vol_size2: 0.0,
-        shared_vol_phi2: 0.995,
-        dd_vol: 0.0,
-        dd_vol_half: 252.0,
-        dd_vol_mid: false,
         recovery_drag: 10.0,
         recovery_floor: 0.10,
         halt_limit: 0.25,
@@ -2978,19 +2620,11 @@ fn v0_22_1() -> World {
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
-        boom_fade_vol: 0.0,
-        overshoot_base: 0.0,
-        overshoot_base_rate: 0.0,
-        disaster_vol_rise: 0.0,
-        disaster_vol_half: 5.0,
-        disaster_feed: 0.0,
         delev_rate: 0.0,
         delev_from: 2.0,
         delev_size: 0.2,
         delev_len: 0.1,
         spread_dd: 0.0,
-        spread_trend: 0.0,
-        spread_noise: 1.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
         boom_rate: 0.0,
@@ -3091,11 +2725,6 @@ fn v0_22_1() -> World {
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
-        vol_reprice: 0.0,
-        vol_reprice_resp: 0.0,
-        vol_reprice_v: 0.0,
-        vol_reprice_level: 0.0,
-        vol_reprice_disp: 1.0,
         easing: 0.060,
         unwind: 0.35,
         floorhold: 0.0,
@@ -3130,19 +2759,6 @@ fn v0_22_0() -> World {
         vol_of_vol: 0.027,
         vol_pull: 0.0,
         vol_pull_step: false,
-        one_vol_in: false,
-        one_vol_out: false,
-        shared_vol: 0.0,
-        shared_vol_size: 0.0,
-        shared_vol_phi: 0.98,
-        shared_vol_cap: 2.0,
-        shared_vol_centre: None,
-        shared_vol2: 0.0,
-        shared_vol_size2: 0.0,
-        shared_vol_phi2: 0.995,
-        dd_vol: 0.0,
-        dd_vol_half: 252.0,
-        dd_vol_mid: false,
         recovery_drag: 10.0,
         recovery_floor: 0.10,
         halt_limit: 0.25,
@@ -3168,19 +2784,11 @@ fn v0_22_0() -> World {
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
-        boom_fade_vol: 0.0,
-        overshoot_base: 0.0,
-        overshoot_base_rate: 0.0,
-        disaster_vol_rise: 0.0,
-        disaster_vol_half: 5.0,
-        disaster_feed: 0.0,
         delev_rate: 0.0,
         delev_from: 2.0,
         delev_size: 0.2,
         delev_len: 0.1,
         spread_dd: 0.0,
-        spread_trend: 0.0,
-        spread_noise: 1.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
         boom_rate: 0.0,
@@ -3281,11 +2889,6 @@ fn v0_22_0() -> World {
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
-        vol_reprice: 0.0,
-        vol_reprice_resp: 0.0,
-        vol_reprice_v: 0.0,
-        vol_reprice_level: 0.0,
-        vol_reprice_disp: 1.0,
         easing: 0.060,
         unwind: 0.35,
         floorhold: 0.0,
@@ -3320,19 +2923,6 @@ fn v0_21_0() -> World {
         vol_of_vol: 0.027,
         vol_pull: 0.0,
         vol_pull_step: false,
-        one_vol_in: false,
-        one_vol_out: false,
-        shared_vol: 0.0,
-        shared_vol_size: 0.0,
-        shared_vol_phi: 0.98,
-        shared_vol_cap: 2.0,
-        shared_vol_centre: None,
-        shared_vol2: 0.0,
-        shared_vol_size2: 0.0,
-        shared_vol_phi2: 0.995,
-        dd_vol: 0.0,
-        dd_vol_half: 252.0,
-        dd_vol_mid: false,
         recovery_drag: 10.0,
         recovery_floor: 0.10,
         halt_limit: 0.25,
@@ -3358,19 +2948,11 @@ fn v0_21_0() -> World {
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
-        boom_fade_vol: 0.0,
-        overshoot_base: 0.0,
-        overshoot_base_rate: 0.0,
-        disaster_vol_rise: 0.0,
-        disaster_vol_half: 5.0,
-        disaster_feed: 0.0,
         delev_rate: 0.0,
         delev_from: 2.0,
         delev_size: 0.2,
         delev_len: 0.1,
         spread_dd: 0.0,
-        spread_trend: 0.0,
-        spread_noise: 1.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
         boom_rate: 0.0,
@@ -3471,11 +3053,6 @@ fn v0_21_0() -> World {
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
-        vol_reprice: 0.0,
-        vol_reprice_resp: 0.0,
-        vol_reprice_v: 0.0,
-        vol_reprice_level: 0.0,
-        vol_reprice_disp: 1.0,
         easing: 0.052,
         unwind: 0.35,
         floorhold: 0.0,
@@ -3510,19 +3087,6 @@ fn v0_20_0() -> World {
         vol_of_vol: 0.014,
         vol_pull: 0.0,
         vol_pull_step: false,
-        one_vol_in: false,
-        one_vol_out: false,
-        shared_vol: 0.0,
-        shared_vol_size: 0.0,
-        shared_vol_phi: 0.98,
-        shared_vol_cap: 2.0,
-        shared_vol_centre: None,
-        shared_vol2: 0.0,
-        shared_vol_size2: 0.0,
-        shared_vol_phi2: 0.995,
-        dd_vol: 0.0,
-        dd_vol_half: 252.0,
-        dd_vol_mid: false,
         recovery_drag: 0.0,
         recovery_floor: 1.0,
         halt_limit: 0.0,
@@ -3616,19 +3180,11 @@ fn v0_20_0() -> World {
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
-        boom_fade_vol: 0.0,
-        overshoot_base: 0.0,
-        overshoot_base_rate: 0.0,
-        disaster_vol_rise: 0.0,
-        disaster_vol_half: 5.0,
-        disaster_feed: 0.0,
         delev_rate: 0.0,
         delev_from: 2.0,
         delev_size: 0.2,
         delev_len: 0.1,
         spread_dd: 0.0,
-        spread_trend: 0.0,
-        spread_noise: 1.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
         boom_rate: 0.0,
@@ -3661,11 +3217,6 @@ fn v0_20_0() -> World {
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
-        vol_reprice: 0.0,
-        vol_reprice_resp: 0.0,
-        vol_reprice_v: 0.0,
-        vol_reprice_level: 0.0,
-        vol_reprice_disp: 1.0,
         easing: 0.046,
         unwind: 0.35,
         floorhold: 0.0,
@@ -3729,64 +3280,6 @@ pub struct World {
     /// The key is written only when on, so their bodies and digests are unchanged, and a set file
     /// without it loads as off (`world_set_flags`).
     pub vol_pull_step: bool,
-    /// THE ONE MARKET VOL's INPUTS (PLAN row 64, probe, Rust only: no set-file key, no digest
-    /// entry): the leverage kick, the vol response and the slow channel's state read the
-    /// session's TOTAL log price change at its end, standardized by the session's total
-    /// conditional sd (the diffusion, the slow channel and the bust swing in quadrature; the
-    /// kick's and the slow state's after the spiral's amplification, the response's before it),
-    /// in place of each state's own reading. false is bit-identical.
-    pub one_vol_in: bool,
-    /// THE ONE MARKET VOL's OUTPUTS (probe): the kick's and the vol response's multipliers also
-    /// scale the slow channel's draw, and the slow state's multiplier also scales the diffusion's
-    /// noise; the derived channels' state factors are left as they are. false is bit-identical.
-    pub one_vol_out: bool,
-    /// THE SHARED MARKET VOL (PLAN row 64, probe, Rust only: no set-file key, no digest entry):
-    /// one state S replaces the leverage kick, the vol response and the slow channel's state, and
-    /// its multiplier exp(S - c) scales every channel's draw -- the diffusion, the slow channel,
-    /// the bust swing's innovation and the jump intensity's vol. At the session's end S reads z,
-    /// exactly what the multiplier scales: the diffusion's noise and the jump branch after the
-    /// step's liquidity, the slow draw, the bust swing's innovation and the news jump, over their
-    /// conditional sd (each draw's raw second moment, in quadrature), clamped at four; the
-    /// amplification cancels, and the step's own terms, the repricings and the compensators are
-    /// not read: S = min(phi S + sqrt(1 - phi^2) u, cap + c), with
-    /// u = `shared_vol` (-z) + `shared_vol_size` (|z| - sqrt(2/pi)) and c = V, u's variance under
-    /// a normal z, unless `shared_vol_centre` gives one; at V the weights are in units of S's
-    /// stationary sd and the multiplier's square has mean 1 under a normal z. On when either
-    /// weight is above 0; both at 0 is bit-identical.
-    pub shared_vol: f64,
-    /// the shared vol's size weight (see `shared_vol`)
-    pub shared_vol_size: f64,
-    /// the shared vol's persistence (see `shared_vol`)
-    pub shared_vol_phi: f64,
-    /// the shared vol's cap on S - c (see `shared_vol`)
-    pub shared_vol_cap: f64,
-    /// the shared vol's centre c, the multiplier being exp(S - c) and the cap on S - c (probe,
-    /// CLI only): None is V. The realized reading is not a unit normal, so a centre measured per
-    /// cell is what holds the multiplier's mean square at 1.
-    pub shared_vol_centre: Option<f64>,
-    /// THE SHARED VOL's SLOW COMPONENT (probe, CLI only): a second state S2 on the same z and the
-    /// same update, its weights and persistence its own, so the multiplier is exp(S + S2 - c),
-    /// the default centre adds S2's V2, and the cap on S + S2 - c clips the fast state alone,
-    /// keeping S2's memory. On when either weight is above 0, and only with `shared_vol`; both
-    /// at 0 is bit-identical.
-    pub shared_vol2: f64,
-    /// the slow component's size weight (see `shared_vol2`)
-    pub shared_vol_size2: f64,
-    /// the slow component's persistence (see `shared_vol2`)
-    pub shared_vol_phi2: f64,
-    /// THE DRAWDOWN VOL (probe, CLI only): the shared vol's log multiplier gains `dd_vol` g, g the
-    /// floored gap below an ageing high, g = max(0, rho g - r) after each session, r its log price
-    /// change and rho = 0.5^(1 / `dd_vol_half`), and the cap clips the session's log multiplier
-    /// without touching g or the states. Above 0 it switches the shared vol on with no weight of
-    /// its own; 0 is bit-identical.
-    pub dd_vol: f64,
-    /// the drawdown vol's half-life in sessions (see `dd_vol`)
-    pub dd_vol_half: f64,
-    /// the drawdown vol read at mid-session (see `dd_vol`): the session's draws are taken at its
-    /// open, each from its own stream, priced at the open's multiplier on the previous session's
-    /// conditional scales and liquidity, and the multiplier on all of them reads rho g plus half
-    /// that move's fall; a deterministic term returns the mean the one-sided scaling takes.
-    pub dd_vol_mid: bool,
     /// how fast value arbitrage WEAKENS as the drawdown deepens. 0 is the symmetric pull every
     /// release before 0.21.0 had, bit for bit.
     pub recovery_drag: f64,
@@ -3846,21 +3339,6 @@ pub struct World {
     /// its fall within a year of its low while earnings had regained 0.05. 0 is off and
     /// bit-identical; read off the record; a search holds it there with `-fix`.
     pub disaster_overshoot: f64,
-    /// THE DISASTER'S VOLATILITY (`-disastervolrise DU`, a probe, PLAN row 64): a log-vol state
-    /// that gains DU on each session the disaster's fundamental falls and halves every
-    /// `disaster_vol_half` sessions. Its exp joins the spell multipliers (the credit regime's, the
-    /// recession's) on the session's noise and on the sd the vol response reads, so the vol rises
-    /// while the price falls, where the channel's own vol arrives after the drop through the
-    /// spiral. 0 is off and bit-identical; a probe, so no set-file key.
-    pub disaster_vol_rise: f64,
-    /// the disaster vol state's half-life in sessions (see `disaster_vol_rise`)
-    pub disaster_vol_half: f64,
-    /// THE DISASTER'S FEED (`-disasterfeed FZ`, a probe, PLAN row 64): FZ x the session's fall of
-    /// the disaster's fundamental joins the decline the vol response and the leverage kick read,
-    /// so their states take the fall as a shock and not only as a drift. The market's own vol
-    /// states only: refused with the one market vol's inputs or the shared vol. 0 is off and
-    /// bit-identical; a probe, so no set-file key.
-    pub disaster_feed: f64,
     /// THE RECESSION (items 32/33): a fundamental decline in the disaster's shape -- `recess_size`
     /// log spread evenly over `recess_len` years, then `recess_recover` of it regained over
     /// twice that length -- TRIGGERED BY STRESS rather than by a clock: each session no recession,
@@ -3924,17 +3402,6 @@ pub struct World {
     pub overshoot: f64,
     /// the overshoot's return rate per session (see `overshoot`)
     pub overshoot_rate: f64,
-    /// THE OVERSHOOT'S BASE (`-overshootbase B`, a probe, PLAN row 64): the share of EVERY
-    /// session's step that is transient, calm or stressed -- the step's input net of the session's
-    /// overshoot give-backs, at the base impact, the spiral's excess left to `overshoot` -- owed
-    /// back on its own account at `overshoot_base_rate` per session, so B is the share that
-    /// reverts and the rate its pace. The record's daily returns reverse (lag-1 -0.08 S&P, -0.06
-    /// Nasdaq from 1999) where the momentum crowd's carry, and `overshoot` gives back only the
-    /// amplification's excess, near 0 in a calm session. 0 is off and bit-identical; a probe, so
-    /// no set-file key.
-    pub overshoot_base: f64,
-    /// the base's return rate per session (see `overshoot_base`); 0 reads `overshoot_rate`
-    pub overshoot_base_rate: f64,
     /// THE RECOVERY'S LENGTH (probe, 2026-10-01, CLI only) as a multiple of `recess_len`: 2 is the
     /// shipped leg and bit-identical; 1 regains the share over the decline's own length, the
     /// record's V (2009, 1933), which turns the slide-and-regain into a reversal inside the year
@@ -3974,14 +3441,6 @@ pub struct World {
     /// way up and a crash on the way down, and a fast build with a fade of years spends the
     /// same time far over the mean as a plateau. 1 is every earlier world's, bit for bit.
     pub boom_fade: f64,
-    /// THE BOOM'S FADE PACED BY VOLATILITY (`-boomfadevol K`, a probe, PLAN row 64): after the
-    /// build the level decays by the fade's per-session factor raised to 1 + K hot, `hot` the fast
-    /// realized vol's excess over its level at the session's start without the bust swing's
-    /// relief (`Market::hot_raw`; the excess `vol_pull` reads outside a swing), so a boom's excess
-    /// is spent in the bust's high-vol legs rather than drained at one pace long after the vol
-    /// has peaked. 0 is off and bit-identical; a probe, so
-    /// no set-file key.
-    pub boom_fade_vol: f64,
     /// THE DELEVERAGING: forced selling that starts at this rate a year for each year the price
     /// has gone without a 20% drawdown beyond `delev_from`, times the credit stock's growth over
     /// its trailing year in sds where the leverage cycle runs (floored at 0: none starts while
@@ -4010,17 +3469,6 @@ pub struct World {
     /// a 10-session EWMA (`SPREAD_DD_MU`): the record's spread follows the price, it does not move
     /// with it. Reaches no price; 0 is off and bit-identical; read off the record; a search holds it there with `-fix`.
     pub spread_dd: f64,
-    /// THE SPREAD'S TREND TERM (PLAN row 64, probe, Rust only: no set-file key, no digest entry):
-    /// the spread gains this times the one-year EWMA of the log price less the log price (alpha
-    /// 2 / 253, seeded at the first session's), so it widens while the market sits below its
-    /// year's average and compresses above it: the record's spread compresses in a rising market
-    /// (BAA10Y's excess over its trailing-year mean correlates 0.54 with this quantity on QQQ,
-    /// the model's 0.19). Summed after the drawdown term, before the noise. 0 is off and
-    /// bit-identical.
-    pub spread_trend: f64,
-    /// THE SPREAD NOISE SCALE (PLAN row 64, probe, Rust only): the spread noise's innovation is
-    /// `SPREAD_SD` times this, the same draws. 1 is bit-identical.
-    pub spread_noise: f64,
     /// THE BOOM REGIME (item 32): a rare multi-year melt-up of PERCEIVED fair value, the disaster
     /// channel mirrored. The record's deep declines follow large run-ups (NDX x5.75 over the three
     /// years into 2000-03, CRSP x2.25 into 1929-09) where the model's followed ordinary ones: the
@@ -4684,45 +4132,6 @@ pub struct World {
     /// points a year in its high-volatility fifth of sessions against +18 in the rest; a world
     /// whose spikes come only from crashes that then recover earns +26 there. 0 is bit-identical.
     pub vol_feedback: f64,
-    /// VOLATILITY REPRICING (PLAN row 64, probe, Rust only: no set-file key, no digest entry): the
-    /// price carries a discount on the exogenous volatility state, `-this x log_vol` (the AR(1)
-    /// state after its session update), its move repriced the same session in the price and in
-    /// perceived fair -- the valuation cycle's convention, so no gap opens for the pull -- while
-    /// the fundamental is untouched: a discount on volatility, not a cash-flow move. On the
-    /// record volatility moves with the price in the same block on both sides (quarterly
-    /// corr(return, change in log realized sd) -0.41 to -0.53 in every era; the worlds -0.20 and
-    /// -0.26, the record outside both worlds' histories), where `vol_feedback` is a selling flow
-    /// while volatility is high. Stationary with mean zero, so no drift compensation; consumes
-    /// no draws. The drag sees the markdown as a drawdown. Its variance DISPLACES the diffusion's
-    /// under the news channel's budget rule (`vol_reprice_x_share`, `diffusion_damp_at`). 0 is
-    /// off and bit-identical.
-    pub vol_reprice: f64,
-    /// THE VOLATILITY RESPONSE REPRICED (PLAN row 64, probe, Rust only: no set-file key, no digest
-    /// entry): the price carries a discount on the volatility response's state, `-this x
-    /// vol_resp x vol_resp_s` (the response's log multiplier), its move written the same session
-    /// right after the state's update -- in the price and in perceived fair, so no gap opens --
-    /// while the fundamental is untouched. The state's input reads the step's own return, never
-    /// a level, so it never reads the markdown directly; the momentum crowd and the deleveraging,
-    /// which read the level, do, as they read every price move. Its variance DISPLACES the
-    /// diffusion's under the news channel's budget rule (`diffusion_damp_at`). 0 is off and
-    /// bit-identical.
-    pub vol_reprice_resp: f64,
-    /// the per-session input variance the repriced response's budget assumes
-    /// (`vol_reprice_share`), probe-only; 0 is the unit-normal closed form through the attack
-    pub vol_reprice_v: f64,
-    /// THE VOLATILITY LEVEL REPRICED (PLAN row 64, probe, Rust only: no set-file key, no digest
-    /// entry): `vol_reprice`'s conventions exactly -- the move written ahead of the cycle, in the
-    /// price and in perceived fair, the fundamental untouched -- but priced on the vol state's
-    /// LEVEL, `-this x (v - E[v])`, `v = exp(log_vol - vol_norm)` the multiplier the diffusion
-    /// carries, so the vol news scales with vol the way the diffusion does where the log form's
-    /// moves were homoskedastic. Its variance displaces the diffusion's
-    /// (`vol_reprice_level_share`). 0 is off and bit-identical.
-    pub vol_reprice_level: f64,
-    /// the share of the repricings' variance the diffusion yields (`repricing_budget_used`),
-    /// probe-only: below 1 the budget reads the repricings in realized units, since their moves
-    /// are unamplified direct writes and the diffusion they displace is amplified. 1 is
-    /// bit-identical; no effect while every repricing is off.
-    pub vol_reprice_disp: f64,
     /// CAP on policy accommodation under equity stress, in rate points
     pub easing: f64,
     /// how fast that accommodation is withdrawn, per year
@@ -5081,16 +4490,6 @@ const BUST_DECAY_OVER: f64 = 0.97;
 /// half-life -- 2000-03's multiple was two thirds gone a year on. Written out as its bit pattern
 /// would be: exp(-ln 2 / 252), so both twins hold the same constant.
 const BOOM_FADE: f64 = 0.997_253_195_340_495_5;
-
-/// The boom level's fade over one session (`World::boom_fade_vol`): the per-session factor itself
-/// at rest, raised to 1 + k hot while the fast realized vol runs over its level.
-fn boom_fade_by_vol(fade: f64, k: f64, hot: f64) -> f64 {
-    if k > 0.0 && hot > 0.0 {
-        exp_det(ln_det(fade) * (1.0 + k * hot))
-    } else {
-        fade
-    }
-}
 /// THE STATIONARITY ROW's band (see `cycle_sd` and `gap_drift_of`): the pooled valuation gap may
 /// not drift more than this, in log, between a path's first decade and its later half. A
 /// stationary world reads within ±0.05 at 60 paths; the transient worlds read -0.15 (Nasdaq) and
@@ -5109,18 +4508,30 @@ const GAP_SPREAD_BAND: f64 = 0.20;
 /// guarantees: the momentum crowd's tanh diverged from the JVM's by one ulp on a cycle-world
 /// input after four releases of input luck, and rebuilding tanh from the NATIVE exp only moved
 /// the divergence into exp's own wide-argument ulps (both measured 2026-08-30, the PARITY.md
-/// `log` class). Accuracy ~2 ulp, which a behavioural squash cannot see; |y| is bounded by
-/// `tanh_p`'s cutoff so the 2^k construction stays in range. Use it for any future transcendental
-/// that must match across the twins.
+/// `log` class). Accuracy ~2 ulp, which a behavioural squash cannot see. Every exp the
+/// simulation takes is this one, so a path is the same bits in both twins.
 ///
-/// THE RANGE IS THE CALLER'S: `2^k` is built from raw exponent bits with no guard, so past about
-/// ±709 the shift wraps and the result is nonsense rather than 0 or infinity. A caller whose
-/// argument can leave that range tests for it (a Gaussian kernel's far term, say, is 0 there).
+/// Total, as the native exp is: NaN for NaN, +inf past the largest double, 0 below the least
+/// subnormal. Past the normal exponents `2^k` is applied in two exact steps, so a result near
+/// overflow or in the subnormals rounds once.
 #[must_use]
 pub fn exp_det(y: f64) -> f64 {
     // fdlibm's split ln2, as BIT PATTERNS so the twins' constants are identical by inspection.
     const LN2_HI: f64 = f64::from_bits(0x3FE6_2E42_FEE0_0000);
     const LN2_LO: f64 = f64::from_bits(0x3DEA_39EF_3579_3C76);
+    // 2^-64, the subnormal arm's second step
+    const TWO_M64: f64 = f64::from_bits(0x3BF0_0000_0000_0000);
+    if y.is_nan() {
+        return f64::NAN;
+    }
+    // e^709.79 overflows and e^-746 is below the least subnormal; the bounds also keep `k` in
+    // [-1076, 1024], where every exponent field built below is a normal's
+    if y > 709.79 {
+        return f64::INFINITY;
+    }
+    if y < -746.0 {
+        return 0.0;
+    }
     // floor(x + 0.5), written out: Java's round and Rust's differ on negative halves.
     let k = (y * std::f64::consts::LOG2_E + 0.5).floor() as i64;
     let r = (y - k as f64 * LN2_HI) - k as f64 * LN2_LO;
@@ -5138,7 +4549,13 @@ pub fn exp_det(y: f64) -> f64 {
     p = p * r + 0.5;
     p = p * r + 1.0;
     p = p * r + 1.0;
-    p * f64::from_bits(((k + 1023) as u64) << 52)
+    if k > 1023 {
+        p * f64::from_bits(((k - 1 + 1023) as u64) << 52) * 2.0
+    } else if k < -1022 {
+        p * f64::from_bits(((k + 64 + 1023) as u64) << 52) * TWO_M64
+    } else {
+        p * f64::from_bits(((k + 1023) as u64) << 52)
+    }
 }
 
 /// DETERMINISTIC natural log, `exp_det`'s partner: `x = m 2^e` split from the bits (exact), `m`
@@ -5198,7 +4615,7 @@ fn recession_macro_onset(w: &World, lev_on: bool, borrow: f64, lev_slow: f64, in
     credit + inflation
 }
 
-/// `x^k` for x in [0, 1] through `exp_det` and `ln_det`, so both twins agree to the bit where a
+/// `x^k` for x >= 0 through `exp_det` and `ln_det`, so both twins agree to the bit where a
 /// platform `pow` need not; 0 at 0.
 #[must_use]
 pub fn pow_det(x: f64, k: f64) -> f64 {
@@ -5307,11 +4724,6 @@ struct Market {
     /// record of 6.6 and `-crossasset` failed its short-duration rung. At `scale_mu` 0.005 the two
     /// are identical, so the dial is bit-identical off.
     scale_var_amp: f64,
-    /// `scale_var_amp` without the bust swing's relief: the same `scale_mu`, on the session's
-    /// return undivided by `stress_div`, so equal to it to the bit while no swing is armed; what
-    /// the boom's paced fade reads (`hot_raw`), where the relief would blind it through the very
-    /// unwind it paces
-    scale_var_fast: f64,
     /// the realized variance at a four-year memory (0.999 a session): the LEVEL the vol-damped
     /// rebound (`vol_pull`) reads the amplifier's fast scale against, so "high volatility" is
     /// high against the path's own norm, as the timing rule's threshold is, not against the
@@ -5380,7 +4792,7 @@ impl Market {
             floor_log: if halt_limit <= 0.0 {
                 f64::NEG_INFINITY
             } else {
-                (1.0 - halt_limit).ln()
+                ln_det(1.0 - halt_limit)
             },
             carry: 0.0,
             halt_days: 0,
@@ -5398,7 +4810,6 @@ impl Market {
             tail_days: 0,
             scale_var: 0.01 * 0.01,
             scale_var_amp: 0.01 * 0.01,
-            scale_var_fast: 0.01 * 0.01,
             scale_var_ref: 0.01 * 0.01,
             stress_amp: 0.0,
         }
@@ -5461,12 +4872,6 @@ impl Market {
     /// rebound's `vol_pull` reads
     fn hot(&self) -> f64 {
         (self.scale_var_amp.sqrt() / self.scale_var_ref.sqrt() - 1.0).max(0.0)
-    }
-
-    /// `hot` without the bust swing's relief (`scale_var_fast`): what the boom's paced fade
-    /// (`World::boom_fade_vol`) reads, `hot` itself while no swing is armed
-    fn hot_raw(&self) -> f64 {
-        (self.scale_var_fast.sqrt() / self.scale_var_ref.sqrt() - 1.0).max(0.0)
     }
 
     fn step(&mut self, fair: f64, flow_plus_noise: f64) -> f64 {
@@ -5558,8 +4963,6 @@ impl Market {
             0.0f64.max(0.96 * self.stress_idx + 0.04 * (0.0f64.max(-ret) / scale - 0.399));
         self.scale_var_amp = (1.0 - self.scale_mu) * self.scale_var_amp
             + self.scale_mu * (ret / self.stress_div) * (ret / self.stress_div);
-        self.scale_var_fast =
-            (1.0 - self.scale_mu) * self.scale_var_fast + self.scale_mu * ret * ret;
         self.stress_amp = 0.0f64.max(
             0.96 * self.stress_amp + 0.04 * (0.0f64.max(-ret / self.stress_div) / scale_a - 0.399),
         );
@@ -5965,7 +5368,7 @@ impl VolState {
             rx_prev: 0.0,
             ewma: 0.0,
             ewma_set: false,
-            ewma_mu: 1.0 - (-(2.0f64.ln()) / 126.0).exp(),
+            ewma_mu: 1.0 - exp_det(-std::f64::consts::LN_2 / 126.0),
             slow_innov: w.vol_idio * VOL_SLOW_SHARE.sqrt() * (1.0 - VOL_PHI * VOL_PHI).sqrt(),
             white_sd: w.vol_idio * (1.0 - VOL_SLOW_SHARE).sqrt(),
         }
@@ -5976,7 +5379,7 @@ impl VolState {
     /// RESIDUAL +0.036 — most of the raw +0.12 flows THROUGH the range), plus the two-component
     /// idio. Reads `vrng` only, two normals per session: the slow innovation, then the white.
     fn step(&mut self, range: f64, r_s: f64, scale_var: f64, vrng: &mut NumPyRng) -> f64 {
-        let lnx = range.max(1e-300).ln();
+        let lnx = ln_det(range.max(1e-300));
         if !self.ewma_set {
             self.ewma = lnx;
             self.ewma_set = true;
@@ -6028,8 +5431,8 @@ fn bridge_extremes(w: &World, r_s: f64, sig0: f64, u1: f64, u2: f64) -> (f64, f6
     let u1 = u1.max(1e-300);
     let u2 = u2.max(1e-300);
     (
-        (r_s + (r_s * r_s - 2.0 * sig2 * u1.ln()).sqrt()) / 2.0,
-        (r_s - (r_s * r_s - 2.0 * sig2 * u2.ln()).sqrt()) / 2.0,
+        (r_s + (r_s * r_s - 2.0 * sig2 * ln_det(u1)).sqrt()) / 2.0,
+        (r_s - (r_s * r_s - 2.0 * sig2 * ln_det(u2)).sqrt()) / 2.0,
     )
 }
 
@@ -6157,7 +5560,7 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
                 sat_log_p += c.step(w.sat_cycle_sd, &mut rngs.c);
             }
             sat_prev_px = log_px;
-            sat[i] = sat_log_p.exp();
+            sat[i] = exp_det(sat_log_p);
         }
         // RANGE CHANNEL: high/low of a Brownian bridge from the bar's open (prior close) to its
         // close, at the re-levelled session scale times the disclosed compression dial. Exact
@@ -6744,23 +6147,17 @@ fn derive_macro(
         *slot = m.log_p[deque[0]] - m.log_p[i];
     }
     let mut dd_s = 0.0f64;
-    // the log price's one-year EWMA (`World::spread_trend`), seeded at the first session's
-    let trend_alpha = 2.0 / (macro_k::SPREAD_DD_WINDOW as f64 + 1.0);
-    let mut ewma = m.log_p[0];
     for i in 0..n {
-        e_s = macro_k::SPREAD_PHI * e_s + macro_k::SPREAD_SD * w.spread_noise * rng.randn();
+        e_s = macro_k::SPREAD_PHI * e_s + macro_k::SPREAD_SD * rng.randn();
         e_c = macro_k::COND_PHI * e_c + macro_k::COND_SD * rng.randn();
         e_v = macro_k::IVOL_PHI * e_v + macro_k::IVOL_SD * rng.randn();
         slow += macro_k::SLOW_MU * (m.stress[i] - slow);
         dd_s += macro_k::SPREAD_DD_MU * (dd[i] - dd_s);
-        ewma += trend_alpha * (m.log_p[i] - ewma);
-        let trend = w.spread_trend * (ewma - m.log_p[i]);
         spread[i] = (macro_k::SPREAD_BASE
             + macro_k::SPREAD_STRESS * m.stress[i]
             + macro_k::SPREAD_SLOW * slow
             + macro_k::SPREAD_BOND * m.b_stress[i]
             + w.spread_dd * dd_s
-            + trend
             + e_s)
             .max(macro_k::SPREAD_FLOOR);
         if let Some(sp) = parts.as_deref_mut()
@@ -6773,12 +6170,6 @@ fn derive_macro(
             );
             sp.dd.push(w.spread_dd * dd_s);
             sp.noise.push(e_s);
-            if sp.keep_terms {
-                sp.bond.push(macro_k::SPREAD_BOND * m.b_stress[i]);
-            }
-            if sp.keep_terms || w.spread_trend > 0.0 {
-                sp.trend.push(trend);
-            }
         }
         let target = w.rate_mean + m.infl[i] - m.acc[i] + m.spike[i];
         slope[i] = 100.0
@@ -7146,7 +6537,7 @@ fn run_bonds(w: &World, tape: &BondTape, seed: u64) -> BondRun {
     let mut yb_old = w.rate_mean;
     let mut fair_b = 0.0f64;
     let settle_mu = if w.refuge_days > 0.0 {
-        1.0 - (-(2.0f64.ln()) / w.refuge_days).exp()
+        1.0 - exp_det(-std::f64::consts::LN_2 / w.refuge_days)
     } else {
         0.0
     };
@@ -7286,12 +6677,12 @@ fn run_bonds(w: &World, tape: &BondTape, seed: u64) -> BondRun {
             let _ret_t = t_m.step(fair_tv, flow_t + noise_t);
         }
         bq[i] = bd_m.last_liq;
-        bp[i] = bd_m.log_p.exp();
+        bp[i] = exp_det(bd_m.log_p);
         if b10_on {
-            b10p[i] = b10_m.log_p.exp();
+            b10p[i] = exp_det(b10_m.log_p);
         }
         if t_on {
-            tpx[i] = t_m.log_p.exp();
+            tpx[i] = exp_det(t_m.log_p);
             ryv[i] = 100.0 * (y10 + tp_t - tape.e10[i]);
         }
         if i >= BURN_IN {
@@ -7366,13 +6757,8 @@ impl BondRun {
 fn replay_spread(sp: &SpreadParts, b_stress: &[f64]) -> Vec<f64> {
     (0..b_stress.len())
         .map(|j| {
-            let s = sp.head[j] + macro_k::SPREAD_BOND * b_stress[j] + sp.dd[j];
-            let s = if sp.trend.is_empty() {
-                s
-            } else {
-                s + sp.trend[j]
-            };
-            (s + sp.noise[j]).max(macro_k::SPREAD_FLOOR)
+            (sp.head[j] + macro_k::SPREAD_BOND * b_stress[j] + sp.dd[j] + sp.noise[j])
+                .max(macro_k::SPREAD_FLOOR)
         })
         .collect()
 }
@@ -7631,17 +7017,13 @@ pub struct BondTape {
     yb: Vec<f64>,
 }
 
-/// The spread's terms around the bond's (`derive_macro`), over the recorded sessions, so a replay
-/// rebuilds the member in the order it was summed: `(((head + bond) + dd) + trend) + noise`,
-/// floored.
-/// THE PRICE'S SOURCES AND THE VOL STATE PER SESSION (PLAN row 64 diagnostic, Rust only,
+/// THE PRICE'S SOURCES AND THE VOL STATE PER SESSION (PLAN row 64 diagnostic,
 /// `-emitvolparts`): group A splits the session's log price change (the emitted price's, the
 /// markdown included) into every write to the equity's log price, in the order they happen, the
 /// step's return split by its own pull, carry, input terms (each times the step's amplified
 /// liquidity) and halt/clamp; `rounding` closes the sum (the step's distribution over its terms
 /// is not exact in floating point). Group B is the conditional vol state as log multipliers.
-/// `ddComp` is the drawdown vol's mean term (`World::dd_vol_mid`), `ddGap` its gap at the open.
-pub const VOL_PART_COLUMNS: [&str; 43] = [
+pub const VOL_PART_COLUMNS: [&str; 34] = [
     "logPrice",
     "dLogPrice",
     "recess",
@@ -7650,12 +7032,9 @@ pub const VOL_PART_COLUMNS: [&str; 43] = [
     "slow",
     "regimeDrift",
     "bust",
-    "volReprice",
-    "volRepriceLevel",
     "cycle",
     "boom",
     "flipLift",
-    "ddComp",
     "pull",
     "carry",
     "crowd",
@@ -7664,12 +7043,10 @@ pub const VOL_PART_COLUMNS: [&str; 43] = [
     "jumpComp",
     "downShock",
     "overshoot",
-    "overshootBase",
     "delev",
     "flipReflect",
     "volFeedback",
     "haltClamp",
-    "volRepriceResp",
     "markdown",
     "rounding",
     "logVol",
@@ -7677,19 +7054,15 @@ pub const VOL_PART_COLUMNS: [&str; 43] = [
     "volResp",
     "asym",
     "regime",
-    "disasterVol",
     "slowState",
-    "sharedVol",
-    "sharedVol2",
     "amp",
     "sdPre",
     "sdPost",
-    "ddGap",
 ];
 /// `VOL_PART_COLUMNS`' first and last price part, and the rounding column that closes them
 const VOL_PART_FIRST: usize = 2;
-const VOL_PART_LAST: usize = 28;
-const VOL_PART_ROUNDING: usize = 29;
+const VOL_PART_LAST: usize = 23;
+const VOL_PART_ROUNDING: usize = 24;
 
 /// One session's record for `-emitvolparts`, filled as the session's writes happen.
 #[derive(Clone, Copy, Default)]
@@ -7705,7 +7078,6 @@ struct VolSession {
     jump_comp: f64,
     down_shock: f64,
     overshoot: f64,
-    overshoot_base: f64,
     delev: f64,
     flip_reflect: f64,
     vol_feedback: f64,
@@ -7713,13 +7085,8 @@ struct VolSession {
     vol_resp: f64,
     asym: f64,
     regime: f64,
-    disaster_vol: f64,
     slow_state: f64,
-    shared: f64,
-    shared2: f64,
     sd_pre: f64,
-    dd_comp: f64,
-    dd_gap: f64,
 }
 
 /// `-emitvolparts`' rows over the recorded sessions (`VOL_PART_COLUMNS`, the rounding column
@@ -7727,25 +7094,18 @@ struct VolSession {
 /// change reads.
 #[derive(Clone, Default)]
 pub struct VolParts {
-    rows: Vec<[f64; 43]>,
+    rows: Vec<[f64; 34]>,
     last_x: f64,
     last_md: f64,
 }
 
+/// The spread's terms around the bond's (`derive_macro`), over the recorded sessions, so a replay
+/// rebuilds the member in the order it was summed: `((head + bond) + dd) + noise`, floored.
 #[derive(Clone, Default)]
 pub struct SpreadParts {
     head: Vec<f64>,
     dd: Vec<f64>,
-    /// the trend term (`World::spread_trend`), recorded only while it is on or `keep_terms`
-    /// asks: empty, a replay adds nothing, which is the sum at 0 to the bit
-    trend: Vec<f64>,
     noise: Vec<f64>,
-    /// the bond's term as it was summed (PLAN row 64 diagnostic, `-emitspreadparts`), recorded
-    /// only when `keep_terms` asks; a replay rebuilds it from the replayed stress instead
-    bond: Vec<f64>,
-    /// `-emitspreadparts`' request for every term, so a tape kept for the term-premium replay
-    /// carries only the three it needs
-    keep_terms: bool,
 }
 
 impl BondTape {
@@ -7792,20 +7152,13 @@ impl BondTape {
     #[must_use]
     pub fn bytes(&self) -> usize {
         let f = size_of::<f64>();
-        let sp = &self.spread;
-        (8 * self.eq_stress.len()
-            + sp.head.len()
-            + sp.dd.len()
-            + sp.noise.len()
-            + sp.trend.len()
-            + sp.bond.len())
-            * f
+        (8 * self.eq_stress.len() + 3 * self.spread.head.len()) * f
             + self.regime.len()
             + self.news_legs.len() * size_of::<(u32, f64)>()
             + self
                 .vol
                 .as_ref()
-                .map_or(0, |v| v.rows.len() * size_of::<[f64; 43]>())
+                .map_or(0, |v| v.rows.len() * size_of::<[f64; 34]>())
     }
 }
 
@@ -7972,7 +7325,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         } else if w.stress_scale == 0.5 {
             ratio.sqrt()
         } else {
-            exp_det(w.stress_scale * ratio.ln())
+            exp_det(w.stress_scale * ln_det(ratio))
         };
     }
 
@@ -8010,11 +7363,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let k_adapt = 0.010f64;
     let k_home = 0.020f64;
     let mut log_vol = 0.0f64;
-    // the volatility repricing's level, `-vol_reprice x log_vol` (`World::vol_reprice`)
-    let mut vol_d = 0.0f64;
-    // the volatility level repricing's level, `-vol_reprice_level x (v - E[v])`
-    // (`World::vol_reprice_level`), and E[v] = exp(-vol_norm / 2), set below with `vol_norm`
-    let mut vol_dl = 0.0f64;
     // The leverage term's signal from the PREVIOUS session: max(-ret,0)/scale - 0.399, the same
     // decline reading `stress_idx` consumes, centred so the vol level does not drift with the
     // dial. Draw-free; both its update and its use sit behind `leverage > 0`, so 0 is
@@ -8025,8 +7373,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     // the DIFFUSIVE DRAW rather than by any price-derived quantity.
     let mut kick_s = 0.0f64;
     let mut vol_resp_s = 0.0f64;
-    // the repriced response's level, `-vol_reprice_resp x vol_resp x vol_resp_s`
-    let mut vr_d = 0.0f64;
     // THE BUST SWING's state (see `bust_amp`): the gap's slow mean, the level at the running
     // peak, the armed state, the episode's low and the sessions since it, the swing and its own
     // stream. Draw-free at 0: the stream is only drawn while the dial is on.
@@ -8050,7 +7396,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let cyc_phi = if w.cycle_years <= 0.0 {
         0.0
     } else {
-        (-(2.0f64.ln()) / (w.cycle_years * DAYS_PER_YEAR as f64)).exp()
+        exp_det(-std::f64::consts::LN_2 / (w.cycle_years * DAYS_PER_YEAR as f64))
     };
     let cyc_inno = w.cycle_sd * (1.0 - cyc_phi * cyc_phi).sqrt();
     let mut cyc = 0.0f64;
@@ -8081,12 +7427,11 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let mut dd_s = 0.0f64;
     let mut lev = 0.0f64;
     let settle_mu = if w.refuge_days > 0.0 {
-        1.0 - (-(2.0f64.ln()) / w.refuge_days).exp()
+        1.0 - exp_det(-std::f64::consts::LN_2 / w.refuge_days)
     } else {
         0.0
     };
     let vol_norm = (w.vol_of_vol * w.vol_of_vol) / 1e-9f64.max(1.0 - w.vol_persist * w.vol_persist);
-    let vol_level_mean = (-0.5 * vol_norm).exp();
     // THE SLOW REPRICING CHANNEL (item 15). `slow_share` of the diffusive variance leaves the
     // order-flow channel and reappears as a repricing that moves the fundamental and the price
     // TOGETHER, the way the news jump does, so the value channel has nothing to arbitrage and the
@@ -8104,9 +7449,8 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let slow_norm = w.slow_lev * w.slow_lev;
     let slow_scale = SIGMA_N * w.slow_vol * (12.0 / w.depth);
     let mix = (1.0 - w.slow_share).sqrt();
-    // News variance DISPLACES diffusive noise (see `news_damp_at`), and so does the repriced
-    // volatility response's (`diffusion_damp_at`); 1.0 when both are off.
-    let news_damp = diffusion_damp_at(w);
+    // News variance DISPLACES diffusive noise (see `news_damp_at`); 1.0 when the channel is off.
+    let news_damp = news_damp_at(w.news_rate, w.news_size);
     // the bond leg of news (`news_bond`): its state, and the stream that picks the news it
     // answers (`news_bond_skip`)
     let mut news_b = 0.0f64;
@@ -8137,7 +7481,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let belief_mu = if w.belief_years <= 0.0 {
         0.0
     } else {
-        1.0 - (-(2.0f64.ln()) / (w.belief_years * DAYS_PER_YEAR as f64)).exp()
+        1.0 - exp_det(-std::f64::consts::LN_2 / (w.belief_years * DAYS_PER_YEAR as f64))
     };
     // Growth-extrapolation state: EWMA of the fundamental's per-session log change, annualized in
     // the perceived-fair term. Seeded at the unconditional drift so burn-in starts neutral.
@@ -8146,7 +7490,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let g_mu = if w.cap_window <= 0.0 {
         0.0
     } else {
-        1.0 - (-(2.0f64.ln()) / (w.cap_window * DAYS_PER_YEAR as f64)).exp()
+        1.0 - exp_det(-std::f64::consts::LN_2 / (w.cap_window * DAYS_PER_YEAR as f64))
     };
     let mut v_prev = 0.0f64;
     let mut ma_sum = 0.0f64;
@@ -8175,13 +7519,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let mut dis_down = 0.0f64;
     let mut disaster_count = 0usize;
     let dis_prob = w.disaster_rate / (100.0 * DAYS_PER_YEAR as f64);
-    // THE DISASTER'S VOL state (see `disaster_vol_rise`) and its per-session decay
-    let mut dis_vol_u = 0.0f64;
-    let dis_vol_decay = if w.disaster_vol_rise > 0.0 {
-        exp_det(-std::f64::consts::LN_2 / w.disaster_vol_half)
-    } else {
-        1.0
-    };
     // THE RECESSION's state (see `recess_rate`): its own stream, read only while the dial is on
     let mut recess_rng = NumPyRng::new(seed ^ 0x2ece_5510u64);
     let recess_prob = w.recess_rate / DAYS_PER_YEAR as f64;
@@ -8197,13 +7534,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let mut recess_back = 0.0f64;
     // the overshoot owed back to the price, in log units (see `overshoot`)
     let mut over_owed = 0.0f64;
-    // the overshoot base's own account and its rate (see `overshoot_base`)
-    let mut over_base_owed = 0.0f64;
-    let over_base_rate = if w.overshoot_base_rate > 0.0 {
-        w.overshoot_base_rate
-    } else {
-        w.overshoot_rate
-    };
     let mut rrec_left = 0usize;
     let mut rrec_step = 0.0f64;
     let mut recess_count = 0usize;
@@ -8268,114 +7598,10 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let mut delev_left = 0usize;
     let mut delev_step = 0.0f64;
     let vp_on = tape.as_ref().is_some_and(|t| t.vol.is_some());
-    // THE ONE MARKET VOL's total log price at the last session's end (`World::one_vol_in`)
-    let mut ov_x_prev = eq_m.log_p;
-    // THE SHARED MARKET VOL's state, its stationary variance V and its innovation's scale
-    // (`World::shared_vol`)
-    let sv_on = shared_vol_on(w);
-    let sv_v = w.shared_vol * w.shared_vol
-        + w.shared_vol_size * w.shared_vol_size * (1.0 - HALF_NORMAL_MEAN * HALF_NORMAL_MEAN);
-    let sv_k = (1.0 - w.shared_vol_phi * w.shared_vol_phi).sqrt();
-    // the slow component (`World::shared_vol2`), its V2 and innovation's scale
-    let sv2_on = w.shared_vol2 > 0.0 || w.shared_vol_size2 > 0.0;
-    let sv_v2 = w.shared_vol2 * w.shared_vol2
-        + w.shared_vol_size2 * w.shared_vol_size2 * (1.0 - HALF_NORMAL_MEAN * HALF_NORMAL_MEAN);
-    let sv_k2 = (1.0 - w.shared_vol_phi2 * w.shared_vol_phi2).sqrt();
-    // the multiplier's centre (`World::shared_vol_centre`), V (+ V2) unless one is given
-    let sv_c = w
-        .shared_vol_centre
-        .unwrap_or(if sv2_on { sv_v + sv_v2 } else { sv_v });
-    let mut sv_s = 0.0f64;
-    let mut sv_s2 = 0.0f64;
-    // THE DRAWDOWN VOL's gap and decay (`World::dd_vol`); under `dd_vol_mid` the previous
-    // session's conditional scales per unit of the multiplier and its news rate, which the
-    // session's read prices its draws on
-    let dd_on = w.dd_vol > 0.0;
-    let dd_mid = dd_on && w.dd_vol_mid;
-    let dd_rho = 0.5f64.powf(1.0 / w.dd_vol_half);
-    let mut dd_g = 0.0f64;
-    let mut dd_u_pre = 0.0f64;
-    let mut dd_u_slow = 0.0f64;
-    let mut dd_u_bust = 0.0f64;
-    let mut dd_p_news = 0.0f64;
     let mut i = 0usize;
     while i < tot {
         let log_p_open = eq_m.log_p;
         let mut vp = VolSession::default();
-        // the session's conditional sds the one market vol reads: the diffusion's before the
-        // amplification, the slow channel's, the bust swing's; and the slow state's multiplier
-        let mut ov_sd_pre = 0.0f64;
-        let mut ov_sd_slow = 0.0f64;
-        let mut ov_sd_bust = 0.0f64;
-        let mut slow_mult = 1.0f64;
-        // the shared vol's multiplier on this session's draws; 1 when it is off
-        let sv_log = if sv2_on {
-            sv_s + sv_s2 - sv_c
-        } else {
-            sv_s - sv_c
-        };
-        // the drawdown vol (`World::dd_vol`): its gap joins the log multiplier and the cap clips
-        // the sum; under `dd_vol_mid` the session's draws come first, the multiplier reads the
-        // gap at mid-session, and a deterministic term returns the mean that takes
-        let dd_pre = if dd_mid {
-            Some(DdDraws::draw(
-                w,
-                &mut rng,
-                &mut skew_rng,
-                &mut nrng,
-                &mut slow_rng,
-                &mut bust_rng,
-                &mut jrng,
-                skew_a,
-                skew_b,
-            ))
-        } else {
-            None
-        };
-        let (sv_log, dd_comp) = if !dd_on {
-            (sv_log, 0.0)
-        } else if let Some(d) = dd_pre {
-            let m_open = (w.dd_vol * dd_g + sv_log).min(w.shared_vol_cap).exp();
-            let news_size = if w.news_scale > 0.0 {
-                w.news_size
-                    * (1.0 - w.news_scale
-                        + w.news_scale
-                            * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s, m_open))
-            } else {
-                w.news_size
-            };
-            let jump_lam = if w.jump_var > 0.0 {
-                0.25f64.min(w.jump_rate * ((log_vol - vol_norm).exp() * m_open).powf(JUMP_GAMMA))
-            } else {
-                0.0
-            };
-            let (mv, sd) = d.priced(
-                w,
-                m_open,
-                eq_m.last_liq,
-                dd_u_pre,
-                dd_u_slow,
-                dd_u_bust,
-                dd_p_news,
-                news_size,
-                jump_lam,
-            );
-            let read = w.dd_vol * (dd_rho * dd_g + 0.5 * (-mv).max(0.0)) + sv_log;
-            (read.min(w.shared_vol_cap), dd_mid_comp(0.5 * w.dd_vol, sd))
-        } else {
-            ((w.dd_vol * dd_g + sv_log).min(w.shared_vol_cap), 0.0)
-        };
-        let sv_m = if sv_on { sv_log.exp() } else { 1.0 };
-        if sv_on {
-            vp.shared = sv_log;
-            vp.shared2 = sv_s2;
-            vp.dd_gap = dd_g;
-        }
-        // what the shared vol reads beside `vp`'s draws: the news jump's and the jump branch's
-        // raw second moments (the latter before the step) and the bust swing's innovation
-        let mut sv_news2 = 0.0f64;
-        let mut sv_jump2 = 0.0f64;
-        let mut sv_bust_inno = 0.0f64;
         let delev_now = if w.delev_rate > 0.0 {
             delev_session(
                 w,
@@ -8413,12 +7639,9 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // `disaster_size` log spread evenly over `disaster_len` years, which the price then tracks
         // through the ordinary value channel — the crash is fundamental-led, like 1929-32, and the
         // spiral and recovery drag shape it downstream. No new disaster starts while one runs.
-        // the session's fall of the disaster's fundamental, 0 off its falling leg
-        let mut dis_fall = 0.0f64;
         if dis_prob > 0.0 {
             if dis_left > 0 {
                 log_vbase -= dis_step;
-                dis_fall = dis_step;
                 dis_left -= 1;
                 if w.disaster_anticipate > 0.0 {
                     dis_back += w.disaster_recover * dis_step;
@@ -8454,14 +7677,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     }
                 }
             }
-        }
-        if w.disaster_vol_rise > 0.0 {
-            let rise = if dis_fall > 0.0 {
-                w.disaster_vol_rise
-            } else {
-                0.0
-            };
-            dis_vol_u = dis_vol_decay * dis_vol_u + rise;
         }
         // THE RECESSION (see `recess_rate`): the disaster's machine, started by stress. Its draw
         // is its own stream's and only while idle, so an off world is bit-identical and a change
@@ -8593,15 +7808,11 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // expressions
             let (size, comp) = if w.news_scale > 0.0 {
                 let m = 1.0 - w.news_scale
-                    + w.news_scale
-                        * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s, sv_m);
+                    + w.news_scale * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s);
                 (w.news_size * m, comp * m)
             } else {
                 (w.news_size, comp)
             };
-            if sv_on {
-                sv_news2 = p_news * size * size;
-            }
             // the fundamental takes the permanent share of the step and of its compensator (see
             // `news_revert`); a factor of exactly 1.0 when it is off
             let perm = 1.0 - w.news_revert;
@@ -8649,14 +7860,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     t_m.log_p -= bkt * comp;
                 }
             }
-            if dd_mid {
-                dd_p_news = p_news;
-            }
-            let news_u = match dd_pre {
-                Some(d) => d.news_u,
-                None => nrng.next_f64(),
-            };
-            if news_u < p_news {
+            if nrng.next_f64() < p_news {
                 log_vbase -= perm * size;
                 eq_m.log_p -= size;
                 vp.news_jump = -size;
@@ -8696,40 +7900,11 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // 0 when the channel is off, so that member is unchanged.
         let mut slow_var = 0.0f64;
         if w.slow_share > 0.0 {
-            let zs = match dd_pre {
-                Some(d) => d.slow_z,
-                None => slow_rng.randn(),
-            };
-            // under the shared vol its multiplier replaces the state's (`World::shared_vol`)
-            let smul = if sv_on {
-                sv_m
-            } else {
-                (slow_g - slow_norm).exp()
-            };
-            vp.slow_state = if sv_on { 0.0 } else { slow_g - slow_norm };
-            slow_mult = smul;
-            // the one market vol's outputs: the kick's and the vol response's multipliers scale
-            // this draw too (`World::one_vol_out`); off keeps the released expressions
-            let sm = if w.one_vol_out {
-                let lev_m = if w.leverage > 0.0 {
-                    (w.leverage * kick_s).exp()
-                } else {
-                    1.0
-                };
-                let vr_m = if w.vol_resp > 0.0 {
-                    (w.vol_resp * vol_resp_s).exp()
-                } else {
-                    1.0
-                };
-                let om = lev_m * vr_m;
-                slow_var = w.slow_vol * w.slow_vol * smul * smul * om * om;
-                ov_sd_slow = slow_scale * smul * om;
-                slow_scale * smul * om * zs
-            } else {
-                slow_var = w.slow_vol * w.slow_vol * smul * smul;
-                ov_sd_slow = slow_scale * smul;
-                slow_scale * smul * zs
-            };
+            let zs = slow_rng.randn();
+            let smul = exp_det(slow_g - slow_norm);
+            vp.slow_state = slow_g - slow_norm;
+            slow_var = w.slow_vol * w.slow_vol * smul * smul;
+            let sm = slow_scale * smul * zs;
             // only `slow_perm` of it reaches the fundamental: the rest opens a gap the value
             // channel closes, which is what keeps the momentum crowd from chasing the whole move
             // into a variance ratio. The bond takes the same repricing with the opposite sign.
@@ -8763,11 +7938,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 t_m.log_p += bmt;
                 slow_t += w.slow_perm * bmt;
             }
-            // under the one market vol's inputs the state reads the session's total at its end;
-            // under the shared vol it is not read
-            if !w.one_vol_in && !sv_on {
-                slow_g = w.slow_phi * slow_g - w.slow_lev * slow_k * zs;
-            }
+            slow_g = w.slow_phi * slow_g - w.slow_lev * slow_k * zs;
         }
         infl_press += w.infl_speed * (infl_target - infl_press);
         // the spikes: a pulse that decays, arrivals on their own stream; nothing at rate 0
@@ -8847,7 +8018,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // suppresses the easing, which is what ties policy's hands in 2022-like regimes; a
         // deflation regime (pressure below zero) suppresses nothing, rather than easing without
         // bound.
-        let acc_want = w.easing * eq_m.stress_idx * (-press.max(0.0) / 0.005).exp();
+        let acc_want = w.easing * eq_m.stress_idx * exp_det(-press.max(0.0) / 0.005);
         acc = if acc_want > acc {
             acc + EASE_IN_SPEED * (acc_want - acc) * dt
         } else {
@@ -8977,7 +8148,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     }
                 }
                 Crowd::VolScaled => {
-                    let r = (p_prev / px[i.saturating_sub(2)]).ln();
+                    let r = ln_det(p_prev / px[i.saturating_sub(2)]);
                     crowd_rv = 0.94 * crowd_rv + 0.06 * r * r;
                     let v = (crowd_rv * DAYS_PER_YEAR as f64).sqrt();
                     crowd_anchor = if crowd_anchor == 0.0 {
@@ -9025,7 +8196,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         let mispricing_pre = fund_seen - eq_m.log_p; // value agents arb the traded component
         let lookback = 60usize;
         let past = if i >= lookback {
-            px[i - lookback].ln()
+            ln_det(px[i - lookback])
         } else {
             log_pobs
         };
@@ -9067,15 +8238,10 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // price the way a realized-scale or return-standardized input is (measured: those forms
         // self-excite — see PLAN item 11's map). Read before its own update, like the kick.
         // Level-preserving, the same convention `vol_norm` applies to the vol state.
-        let z = match dd_pre {
-            Some(d) => d.z,
-            None => rng.randn(),
-        };
+        let z = rng.randn();
         // THE SKEWED BODY (see `noise_skew`): the noise's own shock; the state below keeps
         // reading `z`, the normal it is built on. The off branch draws nothing.
-        let z_body = if let Some(d) = dd_pre {
-            d.z_body
-        } else if w.noise_skew > 0.0 {
+        let z_body = if w.noise_skew > 0.0 {
             skewed_shock(z, skew_rng.randn(), w.noise_skew, skew_a, skew_b)
         } else {
             z
@@ -9083,19 +8249,19 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         let asym_m = if w.noise_asym <= 0.0 {
             1.0
         } else if w.noise_asym_cap > 0.0 {
-            (asym_g - asym_norm).min(w.noise_asym_cap).exp()
+            exp_det((asym_g - asym_norm).min(w.noise_asym_cap))
         } else {
-            (asym_g - asym_norm).exp()
+            exp_det(asym_g - asym_norm)
         };
-        let d_noise = news_damp * SIGMA_N * (log_vol - vol_norm).exp() * z_body * asym_m * mix;
+        let d_noise = news_damp * SIGMA_N * exp_det(log_vol - vol_norm) * z_body * asym_m * mix;
         // read BEFORE this session's update, like the kick: the response is to PAST declines
         let vol_resp_m = if w.vol_resp > 0.0 {
-            (w.vol_resp * vol_resp_s).exp()
+            exp_det(w.vol_resp * vol_resp_s)
         } else {
             1.0
         };
         let d_noise = if w.leverage > 0.0 {
-            d_noise * (w.leverage * kick_s).exp()
+            d_noise * exp_det(w.leverage * kick_s)
         } else {
             d_noise
         };
@@ -9129,7 +8295,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 eq_m.log_p -= dm;
                 vp.regime_drift = -dm;
             }
-            (w.credit_regime * regime_r).exp()
+            exp_det(w.credit_regime * regime_r)
         } else {
             1.0
         };
@@ -9143,39 +8309,22 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             } else {
                 1.0
             };
-            regime_m * (w.recess_vol * share).exp()
+            regime_m * exp_det(w.recess_vol * share)
         } else {
             regime_m
         };
-        // THE DISASTER'S VOL (see `disaster_vol_rise`) joins the spell multipliers
-        let regime_part = regime_m;
-        let regime_m = if w.disaster_vol_rise > 0.0 {
-            regime_m * dis_vol_u.exp()
-        } else {
-            regime_m
-        };
-        let d_noise = if w.credit_regime > 0.0 || w.recess_vol > 0.0 || w.disaster_vol_rise > 0.0 {
+        let d_noise = if w.credit_regime > 0.0 || w.recess_vol > 0.0 {
             d_noise * regime_m
         } else {
             d_noise
         };
-        // the one market vol's outputs: the slow state's multiplier scales the diffusion too
-        let d_noise = if w.one_vol_out {
-            d_noise * slow_mult
-        } else {
-            d_noise
-        };
-        // the shared vol's multiplier, in place of the kick's and the vol response's, which its
-        // states leave at exactly 1
-        let d_noise = if sv_on { d_noise * sv_m } else { d_noise };
-        if vp_on || w.one_vol_in || sv_on {
+        if vp_on {
             vp.lev_kick = w.leverage * kick_s;
             vp.vol_resp = w.vol_resp * vol_resp_s;
-            vp.asym = asym_m.ln();
-            vp.regime = regime_part.ln();
-            vp.disaster_vol = dis_vol_u;
+            vp.asym = ln_det(asym_m);
+            vp.regime = ln_det(regime_m);
             let lev_mult = if w.leverage > 0.0 {
-                (w.leverage * kick_s).exp()
+                exp_det(w.leverage * kick_s)
             } else {
                 1.0
             };
@@ -9186,21 +8335,14 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             };
             let sd_pre = news_damp
                 * SIGMA_N
-                * (log_vol - vol_norm).exp()
+                * exp_det(log_vol - vol_norm)
                 * lev_mult
                 * jv_mult
                 * asym_m
                 * vol_resp_m
                 * regime_m
                 * mix;
-            let sd_pre = if w.one_vol_out {
-                sd_pre * slow_mult
-            } else {
-                sd_pre
-            };
-            let sd_pre = if sv_on { sd_pre * sv_m } else { sd_pre };
             vp.sd_pre = sd_pre;
-            ov_sd_pre = sd_pre;
         }
         // THE BUST SWING (item 25, see `bust_amp`). The level is the pre-step price against the
         // fundamental as this session left it -- information strictly before the step, like every
@@ -9254,26 +8396,12 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             let m = 1.0 + BUST_RELIEF * bust_s;
             eq_m.stress_div = m;
             eq_m.drag_mult = 1.0 / m;
-            // the shared vol scales the innovation alone, so a move in its state does not
-            // rescale the swing's standing level
-            bust_swing = if sv_on {
-                let e = match dd_pre {
-                    Some(d) => d.bust_e,
-                    None => bust_rng.randn(),
-                };
-                sv_bust_inno = w.bust_amp * bust_s * (1.0 - BUST_PHI * BUST_PHI).sqrt() * e * sv_m;
-                BUST_PHI * bust_swing + (1.0 - BUST_PHI * BUST_PHI).sqrt() * e * sv_m
-            } else {
-                BUST_PHI * bust_swing + (1.0 - BUST_PHI * BUST_PHI).sqrt() * bust_rng.randn()
-            };
+            bust_swing =
+                BUST_PHI * bust_swing + (1.0 - BUST_PHI * BUST_PHI).sqrt() * bust_rng.randn();
             // THE CEILING (see `BUST_CEIL`): the level the swing carries is held to BUST_CEIL
             // under the running peak, measured from the price without it (the centre); once
             // the centre is already nearer, the swing can only subtract
             let bust_raw = w.bust_amp * bust_s * bust_swing;
-            ov_sd_bust = w.bust_amp * bust_s * (1.0 - BUST_PHI * BUST_PHI).sqrt();
-            if sv_on {
-                ov_sd_bust *= sv_m;
-            }
             let bust_room = (eq_m.peak - BUST_CEIL - (eq_m.log_p - bust_news)).max(0.0);
             let priced = if bust_raw > bust_room {
                 if i >= BURN_IN {
@@ -9303,10 +8431,9 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             || w.macro_panel > 0
             || w.vol_resp > 0.0
             || w.jump_resp > 0.0
-            || sv_on
         {
             let lev_mult = if w.leverage > 0.0 {
-                (w.leverage * kick_s).exp()
+                exp_det(w.leverage * kick_s)
             } else {
                 1.0
             };
@@ -9317,7 +8444,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             };
             news_damp
                 * SIGMA_N
-                * (log_vol - vol_norm).exp()
+                * exp_det(log_vol - vol_norm)
                 * lev_mult
                 * jv_mult
                 * asym_m
@@ -9327,12 +8454,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         } else {
             0.0
         };
-        let sess_sigma = if w.one_vol_out {
-            sess_sigma * slow_mult
-        } else {
-            sess_sigma
-        };
-        let sess_sigma = if sv_on { sess_sigma * sv_m } else { sess_sigma };
 
         // THE LEVERAGE CYCLE's multiplier on the spiral's gain, set here rather than beside the
         // step so `liquidity` below is the step's own: it reads the credit stock's growth, which
@@ -9353,21 +8474,14 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             vp.noise = d_noise;
             d_noise
         } else {
-            let vol_mult = if sv_on {
-                (log_vol - vol_norm).exp() * sv_m
-            } else {
-                (log_vol - vol_norm).exp()
-            };
+            let vol_mult = exp_det(log_vol - vol_norm);
             let lam_j = if w.jump_resp > 0.0 {
-                (w.jump_resp * vol_resp_s).exp()
+                exp_det(w.jump_resp * vol_resp_s)
             } else {
                 1.0
             };
-            let lam_now = 0.25f64.min(w.jump_rate * vol_mult.powf(JUMP_GAMMA) * lam_j);
+            let lam_now = 0.25f64.min(w.jump_rate * pow_det(vol_mult, JUMP_GAMMA) * lam_j);
             let scale = jump_scale(w);
-            if sv_on {
-                sv_jump2 = lam_now * scale * scale * (1.0 + w.jump_skew * w.jump_skew);
-            }
             // The compensator is deterministic and consumes no draw: it removes the mean the
             // downward shift would otherwise add, so `jump_var` moves the tail without moving drift.
             // With `jump_resp` on it must be CONDITIONAL — the intensity then correlates with past
@@ -9379,27 +8493,19 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             } else {
                 w.jump_rate * w.jump_skew * scale
             };
-            let fired = match dd_pre {
-                Some(d) => d.jump_u < lam_now,
-                None => jrng.next_f64() < lam_now,
-            };
+            let fired = jrng.next_f64() < lam_now;
             let jump = if !fired {
                 0.0
             } else {
                 // Student-t with JUMP_NU degrees of freedom, standardised to unit variance, so the
                 // size is set by `scale` alone. Drawn as z / sqrt(chi2(nu)/nu) — the draw ORDER
                 // here is part of the cross-language contract, not an implementation detail.
-                let (z, chi) = if let Some(d) = dd_pre {
-                    (d.jump_z, d.jump_chi)
-                } else {
-                    let z = jrng.randn();
-                    let mut chi = 0.0f64;
-                    for _ in 0..JUMP_NU {
-                        let g = jrng.randn();
-                        chi += g * g;
-                    }
-                    (z, chi)
-                };
+                let z = jrng.randn();
+                let mut chi = 0.0f64;
+                for _ in 0..JUMP_NU {
+                    let g = jrng.randn();
+                    chi += g * g;
+                }
                 let nu = JUMP_NU as f64;
                 let t = z / (chi / nu).sqrt() / (nu / (nu - 2.0)).sqrt();
                 (t - w.jump_skew) * scale
@@ -9454,25 +8560,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             }
             v_prev = fund_seen;
         }
-        // THE VOLATILITY REPRICING (see `vol_reprice`): the discount's move on this session's
-        // volatility state, repriced as the cycle's is, and ahead of it so the drag's drawdown
-        // (`drop_override`) sees it the same session; the fundamental is untouched
-        let mut vol_move = 0.0f64;
-        if w.vol_reprice > 0.0 {
-            let d_new = -w.vol_reprice * log_vol;
-            vol_move = d_new - vol_d;
-            vol_d = d_new;
-            eq_m.log_p += vol_move;
-        }
-        // THE VOLATILITY LEVEL REPRICED (see `vol_reprice_level`): the same site and convention,
-        // on the multiplier the diffusion carries less its mean
-        let mut vl_move = 0.0f64;
-        if w.vol_reprice_level > 0.0 {
-            let d_new = -w.vol_reprice_level * ((log_vol - vol_norm).exp() - vol_level_mean);
-            vl_move = d_new - vol_dl;
-            vol_dl = d_new;
-            eq_m.log_p += vl_move;
-        }
         // THE VALUATION CYCLE (see `cycle_sd`) advances ahead of the read, like the fundamental,
         // and its move is REPRICED THE SAME SESSION in the price and in perceived fair — the bust
         // swing's convention: discount-rate news is absorbed at once, so no gap opens for the pull
@@ -9502,13 +8589,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 boom_left -= 1;
             } else {
                 if boom > 0.0 {
-                    // the session's fade, paced by the vol at its start (`World::boom_fade_vol`)
-                    let fade = if w.boom_fade_vol > 0.0 {
-                        boom_fade_by_vol(boom_fade, w.boom_fade_vol, eq_m.hot_raw())
-                    } else {
-                        boom_fade
-                    };
-                    boom_move = boom * fade - boom;
+                    boom_move = boom * boom_fade - boom;
                 }
                 if bust_s <= 0.0
                     && dis_left == 0
@@ -9534,20 +8615,17 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             && w.cap_years <= 0.0
             && w.cycle_sd <= 0.0
             && boom_prob <= 0.0
-            && w.vol_reprice <= 0.0
-            && w.vol_reprice_resp <= 0.0
-            && w.vol_reprice_level <= 0.0
         {
             fund_seen
         } else {
             // the cycle is the slow component of perceived fair; the beliefs absorb the gap NET
             // of it, so the two do not compound (a belief tracking the whole gap would feed the
-            // cycle back into the target at 1 / (1 - belief_share)); the boom's level and the
-            // volatility discount sit beside the cycle for the same reason
+            // cycle back into the target at 1 / (1 - belief_share)); the boom's level sits
+            // beside the cycle for the same reason
             let fair_c = if w.cycle_sd > 0.0 {
-                fund_seen + cyc + boom + vol_d + vr_d + vol_dl
+                fund_seen + cyc + boom
             } else {
-                fund_seen + boom + vol_d + vr_d + vol_dl
+                fund_seen + boom
             };
             let mut pf = fair_c;
             if w.belief_share > 0.0 {
@@ -9582,8 +8660,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             lev = borrow * (1.0 + dd_s);
         }
         let mut step_in = eq_flow + eq_shock;
-        // the session's overshoot give-backs, which the base's accrual nets out
-        let mut given_back = 0.0f64;
         if w.overshoot > 0.0 && over_owed != 0.0 {
             // the give-back, sized in return like the deleveraging's input
             let back = w.overshoot_rate * over_owed;
@@ -9591,15 +8667,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             step_in -= c;
             vp.overshoot = -c;
             over_owed -= back;
-            given_back = c;
-        }
-        if w.overshoot_base > 0.0 && over_base_owed != 0.0 {
-            let back = over_base_rate * over_base_owed;
-            let c = back / eq_m.liquidity();
-            step_in -= c;
-            vp.overshoot_base = -c;
-            over_base_owed -= back;
-            given_back += c;
         }
         if delev_now > 0.0 {
             // sized in return: the step multiplies its input by the liquidity it reads here
@@ -9615,15 +8682,10 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 - (markdown - markdown_prev);
             let sd_day = news_damp
                 * SIGMA_N
-                * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s, sv_m)
+                * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s)
                 * asym_m
                 * regime_m
                 * slope;
-            let sd_day = if w.one_vol_out {
-                sd_day * slow_mult
-            } else {
-                sd_day
-            };
             let cap = FLIP_GAIN * sd_day;
             if flip_owed > cap {
                 let lift = flip_owed - cap;
@@ -9632,7 +8694,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             }
             let q0 = (flip_owed / cap).min(1.0);
             let z_day = day / sd_day;
-            if day < 0.0 && flip_rng.next_f64() < q0 * (-0.5 * z_day * z_day).exp() {
+            if day < 0.0 && flip_rng.next_f64() < q0 * exp_det(-0.5 * z_day * z_day) {
                 let c = 2.0 * day / slope;
                 step_in -= c;
                 vp.flip_reflect = -c;
@@ -9648,28 +8710,12 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         } else {
             step_in
         };
-        // the drawdown vol's mean term (`World::dd_vol_mid`), unscaled like the compensators
-        if dd_mid {
-            eq_m.log_p += dd_comp;
-            vp.dd_comp = dd_comp;
-        }
         let ret_e = eq_m.step(perceived_fair, step_in);
         if w.overshoot > 0.0 {
             // the amplification's excess over the unamplified order: (amp - 1) x input x impact
             over_owed += w.overshoot * step_in * (eq_m.last_liq - eq_m.impact);
         }
-        if w.overshoot_base > 0.0 {
-            // the step's input net of the give-backs, at the base impact (see `overshoot_base`)
-            over_base_owed += w.overshoot_base * (step_in + given_back) * eq_m.impact;
-        }
-        // the decline the market's own vol states read, the disaster's fall joining it as a shock
-        // while its feed is on (see `disaster_feed`)
-        let decline_in = if w.disaster_feed > 0.0 {
-            news_j - ret_e + w.disaster_feed * dis_fall
-        } else {
-            news_j - ret_e
-        };
-        if (w.vol_resp > 0.0 || w.jump_resp > 0.0) && !w.one_vol_in && !sv_on {
+        if w.vol_resp > 0.0 || w.jump_resp > 0.0 {
             // The REALIZED decline, in units of the sd that generated it, saturated at four like
             // the kick's and centred at a normal's E[max(-z,0)] so the state has mean zero and the
             // multiplier does not move the vol LEVEL. `sess_sigma` carries this session's own
@@ -9678,7 +8724,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // and self-excites. The numerator is the realized return rather than the shock on
             // purpose: the spiral's amplification is part of what real volatility responds to, and
             // a shock-only driver loses the skew the downside excess is measured from.
-            let vr_u = (decline_in.max(0.0) / (sess_sigma).max(1e-12)).min(4.0) - 0.399;
+            let vr_u = ((news_j - ret_e).max(0.0) / (sess_sigma).max(1e-12)).min(4.0) - 0.399;
             // the ATTACK stage: at 0 the state receives the session's reading whole, which peaks
             // the response at lag 1; above 0 it receives a fast EWMA of it.
             if w.vol_resp_attack > 0.0 {
@@ -9698,19 +8744,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // depth 8.4 ran to 49% volatility and 70 crashes a century.
             vol_resp_s = (w.vol_resp_phi * vol_resp_s + vr_in).min(w.vol_resp_cap);
         }
-        // THE VOLATILITY RESPONSE REPRICED (see `vol_reprice_resp`): the discount's move on the
-        // state just updated, written the same session as the decline that raised it; the peak
-        // follows a write that lifts the price past it
-        let mut vr_move = 0.0f64;
-        if w.vol_reprice_resp > 0.0 {
-            let d_new = -w.vol_reprice_resp * w.vol_resp * vol_resp_s;
-            vr_move = d_new - vr_d;
-            vr_d = d_new;
-            eq_m.log_p += vr_move;
-            if eq_m.log_p > eq_m.peak {
-                eq_m.peak = eq_m.log_p;
-            }
-        }
         if lev_on {
             // THE CREDIT CYCLE: a damped oscillator in the stock (its velocity persists for a
             // quarter, its level swings over years — the record's NFCILEVERAGE shape), driven by
@@ -9722,7 +8755,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             borrow = (borrow + lev_vel - macro_k::LEV_PAYDOWN * eq_m.stress_idx * borrow).max(0.0);
             lev_slow += macro_k::LEV_SLOW_K * (borrow - lev_slow);
         }
-        if w.leverage > 0.0 && !w.one_vol_in && !sv_on {
+        if w.leverage > 0.0 {
             // SATURATED at four realized sds, and the cap is a priced trade, not a free guard:
             // uncapped, a jump day mints a 2.6x next-session multiplier and the kurtosis
             // ceiling flips on seed draws; capped, roughly a third of the graded correlation
@@ -9733,7 +8766,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // exactly the day real volatility responds to, and the external repricing bypasses
             // `ret_e` (it never passes through `step`). `news_j` is 0 whenever the channel is off,
             // so the pre-news leverage behaviour is untouched bit for bit.
-            let lev_sig = (decline_in.max(0.0) / s_pre).min(4.0) - 0.399;
+            let lev_sig = ((news_j - ret_e).max(0.0) / s_pre).min(4.0) - 0.399;
             // THE PERSISTENT KICK (`lev_persist`): the same signal through an EWMA whose weights
             // sum to 1, so the integrated log-multiplier per unit decline is what it is today and
             // only its SHAPE over the following sessions changes. At 0 this is `lev_sig` itself.
@@ -9808,76 +8841,6 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             let _ret_t = t_m.step(fair_tv, flow_t + noise_t);
         }
 
-        // THE ONE MARKET VOL's INPUTS (see `one_vol_in`): the kick, the vol response and the slow
-        // state read the session's total log price change, after its last write, standardized by
-        // the session's total conditional sd -- the kick's and the slow state's after the
-        // amplification (the conditional analogue of the kick's realized scale), the response's
-        // before it, as its own reading is; each still applies to the next session's draws
-        if w.one_vol_in {
-            let x = eq_m.log_p - markdown;
-            let r = x - ov_x_prev;
-            ov_x_prev = x;
-            let side = ov_sd_slow * ov_sd_slow + ov_sd_bust * ov_sd_bust;
-            let sd_post_d = ov_sd_pre * eq_m.last_amp;
-            let sd_total = (sd_post_d * sd_post_d + side).sqrt().max(1e-12);
-            let sd_total_pre = (ov_sd_pre * ov_sd_pre + side).sqrt().max(1e-12);
-            let decline = (-r).max(0.0);
-            if w.leverage > 0.0 {
-                let lev_sig = (decline / sd_total).min(4.0) - 0.399;
-                kick_s = w.lev_persist * kick_s + (1.0 - w.lev_persist) * lev_sig;
-            }
-            if w.vol_resp > 0.0 || w.jump_resp > 0.0 {
-                let vr_u = (decline / sd_total_pre).min(4.0) - 0.399;
-                if w.vol_resp_attack > 0.0 {
-                    vol_resp_a = w.vol_resp_attack * vol_resp_a + (1.0 - w.vol_resp_attack) * vr_u;
-                }
-                let vr_in = if w.vol_resp_attack > 0.0 {
-                    vol_resp_a
-                } else {
-                    vr_u
-                };
-                vol_resp_s = (w.vol_resp_phi * vol_resp_s + vr_in).min(w.vol_resp_cap);
-            }
-            if w.slow_share > 0.0 {
-                let z = (r / sd_total).clamp(-4.0, 4.0);
-                slow_g = w.slow_phi * slow_g - w.slow_lev * slow_k * z;
-            }
-        }
-        // THE SHARED MARKET VOL's update (see `shared_vol`): the session's draws its multiplier
-        // scales, as they reached the price, over their conditional sd, in both directions; it
-        // applies to the next session's draws
-        if sv_on {
-            let liq = eq_m.last_liq;
-            let shocks = (vp.noise + vp.jump) * liq + vp.slow + sv_bust_inno + vp.news_jump;
-            let sd_step = ov_sd_pre * liq;
-            let sd_total = (sd_step * sd_step
-                + sv_jump2 * liq * liq
-                + ov_sd_slow * ov_sd_slow
-                + ov_sd_bust * ov_sd_bust
-                + sv_news2)
-                .sqrt()
-                .max(1e-12);
-            let z = (shocks / sd_total).clamp(-4.0, 4.0);
-            let u = -w.shared_vol * z + w.shared_vol_size * (z.abs() - HALF_NORMAL_MEAN);
-            if sv2_on {
-                // the cap clips the fast state alone, so the slow one keeps its memory
-                let u2 = -w.shared_vol2 * z + w.shared_vol_size2 * (z.abs() - HALF_NORMAL_MEAN);
-                sv_s2 = w.shared_vol_phi2 * sv_s2 + sv_k2 * u2;
-                sv_s = (w.shared_vol_phi * sv_s + sv_k * u).min(w.shared_vol_cap + sv_c - sv_s2);
-            } else {
-                sv_s = (w.shared_vol_phi * sv_s + sv_k * u).min(w.shared_vol_cap + sv_c);
-            }
-        }
-        // the drawdown vol's gap (`World::dd_vol`), and under `dd_vol_mid` the scales the next
-        // session's read prices its draws on
-        if dd_on {
-            if dd_mid {
-                dd_u_pre = ov_sd_pre / sv_m;
-                dd_u_slow = ov_sd_slow / sv_m;
-                dd_u_bust = ov_sd_bust / sv_m;
-            }
-            dd_g = (dd_rho * dd_g - (eq_m.log_p - log_p_open)).max(0.0);
-        }
         // `-emitvolparts`: the session's sources and states, after its last write
         if vp_on && let Some(v) = tape.as_deref_mut().and_then(|t| t.vol.as_deref_mut()) {
             let x = eq_m.log_p - markdown;
@@ -9892,12 +8855,9 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     vp.slow,
                     vp.regime_drift,
                     bust_move,
-                    vol_move,
-                    vl_move,
                     cyc_move,
                     boom_move,
                     vp.flip_lift,
-                    vp.dd_comp,
                     eq_m.last_pull * eq_m.impact,
                     eq_m.last_carry,
                     flow(eq_flow),
@@ -9906,12 +8866,10 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     flow(vp.jump_comp),
                     flow(vp.down_shock),
                     flow(vp.overshoot),
-                    flow(vp.overshoot_base),
                     flow(vp.delev),
                     flow(vp.flip_reflect),
                     flow(vp.vol_feedback),
                     ret_e - eq_m.last_raw_c,
-                    vr_move,
                     -(markdown - v.last_md),
                     f64::NAN,
                     log_vol - vol_norm,
@@ -9919,30 +8877,26 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     vp.vol_resp,
                     vp.asym,
                     vp.regime,
-                    vp.disaster_vol,
                     vp.slow_state,
-                    vp.shared,
-                    vp.shared2,
                     eq_m.last_amp,
                     vp.sd_pre,
                     vp.sd_pre * eq_m.last_amp,
-                    vp.dd_gap,
                 ]);
             }
             v.last_x = x;
             v.last_md = markdown;
         }
-        px[i] = (eq_m.log_p - markdown).exp();
-        fv[i] = (log_vbase - markdown).exp();
+        px[i] = exp_det(eq_m.log_p - markdown);
+        fv[i] = exp_det(log_vbase - markdown);
         rt[i] = rate;
         lq[i] = eq_m.last_liq;
         bq[i] = bd_m.last_liq;
-        bp[i] = bd_m.log_p.exp();
+        bp[i] = exp_det(bd_m.log_p);
         if b10_on {
-            b10p[i] = b10_m.log_p.exp();
+            b10p[i] = exp_det(b10_m.log_p);
         }
         if t_on {
-            tpx[i] = t_m.log_p.exp();
+            tpx[i] = exp_det(t_m.log_p);
             ryv[i] = 100.0 * (y10 + tp_t - e10);
             eiv[i] = 100.0 * e10;
             rrv[i] = 100.0 * (rate - e1);
@@ -9950,7 +8904,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         ip[i] = press;
         // the price level: the pressure's drift, and the level's own noise on its own stream
         log_cpi += d_cpi;
-        cp[i] = log_cpi.exp();
+        cp[i] = exp_det(log_cpi);
         if ch_on {
             ch.px[i] = eq_m.log_p - markdown;
             ch.d[i] = sess_sigma * eq_m.last_liq;
@@ -9959,10 +8913,8 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // member reads it -- times the spiral's amplification. Without the channel's term a
             // world carrying its long-lag clustering in the channel gave the satellite none of it,
             // and the satellite's clustering-20 ratio left its band on every seed. The branch
-            // keeps a channel-off world bit-identical: sqrt(x * x) is not always x. The shared
-            // vol's multiplier scales the diffusive state as it scales the diffusion.
-            let vs = (log_vol - vol_norm).exp();
-            let vs = if sv_on { vs * sv_m } else { vs };
+            // keeps a channel-off world bit-identical: sqrt(x * x) is not always x.
+            let vs = exp_det(log_vol - vol_norm);
             let st = if w.slow_share > 0.0 {
                 (vs * mix * vs * mix + slow_var).sqrt()
             } else {
@@ -9972,25 +8924,12 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             ch.scale_var[i] = eq_m.scale_var;
             // the bust swing's same-session move is a repricing the derived channels must see,
             // like the news jump; guarded so the off state stays bit-identical
-            ch.jump[i] = if w.bust_amp > 0.0
-                || w.cycle_sd > 0.0
-                || boom_prob > 0.0
-                || w.vol_reprice > 0.0
-                || w.vol_reprice_resp > 0.0
-                || w.vol_reprice_level > 0.0
-            {
-                jump_now * eq_m.last_liq - news_j
-                    + bust_move
-                    + cyc_move
-                    + boom_move
-                    + vol_move
-                    + vr_move
-                    + vl_move
+            ch.jump[i] = if w.bust_amp > 0.0 || w.cycle_sd > 0.0 || boom_prob > 0.0 {
+                jump_now * eq_m.last_liq - news_j + bust_move + cyc_move + boom_move
             } else {
                 jump_now * eq_m.last_liq - news_j
             };
-            let vb = (log_vol - vol_norm).exp() * vol_resp_m * regime_m * mix;
-            let vb = if sv_on { vb * sv_m } else { vb };
+            let vb = exp_det(log_vol - vol_norm) * vol_resp_m * regime_m * mix;
             ch.vol_state[i] = (vb * vb + slow_var).sqrt();
             ch.amp[i] = eq_m.last_liq * w.depth / 12.0;
         }
@@ -10005,8 +8944,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // PLUS the slow channel's variance: a member that misses a real vol component reads
             // CALM while returns are turbulent, which drops the variance risk premium out of its
             // band — measured, two macro rows fail without it.
-            let vb = (log_vol - vol_norm).exp() * vol_resp_m * regime_m * mix;
-            let vb = if sv_on { vb * sv_m } else { vb };
+            let vb = exp_det(log_vol - vol_norm) * vol_resp_m * regime_m * mix;
             mc.vol_state[i] = (vb * vb + slow_var).sqrt();
             mc.amp[i] = eq_m.last_liq * w.depth / 12.0;
             mc.acc[i] = acc;
@@ -10032,8 +8970,8 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             _ => crowd_e - 1.0,
         };
         perf_t = 0.99 * perf_t + 0.01 * (crowd_pos * ret_e) * 100.0;
-        let e_t = 50.0f64.min(w.beta * perf_t).exp();
-        let e_v = 50.0f64.min(w.beta * perf_v).exp();
+        let e_t = exp_det(50.0f64.min(w.beta * perf_t));
+        let e_v = exp_det(50.0f64.min(w.beta * perf_v));
         let target = e_t / (e_t + e_v);
         // redemptions fast, subscriptions slow
         let k_now = k_adapt * (1.0 + w.panic * eq_m.stress_idx);
@@ -10380,11 +9318,27 @@ fn crash_points(series: &[f64], cpi: &[f64], eps: &[Episode]) -> Vec<[f64; 2]> {
         .collect()
 }
 
+/// Inflation seen (yoy, pp) closer than this is one rate: a constant rate carries ~1e-13 of noise.
+pub const SEEN_TOL: f64 = 1e-9;
+
+/// Whether `xs`' finite values span no more than `SEEN_TOL` (none at all included): an
+/// inflation that never moves.
+fn seen_is_flat(xs: impl IntoIterator<Item = f64>) -> bool {
+    let (lo, hi) = xs
+        .into_iter()
+        .filter(|x| x.is_finite())
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| {
+            (lo.min(x), hi.max(x))
+        });
+    hi - lo <= SEEN_TOL
+}
+
 /// THE CRASH FIT (`BOND_CRASH_ROWS`): Theil-Sen of the moves on the inflation seen -- the slope
-/// `med` of the pairwise slopes over every pair (i < j in `pts`' order) with distinct inflation,
-/// the intercept `med` of the residuals -- read as the response at `CRASH_SEEN_REF` and the slope
-/// per point of inflation; NaN under `CRASH_MIN_EPISODES` points or without a distinct pair.
-/// A median over a multiset, so the pair order cannot move it.
+/// `med` of the pairwise slopes over every pair (i < j in `pts`' order) whose inflation is at
+/// least `CRASH_SEEN_RES` apart (a pair the record could resolve), the intercept `med` of the
+/// residuals -- read as the response at `CRASH_SEEN_REF` and the slope per point of inflation;
+/// NaN under `CRASH_MIN_EPISODES` points or without such a pair. A median over a multiset, so
+/// the pair order cannot move it.
 #[must_use]
 pub fn crash_fit(pts: &[[f64; 2]]) -> [f64; 2] {
     if pts.len() < CRASH_MIN_EPISODES {
@@ -10393,7 +9347,7 @@ pub fn crash_fit(pts: &[[f64; 2]]) -> [f64; 2] {
     let mut slopes = Vec::with_capacity(pts.len() * (pts.len() - 1) / 2);
     for (i, a) in pts.iter().enumerate() {
         for b in &pts[i + 1..] {
-            if b[0] != a[0] {
+            if (b[0] - a[0]).abs() >= CRASH_SEEN_RES {
                 slopes.push((b[1] - a[1]) / (b[0] - a[0]));
             }
         }
@@ -13693,10 +12647,20 @@ pub fn cpi_readings(dlog: &[f64]) -> [f64; 4] {
 }
 
 /// `CPI_PERSISTENCE_ROW` on monthly log changes of a price level: the year-over-year rate's
-/// correlation with itself twelve months on.
+/// correlation with itself twelve months on; NaN where either side of the pairing (the rate's
+/// months without its last twelve, or without its first twelve) never moves by more than
+/// `SEEN_TOL`, since a constant's correlation is undefined.
 #[must_use]
 pub fn cpi_persistence(dlog: &[f64]) -> f64 {
-    lag_corr(&yoy_pct(dlog), MONTHS_PER_YEAR)
+    let yoy = yoy_pct(dlog);
+    let lag = MONTHS_PER_YEAR;
+    if yoy.len() > lag
+        && (seen_is_flat(yoy[..yoy.len() - lag].iter().copied())
+            || seen_is_flat(yoy[lag..].iter().copied()))
+    {
+        return f64::NAN;
+    }
+    lag_corr(&yoy, lag)
 }
 
 /// `CPI_REPORTED_ROWS` on monthly log changes of a price level.
@@ -13976,9 +12940,10 @@ pub fn real_rate_resamples(
 /// `STOCK_BOND_BAND_ROWS` on the equity's and the ten-year leg's monthly log returns and the
 /// year-over-year inflation the market had seen at each month's start, in percent: the
 /// correlation over every month, the correlation of the two standardised returns' product with
-/// the inflation seen (zero where the inflation never moves), and the correlation of the two
-/// series' overlapping `STOCK_BOND_HORIZONS`-month sums less the monthly one; NaN under two
-/// years or when either return has no spread, a horizon's under two years of its own windows.
+/// the inflation seen (zero where it never moves by more than `SEEN_TOL`), and the correlation
+/// of the two series' overlapping `STOCK_BOND_HORIZONS`-month sums less the monthly one; NaN
+/// under two years or when either return has no spread, a horizon's under two years of its own
+/// windows.
 #[must_use]
 pub fn stock_bond_readings(eq: &[f64], b: &[f64], seen: &[f64]) -> [f64; 4] {
     let n = eq.len();
@@ -13992,8 +12957,16 @@ pub fn stock_bond_readings(eq: &[f64], b: &[f64], seen: &[f64]) -> [f64; 4] {
     let z: Vec<f64> = (0..n)
         .map(|i| (eq[i] - me) / se * ((b[i] - mb) / sb))
         .collect();
+    // flat (`seen_is_flat`) over the months `finite_corr` pairs: a rate that never moves reads
+    // rounding noise, which `finite_corr`'s own zero-spread test would correlate
+    let flat = seen_is_flat(
+        seen.iter()
+            .zip(&z)
+            .filter(|(_, zi)| zi.is_finite())
+            .map(|(s, _)| *s),
+    );
     let by_seen = if se > 0.0 && sb > 0.0 {
-        finite_corr(seen, &z)
+        if flat { 0.0 } else { finite_corr(seen, &z) }
     } else {
         f64::NAN
     };
@@ -14071,8 +13044,11 @@ pub fn stock_bond_resamples(
 
 /// `CPI_NEWS_ROW` on monthly log changes of a price level: from the thirteenth month on, each
 /// change is placed by the year-over-year rate ending the month before; the sd of the changes
-/// at or above the window's median rate over the two sides' sds summed, in (0, 1); NaN where
-/// both sides are flat.
+/// on the upper side of the window's median rate over the two sides' sds summed, in (0, 1). The
+/// months within `SEEN_TOL` of the median are one rate and go together to the side that leaves
+/// the halves nearest equal, the upper side on a tie -- `>=` the median on a rate without ties, the
+/// lower side for a floor the rate sits on most months. NaN where both sides are flat or a side
+/// holds under two months (a rate that never moves by more than `SEEN_TOL`).
 #[must_use]
 pub fn cpi_news_reading(dlog: &[f64]) -> f64 {
     if dlog.len() < 2 * MONTHS_PER_YEAR {
@@ -14083,10 +13059,15 @@ pub fn cpi_news_reading(dlog: &[f64]) -> f64 {
     let seen = &yoy[..dlog.len() - MONTHS_PER_YEAR];
     let x = &dlog[MONTHS_PER_YEAR..];
     let m = med(seen);
-    let side = |above: bool| -> Vec<f64> {
+    let above = seen.iter().filter(|s| **s - m > SEEN_TOL).count();
+    let below = seen.iter().filter(|s| m - **s > SEEN_TOL).count();
+    let at = seen.len() - above - below;
+    let at_upper = (above + at).abs_diff(below) <= above.abs_diff(below + at);
+    let upper = |s: f64| s - m > SEEN_TOL || ((s - m).abs() <= SEEN_TOL && at_upper);
+    let side = |want: bool| -> Vec<f64> {
         x.iter()
             .zip(seen)
-            .filter(|(_, s)| (**s >= m) == above)
+            .filter(|(_, s)| upper(**s) == want)
             .map(|(v, _)| *v)
             .collect()
     };
@@ -19964,12 +18945,12 @@ const RECORD_BANDS_SP500: [RecordBand; 49] = [
         name: "cpi news by inflation seen",
         record: 0.627660,
         q: [
-            0.459739, 0.526115, 0.553627, 0.567821, 0.577041, 0.584076, 0.589961, 0.595174,
-            0.600017, 0.604213, 0.608267, 0.611977, 0.615652, 0.619384, 0.623240, 0.627056,
-            0.631100, 0.635382, 0.640139, 0.645942, 0.654185, 0.668159, 0.701658,
+            0.459739, 0.526073, 0.553627, 0.567810, 0.577015, 0.584085, 0.589996, 0.595132,
+            0.600027, 0.604223, 0.608267, 0.611988, 0.615628, 0.619406, 0.623245, 0.627050,
+            0.631097, 0.635411, 0.640117, 0.645969, 0.654192, 0.668159, 0.701658,
         ],
         joint_c: 0.490025,
-        joint: (0.526101, 0.668159),
+        joint: (0.526064, 0.668159),
     },
     RecordBand {
         name: "bond stress share %",
@@ -20508,12 +19489,12 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 49] = [
         name: "cpi news by inflation seen",
         record: 0.594286,
         q: [
-            0.343390, 0.464679, 0.516804, 0.537050, 0.549232, 0.558162, 0.565420, 0.571368,
-            0.576680, 0.581478, 0.585872, 0.589948, 0.593773, 0.597542, 0.601154, 0.604941,
-            0.608635, 0.612508, 0.616757, 0.621698, 0.629076, 0.640676, 0.681304,
+            0.344517, 0.464881, 0.516889, 0.537208, 0.549389, 0.558201, 0.565458, 0.571463,
+            0.576770, 0.581524, 0.585897, 0.589968, 0.593835, 0.597577, 0.601199, 0.605031,
+            0.608665, 0.612535, 0.616866, 0.621757, 0.629113, 0.640698, 0.681304,
         ],
         joint_c: 0.490025,
-        joint: (0.464482, 0.640676),
+        joint: (0.464874, 0.640698),
     },
     RecordBand {
         name: "bond stress share %",
@@ -29449,7 +28430,7 @@ fn sector_columns(p: &Path) -> Vec<String> {
 fn basket_aggregate(names: &[Vec<f64>]) -> Vec<f64> {
     (0..names[0].len())
         .map(|i| {
-            (names.iter().map(|lp| (lp[i] - lp[0]).exp()).sum::<f64>() / names.len() as f64).ln()
+            ln_det(names.iter().map(|lp| exp_det(lp[i] - lp[0])).sum::<f64>() / names.len() as f64)
         })
         .collect()
 }
@@ -29478,7 +28459,7 @@ pub fn emit_table(p: &Path) -> Vec<EmitColumn<'_>> {
     fn logged<'a>(name: &str, v: &[f64]) -> EmitColumn<'a> {
         EmitColumn {
             name: name.to_string(),
-            values: Cow::Owned(v.iter().map(|x| x.ln()).collect()),
+            values: Cow::Owned(v.iter().map(|x| ln_det(*x)).collect()),
         }
     }
     let base: [&[f64]; 8] = [
@@ -29588,63 +28569,7 @@ pub fn emit_column_known(name: &str) -> bool {
         || indexed("logSector")
 }
 
-/// THE SPREAD'S TERMS (PLAN row 64 diagnostic, Rust only, `-emitspreadparts`): path `k`'s macro
-/// spread as the five terms `derive_macro` summed, `spreadHead` (base, stress and slow),
-/// `spreadBond`, `spreadDd`, `spreadTrend` and `spreadNoise`, a column each beside the floored sum
-/// `macroSpread`, on the emit's dates; the path is simulated again on its tape. Refuses when the
-/// panel did not run or the terms' floored sum is not the path's own spread to the bit.
-pub fn write_spread_parts(file: &str, spec: EmitSpec<'_>, k: usize) {
-    let w = spec.world;
-    let mut tape = BondTape::new(spec.years * DAYS_PER_YEAR + BURN_IN);
-    tape.spread.keep_terms = true;
-    let p = simulate_at_taped(
-        w,
-        spec.years,
-        spec.seed.wrapping_add(k as u64 * 7919),
-        world_level(w),
-        Some(&mut tape),
-    );
-    let Some(panel) = p.macro_panel.as_ref() else {
-        cli_die("-emitspreadparts wants the macro panel");
-    };
-    let spread = panel.member(0);
-    let sp = &tape.spread;
-    let n = spread.len();
-    if sp.head.len() != n {
-        cli_die(&format!(
-            "-emitspreadparts: {} recorded terms against {n} sessions",
-            sp.head.len()
-        ));
-    }
-    let off = (0..n)
-        .filter(|&j| {
-            (sp.head[j] + sp.bond[j] + sp.dd[j] + sp.trend[j] + sp.noise[j])
-                .max(macro_k::SPREAD_FLOOR)
-                .to_bits()
-                != spread[j].to_bits()
-        })
-        .count();
-    if off > 0 {
-        cli_die(&format!(
-            "-emitspreadparts: the terms' floored sum differs from macroSpread on {off} of {n} sessions"
-        ));
-    }
-    let col = |name: &str, v: &[f64]| EmitColumn {
-        name: name.to_string(),
-        values: Cow::Owned(v.to_vec()),
-    };
-    let table = [
-        col("spreadHead", &sp.head),
-        col("spreadBond", &sp.bond),
-        col("spreadDd", &sp.dd),
-        col("spreadTrend", &sp.trend),
-        col("spreadNoise", &sp.noise),
-        col("macroSpread", spread),
-    ];
-    write_emit_tsv(file, &table, &session_dates(n, spec.start_ymd));
-}
-
-/// THE PRICE'S SOURCES AND THE VOL STATE (PLAN row 64 diagnostic, Rust only, `-emitvolparts`):
+/// THE PRICE'S SOURCES AND THE VOL STATE (PLAN row 64 diagnostic, `-emitvolparts`):
 /// path `k` simulated again with its record on, written as `VOL_PART_COLUMNS` on the emit's dates
 /// in shortest round-trip decimals, so a reader re-summing the parts in column order reproduces
 /// the closure. Refuses unless every row's `logPrice` is the path's own price to the bit; reports
@@ -29674,7 +28599,7 @@ pub fn write_vol_parts(file: &str, spec: EmitSpec<'_>, k: usize) {
     let off = rows
         .iter()
         .zip(&p.price)
-        .filter(|(r, px)| r[0].exp().to_bits() != px.to_bits())
+        .filter(|(r, px)| exp_det(r[0]).to_bits() != px.to_bits())
         .count();
     if off > 0 {
         cli_die(&format!(
@@ -31495,7 +30420,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut emit = String::new();
     let mut emit_path = 0usize;
     let mut emit_all = false;
-    let mut emit_spread_parts = false;
     let mut emit_vol_parts = false;
     let mut emit_from = 0usize;
     let mut emit_start = String::new();
@@ -31683,36 +30607,15 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut regime_drift = dw.regime_drift;
     let mut drift_sd = dw.drift_sd;
     let mut boom_fade = dw.boom_fade;
-    let mut boom_fade_vol = dw.boom_fade_vol;
-    let mut overshoot_base = dw.overshoot_base;
-    let mut overshoot_base_rate = dw.overshoot_base_rate;
-    let mut disaster_vol_rise = dw.disaster_vol_rise;
-    let mut disaster_vol_half = dw.disaster_vol_half;
-    let mut disaster_feed = dw.disaster_feed;
     let mut delev_rate = dw.delev_rate;
     let mut delev_from = dw.delev_from;
     let mut delev_size = dw.delev_size;
     let mut delev_len = dw.delev_len;
     let mut spread_dd = dw.spread_dd;
-    let mut spread_trend = dw.spread_trend;
-    let mut spread_noise = dw.spread_noise;
     let mut disaster_anticipate = dw.disaster_anticipate;
     let mut disaster_overshoot = dw.disaster_overshoot;
     let mut vol_pull = dw.vol_pull;
     let mut vol_pull_step = dw.vol_pull_step;
-    let mut one_vol_in = dw.one_vol_in;
-    let mut one_vol_out = dw.one_vol_out;
-    let mut shared_vol = dw.shared_vol;
-    let mut shared_vol_size = dw.shared_vol_size;
-    let mut shared_vol_phi = dw.shared_vol_phi;
-    let mut shared_vol_cap = dw.shared_vol_cap;
-    let mut shared_vol_centre = dw.shared_vol_centre;
-    let mut shared_vol2 = dw.shared_vol2;
-    let mut shared_vol_size2 = dw.shared_vol_size2;
-    let mut shared_vol_phi2 = dw.shared_vol_phi2;
-    let mut dd_vol = dw.dd_vol;
-    let mut dd_vol_half = dw.dd_vol_half;
-    let mut dd_vol_mid = dw.dd_vol_mid;
     let mut disaster_size = dw.disaster_size;
     let mut disaster_len = dw.disaster_len;
     let mut disaster_recover = dw.disaster_recover;
@@ -31821,11 +30724,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut yield_lag = dw.yield_lag;
     let mut exp_anchor = dw.exp_anchor;
     let mut vol_feedback = dw.vol_feedback;
-    let mut vol_reprice = dw.vol_reprice;
-    let mut vol_reprice_resp = dw.vol_reprice_resp;
-    let mut vol_reprice_v = dw.vol_reprice_v;
-    let mut vol_reprice_level = dw.vol_reprice_level;
-    let mut vol_reprice_disp = dw.vol_reprice_disp;
     let mut easing = dw.easing;
     let mut unwind = dw.unwind;
     let mut floorhold = dw.floorhold;
@@ -31866,7 +30764,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-emit" => emit = req_arg(&mut it, "-emit").clone(),
             "-emitpath" => emit_path = req_usize(&mut it, "-emitpath"),
             "-emitall" => emit_all = true,
-            "-emitspreadparts" => emit_spread_parts = true,
             "-emitvolparts" => emit_vol_parts = true,
             "-emitfrom" => emit_from = req_usize(&mut it, "-emitfrom"),
             "-emitstart" => emit_start = req_arg(&mut it, "-emitstart").clone(),
@@ -31939,21 +30836,11 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-regimedrift" => regime_drift = req_f64(&mut it, "-regimedrift"),
             "-driftsd" => drift_sd = req_f64(&mut it, "-driftsd"),
             "-boomfade" => boom_fade = req_f64(&mut it, "-boomfade"),
-            "-boomfadevol" => boom_fade_vol = req_f64(&mut it, "-boomfadevol"),
-            "-overshootbase" => overshoot_base = req_f64(&mut it, "-overshootbase"),
-            "-overshootbaserate" => {
-                overshoot_base_rate = req_f64(&mut it, "-overshootbaserate");
-            }
-            "-disastervolrise" => disaster_vol_rise = req_f64(&mut it, "-disastervolrise"),
-            "-disastervolhalf" => disaster_vol_half = req_f64(&mut it, "-disastervolhalf"),
-            "-disasterfeed" => disaster_feed = req_f64(&mut it, "-disasterfeed"),
             "-delevrate" => delev_rate = req_f64(&mut it, "-delevrate"),
             "-delevfrom" => delev_from = req_f64(&mut it, "-delevfrom"),
             "-delevsize" => delev_size = req_f64(&mut it, "-delevsize"),
             "-delevlen" => delev_len = req_f64(&mut it, "-delevlen"),
             "-spreaddd" => spread_dd = req_f64(&mut it, "-spreaddd"),
-            "-spreadtrend" => spread_trend = req_f64(&mut it, "-spreadtrend"),
-            "-spreadnoise" => spread_noise = req_f64(&mut it, "-spreadnoise"),
             "-disasteranticipate" => {
                 disaster_anticipate = req_f64(&mut it, "-disasteranticipate");
             }
@@ -31967,27 +30854,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
                     cli_die(&format!("-volpullstep {x} is 0 (off) or 1 (on)"));
                 }
                 vol_pull_step = x == 1.0;
-            }
-            "-onevolin" => one_vol_in = true,
-            "-onevolout" => one_vol_out = true,
-            "-sharedvol" => shared_vol = req_f64(&mut it, "-sharedvol"),
-            "-sharedvolsize" => shared_vol_size = req_f64(&mut it, "-sharedvolsize"),
-            "-sharedvolphi" => shared_vol_phi = req_f64(&mut it, "-sharedvolphi"),
-            "-sharedvol2" => shared_vol2 = req_f64(&mut it, "-sharedvol2"),
-            "-sharedvolsize2" => shared_vol_size2 = req_f64(&mut it, "-sharedvolsize2"),
-            "-sharedvolphi2" => shared_vol_phi2 = req_f64(&mut it, "-sharedvolphi2"),
-            "-sharedvolcap" => shared_vol_cap = req_f64(&mut it, "-sharedvolcap"),
-            "-sharedvolcentre" => {
-                shared_vol_centre = Some(req_f64(&mut it, "-sharedvolcentre"));
-            }
-            "-ddvol" => dd_vol = req_f64(&mut it, "-ddvol"),
-            "-ddvolhalf" => dd_vol_half = req_f64(&mut it, "-ddvolhalf"),
-            "-ddvolmid" => {
-                let x = req_f64(&mut it, "-ddvolmid");
-                if x != 0.0 && x != 1.0 {
-                    cli_die(&format!("-ddvolmid {x} is 0 (off) or 1 (on)"));
-                }
-                dd_vol_mid = x == 1.0;
             }
             "-disastersize" => disaster_size = req_f64(&mut it, "-disastersize"),
             "-disasterlen" => disaster_len = req_f64(&mut it, "-disasterlen"),
@@ -32112,11 +30978,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-yieldlag" => yield_lag = req_f64(&mut it, "-yieldlag"),
             "-expanchor" => exp_anchor = req_f64(&mut it, "-expanchor"),
             "-volfeedback" => vol_feedback = req_f64(&mut it, "-volfeedback"),
-            "-volreprice" => vol_reprice = req_f64(&mut it, "-volreprice"),
-            "-volrepriceresp" => vol_reprice_resp = req_f64(&mut it, "-volrepriceresp"),
-            "-volrepricev" => vol_reprice_v = req_f64(&mut it, "-volrepricev"),
-            "-volrepricelevel" => vol_reprice_level = req_f64(&mut it, "-volrepricelevel"),
-            "-volrepricedisp" => vol_reprice_disp = req_f64(&mut it, "-volrepricedisp"),
             "-easing" => easing = req_f64(&mut it, "-easing"),
             "-unwind" => unwind = req_f64(&mut it, "-unwind"),
             "-floorhold" => floorhold = req_f64(&mut it, "-floorhold"),
@@ -32152,9 +31013,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     // different range is how a chunked batch ends up with every chunk holding path 0.
     if emit_from > 0 && !emit_all {
         cli_die("-emitfrom applies to -emitall; use -emitpath for one path");
-    }
-    if emit_spread_parts && emit.is_empty() {
-        cli_die("-emitspreadparts applies to -emit");
     }
     if emit_vol_parts && emit.is_empty() {
         cli_die("-emitvolparts applies to -emit");
@@ -32300,11 +31158,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             cli_die("-expanchor is a share from 0 to 1");
         }
         non_neg("-volfeedback", vol_feedback);
-        non_neg("-volreprice", vol_reprice);
-        non_neg("-volrepriceresp", vol_reprice_resp);
-        non_neg("-volrepricev", vol_reprice_v);
-        non_neg("-volrepricelevel", vol_reprice_level);
-        non_neg("-volrepricedisp", vol_reprice_disp);
         if yield_beta > 0.0 && term_vol <= 0.0 {
             cli_die("-yieldbeta needs the ten-year yield: -termvol above 0");
         }
@@ -32317,72 +31170,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         non_neg("-newslev", news_lev);
         if let Some(why) = news_budget_refusal(news_rate, news_size) {
             cli_die(&why);
-        }
-        if one_vol_in && vol_reprice_resp > 0.0 {
-            cli_die(
-                "-onevolin moves the vol response's update to the session's end, after -volrepriceresp reads it; give one",
-            );
-        }
-        non_neg("-sharedvol", shared_vol);
-        non_neg("-sharedvolsize", shared_vol_size);
-        non_neg("-sharedvolcap", shared_vol_cap);
-        if let Some(c) = shared_vol_centre
-            && !c.is_finite()
-        {
-            cli_die(&format!("-sharedvolcentre {c} is not a number"));
-        }
-        if !(0.0..1.0).contains(&shared_vol_phi) {
-            cli_die(&format!(
-                "-sharedvolphi {shared_vol_phi} is a persistence in [0, 1)"
-            ));
-        }
-        non_neg("-sharedvol2", shared_vol2);
-        non_neg("-sharedvolsize2", shared_vol_size2);
-        if !(0.0..1.0).contains(&shared_vol_phi2) {
-            cli_die(&format!(
-                "-sharedvolphi2 {shared_vol_phi2} is a persistence in [0, 1)"
-            ));
-        }
-        non_neg("-ddvol", dd_vol);
-        if !(dd_vol_half.is_finite() && dd_vol_half > 0.0) {
-            cli_die(&format!(
-                "-ddvolhalf {dd_vol_half} is a half-life in sessions, above 0"
-            ));
-        }
-        if dd_vol_mid && dd_vol <= 0.0 {
-            cli_die("-ddvolmid reads the drawdown vol at mid-session: it needs -ddvol on");
-        }
-        if (shared_vol2 > 0.0 || shared_vol_size2 > 0.0)
-            && !(shared_vol > 0.0 || shared_vol_size > 0.0 || dd_vol > 0.0)
-        {
-            cli_die(
-                "-sharedvol2 is the shared vol's slow component: it needs -sharedvol or -ddvol on",
-            );
-        }
-        if shared_vol > 0.0 || shared_vol_size > 0.0 || dd_vol > 0.0 {
-            let rival = [
-                (one_vol_in, "-onevolin"),
-                (one_vol_out, "-onevolout"),
-                (vol_reprice_resp > 0.0, "-volrepriceresp"),
-                (noise_asym > 0.0, "-noiseasym"),
-                (jump_resp > 0.0, "-jumpresp"),
-            ];
-            if let Some((_, f)) = rival.iter().find(|(on, _)| *on) {
-                cli_die(&format!(
-                    "-sharedvol replaces the market's vol states, and {f} is another state on the same returns; give one"
-                ));
-            }
-        }
-        if vol_reprice_resp > 0.0 || vol_reprice > 0.0 || vol_reprice_level > 0.0 {
-            let a = news_share(news_rate, news_size);
-            let b_r = vol_reprice_share(vol_reprice_resp, vol_resp, vol_resp_attack, vol_reprice_v);
-            let b_x = vol_reprice_x_share(vol_reprice, vol_of_vol, vol_persist);
-            let b_l = vol_reprice_level_share(vol_reprice_level, vol_of_vol, vol_persist);
-            if repricing_budget_used(a, vol_reprice_disp, b_r, b_x, b_l) >= 1.0 {
-                cli_die(&format!(
-                    "-volreprice {vol_reprice} -volrepriceresp {vol_reprice_resp} -volrepricelevel {vol_reprice_level} -volrepricedisp {vol_reprice_disp} leave no diffusion to displace: the shares -volreprice {b_x:.4}, -volrepriceresp {b_r:.4}, -volrepricelevel {b_l:.4} (each x {vol_reprice_disp}) and the news channel's {a:.4} reach the whole budget"
-                ));
-            }
         }
         non_neg("-newsbond", news_bond);
         if !(0.0..1.0).contains(&news_bond_skip) {
@@ -32550,49 +31337,8 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         if boom_fade <= 0.0 {
             cli_die(&format!("-boomfade {boom_fade} must be above 0"));
         }
-        if boom_fade_vol < 0.0 {
-            cli_die(&format!("-boomfadevol {boom_fade_vol} must be at least 0"));
-        }
-        if boom_fade_vol > 0.0 && boom_rate <= 0.0 {
-            cli_die("-boomfadevol paces a boom's fade, and the boom is off (-boomrate 0)");
-        }
-        if !(0.0..=1.0).contains(&overshoot_base) {
-            cli_die(&format!(
-                "-overshootbase {overshoot_base} is a share of the step in [0, 1]"
-            ));
-        }
-        if !(0.0..=1.0).contains(&overshoot_base_rate) {
-            cli_die(&format!(
-                "-overshootbaserate {overshoot_base_rate} is a rate per session in (0, 1]; 0 reads -overshootrate"
-            ));
-        }
-        non_neg("-disastervolrise", disaster_vol_rise);
-        non_neg("-disasterfeed", disaster_feed);
-        if !(disaster_vol_half.is_finite() && disaster_vol_half > 0.0) {
-            cli_die(&format!(
-                "-disastervolhalf {disaster_vol_half} is a half-life in sessions, above 0"
-            ));
-        }
-        if (disaster_vol_rise > 0.0 || disaster_feed > 0.0) && disaster_rate <= 0.0 {
-            cli_die(
-                "-disastervolrise and -disasterfeed read the disaster's fall, and the disaster is off (-disasterrate 0)",
-            );
-        }
-        if disaster_feed > 0.0
-            && (one_vol_in || shared_vol > 0.0 || shared_vol_size > 0.0 || dd_vol > 0.0)
-        {
-            cli_die(
-                "-disasterfeed feeds the market's own vol states, which -onevolin and -sharedvol replace; give one",
-            );
-        }
         if spread_dd < 0.0 {
             cli_die(&format!("-spreaddd {spread_dd} must be at least 0"));
-        }
-        if spread_trend < 0.0 {
-            cli_die(&format!("-spreadtrend {spread_trend} must be at least 0"));
-        }
-        if spread_noise <= 0.0 {
-            cli_die(&format!("-spreadnoise {spread_noise} must be positive"));
         }
         if !(0.0..=1.0).contains(&disaster_overshoot) {
             cli_die(&format!(
@@ -32737,36 +31483,15 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         regime_drift,
         drift_sd,
         boom_fade,
-        boom_fade_vol,
-        overshoot_base,
-        overshoot_base_rate,
-        disaster_vol_rise,
-        disaster_vol_half,
-        disaster_feed,
         delev_rate,
         delev_from,
         delev_size,
         delev_len,
         spread_dd,
-        spread_trend,
-        spread_noise,
         disaster_anticipate,
         disaster_overshoot,
         vol_pull,
         vol_pull_step,
-        one_vol_in,
-        one_vol_out,
-        shared_vol,
-        shared_vol_size,
-        shared_vol_phi,
-        shared_vol_cap,
-        shared_vol_centre,
-        shared_vol2,
-        shared_vol_size2,
-        shared_vol_phi2,
-        dd_vol,
-        dd_vol_half,
-        dd_vol_mid,
         belief_share,
         belief_years,
         cap_years,
@@ -32862,11 +31587,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         yield_lag,
         exp_anchor,
         vol_feedback,
-        vol_reprice,
-        vol_reprice_resp,
-        vol_reprice_v,
-        vol_reprice_level,
-        vol_reprice_disp,
         easing,
         unwind,
         floorhold,
@@ -32917,9 +31637,9 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             let p = simulate(&w, years, seed + k as u64 * 7919);
             let mut tsv = String::from("logPrice\tlogSat\n");
             for i in 0..p.price.len() {
-                tsv.push_str(&ef(p.price[i].ln()));
+                tsv.push_str(&ef(ln_det(p.price[i])));
                 tsv.push('\t');
-                tsv.push_str(&ef(p.sat[i].ln()));
+                tsv.push_str(&ef(ln_det(p.sat[i])));
                 tsv.push('\n');
             }
             write_or_die(&format!("{joint_emit}-{k:03}.tsv"), &tsv);
@@ -32941,7 +31661,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             }
             tsv.push('\n');
             for i in 0..p.price.len() {
-                tsv.push_str(&ef(p.price[i].ln()));
+                tsv.push_str(&ef(ln_det(p.price[i])));
                 tsv.push('\t');
                 tsv.push_str(&ef(p.log_hi[i]));
                 tsv.push('\t');
@@ -33189,15 +31909,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             write_emitted(anchors, &emit, &p, emit_path, spec, &verdict);
             vec![emit.clone()]
         };
-        // the spread's terms beside each written path (PLAN row 64 diagnostic)
-        if emit_spread_parts {
-            for (i, f) in written.iter().enumerate() {
-                let k = if emit_all { emit_from + i } else { emit_path };
-                let out = format!("{}-spread.tsv", f.strip_suffix(".tsv").unwrap_or(f));
-                write_spread_parts(&out, spec, k);
-                eprintln!("wrote the spread's terms of path {k} to {out}");
-            }
-        }
         // the price's sources and the vol state beside each written path (PLAN row 64 diagnostic)
         if emit_vol_parts {
             for (i, f) in written.iter().enumerate() {
@@ -33850,206 +32561,6 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         exit_on_required(&bad, &gate_req);
     }
     None
-}
-
-/// THE BOOM'S PACED FADE (`World::boom_fade_vol`, a probe): the base fade to the bit at rest or
-/// off, faster as the vol runs hotter, and a boom world's paths move only when it is on.
-#[cfg(test)]
-mod boom_fade_vol_tests {
-    use super::*;
-
-    #[test]
-    fn the_fade_is_the_bases_at_rest_and_faster_while_hot() {
-        let f = BOOM_FADE;
-        assert_eq!(boom_fade_by_vol(f, 10.0, 0.0).to_bits(), f.to_bits());
-        assert_eq!(boom_fade_by_vol(f, 0.0, 1.5).to_bits(), f.to_bits());
-        let mut last = f;
-        for hot in [0.1, 0.5, 1.0, 2.0] {
-            let x = boom_fade_by_vol(f, 10.0, hot);
-            assert!((x - f.powf(1.0 + 10.0 * hot)).abs() < 1e-12, "{hot}");
-            assert!(x < last, "faster as the vol runs hotter");
-            last = x;
-        }
-    }
-
-    /// THE FAST SCALE WITHOUT THE RELIEF: equal to the relieved one to the bit while no swing is
-    /// armed; once one is, the relieved `hot` reads the vol divided away and the paced fade still
-    /// sees it, so K > 0 speeds the fade through the swing's own unwind.
-    #[test]
-    fn the_paced_fade_sees_through_the_swings_relief() {
-        let mut m = Market::new(K_VALUE_BOND, 1.0, 1.0);
-        m.scale_mu = 0.015;
-        let mut rng = NumPyRng::new(5);
-        for _ in 0..600 {
-            m.step(m.log_p, 0.01 * rng.randn());
-            assert_eq!(m.scale_var_fast.to_bits(), m.scale_var_amp.to_bits());
-        }
-        assert_eq!(m.hot_raw().to_bits(), m.hot().to_bits());
-        // a swing armed through a volatile stretch: the relief divides the returns the amplifier's
-        // scale reads by 3
-        m.stress_div = 3.0;
-        for _ in 0..120 {
-            m.step(m.log_p, 0.05 * rng.randn());
-        }
-        assert!(m.scale_var_fast > m.scale_var_amp);
-        assert!(
-            m.hot_raw() > 0.5,
-            "the unrelieved vol runs hot: {}",
-            m.hot_raw()
-        );
-        assert!(m.hot_raw() > m.hot());
-        let f = BOOM_FADE;
-        assert!(boom_fade_by_vol(f, 10.0, m.hot_raw()) < boom_fade_by_vol(f, 10.0, m.hot()));
-        assert!(boom_fade_by_vol(f, 10.0, m.hot_raw()) < f);
-    }
-
-    #[test]
-    fn the_paced_fade_moves_a_boom_world_and_nothing_at_zero() {
-        let w = named_world("0.25.0-nasdaq").expect("recipe").0;
-        assert!(w.boom_rate > 0.0 && w.boom_fade_vol == 0.0);
-        let base = simulate(&w, 100, 11);
-        let off = simulate(
-            &World {
-                boom_fade_vol: 0.0,
-                ..w
-            },
-            100,
-            11,
-        );
-        assert!(
-            base.price
-                .iter()
-                .zip(&off.price)
-                .all(|(a, b)| a.to_bits() == b.to_bits())
-        );
-        let on = simulate(
-            &World {
-                boom_fade_vol: 10.0,
-                ..w
-            },
-            100,
-            11,
-        );
-        assert!(base.price.iter().zip(&on.price).any(|(a, b)| a != b));
-    }
-}
-
-/// THE OVERSHOOT'S BASE and THE DISASTER'S VOLATILITY (`World::overshoot_base`,
-/// `World::disaster_vol_rise`, `World::disaster_feed`, probes): both recipes' paths to the bit at
-/// 0; the base takes the daily return's lag-1 down, the disaster's vol raises the returns' scale
-/// over its falling sessions and its feed the vol response's state there.
-#[cfg(test)]
-mod reversal_probe_tests {
-    use super::*;
-
-    fn returns(p: &Path) -> Vec<f64> {
-        p.price.windows(2).map(|x| (x[1] / x[0]).ln()).collect()
-    }
-
-    fn same(a: &Path, b: &Path) -> bool {
-        a.price
-            .iter()
-            .zip(&b.price)
-            .all(|(x, y)| x.to_bits() == y.to_bits())
-    }
-
-    /// the `-emitvolparts` columns `cols`, path `seed` of `w` over 100 years
-    fn parts(w: &World, seed: u64, cols: &[&str]) -> Vec<Vec<f64>> {
-        let mut tape = BondTape::new(100 * DAYS_PER_YEAR + BURN_IN);
-        tape.vol = Some(Box::default());
-        simulate_at_taped(w, 100, seed, world_level(w), Some(&mut tape));
-        let rows = tape.vol.expect("the record was kept").rows;
-        cols.iter()
-            .map(|col| {
-                let k = VOL_PART_COLUMNS
-                    .iter()
-                    .position(|c| c == col)
-                    .expect("a vol-parts column");
-                rows.iter().map(|r| r[k]).collect()
-            })
-            .collect()
-    }
-
-    #[test]
-    fn the_base_reverses_the_day_and_nothing_at_zero() {
-        for name in ["0.25.0-sp500", "0.25.0-nasdaq"] {
-            let w = named_world(name).expect("recipe").0;
-            let off = World {
-                overshoot_base: 0.0,
-                overshoot_base_rate: 0.2,
-                ..w
-            };
-            assert!(
-                same(&simulate(&w, 100, 11), &simulate(&off, 100, 11)),
-                "{name}"
-            );
-            let on = World {
-                overshoot_base: 0.45,
-                overshoot_base_rate: 0.2,
-                ..w
-            };
-            let seeds = [1u64, 7920, 15839, 23758];
-            let lag1 = |w: &World| -> f64 {
-                seeds
-                    .iter()
-                    .map(|&s| acf_demeaned(&returns(&simulate(w, 100, s)), 1))
-                    .sum::<f64>()
-                    / seeds.len() as f64
-            };
-            let (a, b) = (lag1(&w), lag1(&on));
-            assert!(b < a - 0.005, "{name}: lag-1 {a} -> {b}");
-        }
-    }
-
-    #[test]
-    fn the_disaster_vol_rises_in_the_fall_and_nothing_at_zero() {
-        for name in ["0.25.0-sp500", "0.25.0-nasdaq"] {
-            let w = World {
-                disaster_rate: 5.0,
-                ..named_world(name).expect("recipe").0
-            };
-            let off = World {
-                disaster_vol_rise: 0.0,
-                disaster_vol_half: 3.0,
-                disaster_feed: 0.0,
-                ..w
-            };
-            assert!(
-                same(&simulate(&w, 100, 11), &simulate(&off, 100, 11)),
-                "{name}"
-            );
-            // the falling sessions well into the state's plateau, the same sessions in every run:
-            // the disaster's timing is its own stream's; the state scales the diffusion's noise
-            let rise = parts(
-                &World {
-                    disaster_vol_rise: 0.09,
-                    ..w
-                },
-                11,
-                &["disasterVol", "noise"],
-            );
-            let fall: Vec<usize> = (0..rise[0].len()).filter(|&t| rise[0][t] > 0.5).collect();
-            assert!(fall.len() > 1000, "{name}: {} falling sessions", fall.len());
-            let rms = |r: &[f64]| -> f64 {
-                (fall.iter().map(|&t| r[t] * r[t]).sum::<f64>() / fall.len() as f64).sqrt()
-            };
-            let mean =
-                |x: &[f64]| -> f64 { fall.iter().map(|&t| x[t]).sum::<f64>() / fall.len() as f64 };
-            let base = parts(&w, 11, &["noise", "volResp"]);
-            let (a, b) = (rms(&base[0]), rms(&rise[1]));
-            assert!(b > 1.5 * a, "{name}: the fall's noise rms {a} -> {b}");
-            let feed = parts(
-                &World {
-                    disaster_feed: 0.9,
-                    ..w
-                },
-                11,
-                &["volResp"],
-            );
-            let (a, b) = (mean(&base[1]), mean(&feed[0]));
-            assert!(b > a + 0.02, "{name}: the fall's vol response {a} -> {b}");
-        }
-    }
 }
 
 /// THE RESAMPLING BLOCK (`record_bands -block`): one year of sessions is every daily resampler's
@@ -39353,6 +37864,107 @@ mod bond_crash_tests {
     }
 }
 
+/// The readers of the inflation seen read a rate that never moves by more than `SEEN_TOL` as one
+/// rate, not as its rounding noise, and the crash fit takes only pairs `CRASH_SEEN_RES` apart.
+/// The Scala twin carries the same checks in `SeenTolSuite`.
+#[cfg(test)]
+mod seen_tol_tests {
+    use super::*;
+
+    /// A constant rate as the simulation computes it: `rate` plus rounding noise of ~1e-13.
+    fn noisy(rate: f64, n: usize) -> Vec<f64> {
+        (0..n)
+            .map(|i| rate + 1e-14 * ((i * 7) % 11) as f64)
+            .collect()
+    }
+
+    /// Monthly log changes whose year-over-year rate never moves, read through ~1e-12 of noise:
+    /// every twelve months hold six of each step, perturbed at 1e-15.
+    fn noisy_steps(n: usize) -> Vec<f64> {
+        (0..n)
+            .map(|i| (if i % 2 == 0 { 0.004 } else { 0.002 }) + 1e-15 * ((i * 7) % 11) as f64)
+            .collect()
+    }
+
+    /// Declines all seen under one noisy rate hold no pair `CRASH_SEEN_RES` apart: NaN, not the
+    /// ~1e14 slopes the noise makes.
+    #[test]
+    fn crash_fit_reads_one_noisy_rate_as_one_rate() {
+        let pts: Vec<[f64; 2]> = noisy(2.5, 5)
+            .into_iter()
+            .zip([-3.0, -9.0, 1.0, -4.0, -6.0])
+            .map(|(s, m)| [s, m])
+            .collect();
+        let fit = crash_fit(&pts);
+        assert!(fit.iter().all(|v| v.is_nan()), "{fit:?}");
+    }
+
+    /// Declines seen apart by less than the record's resolution (a floor's decay, 1e-5 pp) hold
+    /// no measurable pair either; one decline a resolvable step away gives the fit its slopes.
+    #[test]
+    fn crash_fit_takes_only_pairs_the_record_could_resolve() {
+        let close = [[2.5, -3.0], [2.5 + 1e-5, -9.0], [2.5 + 2e-5, 1.0]];
+        assert!(crash_fit(&close).iter().all(|v| v.is_nan()));
+        let mut pts = close.to_vec();
+        pts.push([2.5 + CRASH_SEEN_RES, -5.0]);
+        let fit = crash_fit(&pts);
+        assert!(fit.iter().all(|v| v.is_finite()), "{fit:?}");
+        // every slope is against the far point; the median of (-2, 4, -6) over 3e-4
+        assert!((fit[1] - (-2.0 / CRASH_SEEN_RES)).abs() < 1e-6, "{fit:?}");
+    }
+
+    /// A noisy constant rate reads no dependence, and a month the correlation leaves out cannot
+    /// make it look moving; the noise itself does correlate, so the guard is what reads zero.
+    #[test]
+    fn stock_bond_dependence_reads_zero_on_a_noisy_rate() {
+        let n = 120;
+        let eq: Vec<f64> = (0..n)
+            .map(|i| ((i * 7919) % 13) as f64 / 13.0 - 0.5)
+            .collect();
+        let b: Vec<f64> = (0..n)
+            .map(|i| ((i * 104_729) % 11) as f64 / 11.0 - 0.5)
+            .collect();
+        let mut seen = noisy(3.0, n);
+        assert!(finite_corr(&seen, &eq) != 0.0, "the noise correlates");
+        assert_eq!(stock_bond_readings(&eq, &b, &seen)[1], 0.0);
+        seen[5] = f64::NAN;
+        assert_eq!(stock_bond_readings(&eq, &b, &seen)[1], 0.0);
+    }
+
+    /// A noisy constant rate seen puts every month on the upper side: NaN, not a split by noise.
+    #[test]
+    fn cpi_news_reads_nan_on_a_noisy_rate() {
+        assert!(cpi_news_reading(&noisy_steps(96)).is_nan());
+    }
+
+    /// A rate on a noisy floor most months, rising above it in one spell of wide changes: the
+    /// floor, the median, goes whole to the lower side, which balances the halves, and the
+    /// reading finds the spread at the high rate.
+    #[test]
+    fn cpi_news_puts_a_floor_on_the_lower_side() {
+        let dlog: Vec<f64> = (0..144)
+            .map(|i| match i {
+                60..84 if i % 2 == 0 => 0.008,
+                60..84 => 0.004,
+                _ => 0.002 + 1e-15 * ((i * 7) % 11) as f64,
+            })
+            .collect();
+        let r = cpi_news_reading(&dlog);
+        assert!(r.is_finite() && r > 0.5, "{r}");
+    }
+
+    /// A noisy constant rate has no persistence, and neither has one that settles after its
+    /// first year: the later side of the pairing is flat.
+    #[test]
+    fn cpi_persistence_reads_nan_on_a_noisy_rate() {
+        assert!(cpi_persistence(&noisy_steps(96)).is_nan());
+        let settles: Vec<f64> = std::iter::repeat_n(0.004, 12)
+            .chain(noisy_steps(84))
+            .collect();
+        assert!(cpi_persistence(&settles).is_nan());
+    }
+}
+
 /// The satellite leg's coupling anchors are MEASURED numbers; this re-derives the graded
 /// bands from the checked-in fixture so the anchored dials and the record cannot drift apart.
 /// The Scala twin carries the same check in `JointCouplingSuite`, against the same file.
@@ -44546,39 +43158,25 @@ mod det_math_tests {
         assert!(ln_det(f64::INFINITY).is_infinite() && ln_det(f64::INFINITY) > 0.0);
     }
 
+    /// `exp_det` past the normal range, pinned to the same bits in `LnDetSuite`: the subnormals
+    /// and the last doubles below overflow are the platform exp's, and the ends are 0 and +inf.
     #[test]
-    fn the_normal_cdf_is_within_its_fits_error() {
-        for (x, want) in [
-            (0.0, 0.5),
-            (1.0, 0.841_344_746_068_542_9),
-            (-1.959_963_984_540_054, 0.025),
-            (3.0, 0.998_650_101_968_369_9),
+    fn exp_det_is_total() {
+        for (y, bits) in [
+            (-745.0, 0x0000_0000_0000_0001_u64),
+            (-740.0, 0x0000_0000_0000_0055),
+            (-708.5, 0x000E_6CF6_D088_97AC),
+            (709.5, 0x7FE8_1E9B_4B52_D0C9),
+            (709.78, 0x7FEF_E9CE_5C4C_52B4),
+            (709.79, 0x7FF0_0000_0000_0000),
+            (f64::INFINITY, 0x7FF0_0000_0000_0000),
+            (-746.0, 0),
+            (f64::NEG_INFINITY, 0),
         ] {
-            assert!(
-                (std_normal_cdf(x) - want).abs() < 2e-7 * want.max(1.0 - want),
-                "{x}"
-            );
+            let got = exp_det(y).to_bits();
+            assert_eq!(got, bits, "exp_det({y}) = {got:#018X}");
         }
-    }
-
-    #[test]
-    fn the_mid_reads_mean_term_returns_the_one_sided_scalings_mean() {
-        // E[D exp(a max(0, -D))], D ~ N(0, s^2), by the midpoint rule over +-12 sd
-        for (a, s) in [(0.5, 0.015), (1.5, 0.03), (1.0, 0.4)] {
-            let n = 200_000;
-            let h = 24.0 / f64::from(n);
-            let mean: f64 = (0..n)
-                .map(|k| {
-                    let x = -12.0 + h * (f64::from(k) + 0.5);
-                    let d = s * x;
-                    d * (a * (-d).max(0.0)).exp() * (-0.5 * x * x).exp()
-                })
-                .sum::<f64>()
-                * h
-                / (2.0 * std::f64::consts::PI).sqrt();
-            let comp = dd_mid_comp(a, s);
-            assert!((mean + comp).abs() < 2e-6 * comp, "{a} {s}: {mean} {comp}");
-        }
+        assert!(exp_det(f64::NAN).is_nan());
     }
 }
 

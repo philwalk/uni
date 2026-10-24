@@ -37,9 +37,8 @@ class AsymmetryAnchorSuite extends FunSuite:
     assertEqualsDouble(MarketSim.SP500Anchors.semiExcess,
       (field(a, "c1954", "CRSP-VW", 5) - 1.0) * 100.0, 0.005,
       "S&P downside vol excess drifted from the fixture")
-    assertEqualsDouble(MarketSim.NasdaqAnchors.semiExcess,
-      (field(a, "wfull", "QQQ", 5) - 1.0) * 100.0, 0.005,
-      "QQQ downside vol excess drifted from the fixture")
+    // the Nasdaq's downside anchor is its graded long record since 2026-10-20 (`RecordBandSuite`),
+    // no longer this fixture's QQQ row
     assertEqualsDouble(MarketSim.SP500Anchors.levCorr, field(a, "c1954", "CRSP-VW", 9), 5e-5,
       "S&P leverage corr drifted from the fixture")
     assertEqualsDouble(MarketSim.NasdaqAnchors.levCorr, field(a, "wfull", "QQQ", 9), 5e-5,

@@ -11,7 +11,7 @@ import munit.FunSuite
 class WorldDigestSuite extends FunSuite:
 
   test("the world digest is pinned across the twins") {
-    assertEquals(MarketSim.worldDigest(MarketSim.Defaults), "a78aa55e7939f7b9")
+    assertEquals(MarketSim.worldDigest(MarketSim.Defaults), "cb31d4c592e42b14")
     val nq = MarketSim.namedWorld("0.24.5-nasdaq").map(_._1).getOrElse(fail("recipe"))
     assertEquals(MarketSim.worldDigest(nq), "febff8eea1dace49")
   }

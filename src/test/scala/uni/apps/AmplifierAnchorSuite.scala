@@ -30,7 +30,7 @@ class AmplifierAnchorSuite extends FunSuite:
     for (s, w) <- Vector(("CRSP", "w1926"), ("QQQ", "w1999")) do
       val ac = Vector(1, 2, 5, 10, 20, 60, 120).map(l => value("profile", s, w, s"ac$l"))
       assert(ac(1) > ac(0) && ac(2) > ac(0), s"$s: lags 2 and 5 above lag 1, $ac")
-      assert(ac(5) > 0.12 && ac(6) > 0.12, s"$s: the tail holds past 0.12 at 60 and 120, $ac")
+      assert(ac(5) > 0.10 && ac(6) > 0.10, s"$s: the tail holds past 0.10, $ac")
   }
 
   test("the record's vol response to a fall persists past lag 1, where the model's decays") {

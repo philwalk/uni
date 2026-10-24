@@ -1666,7 +1666,8 @@ and inflation regimes by a CPI rule, which read the 1980–82 disinflation rally
 and left the row's window to set the mix of eras. The model reads the same fit on its own CPI; the
 ensemble's reading is one fit over the episodes pooled across its paths. They are single-history
 rows: the record must fall inside the joint band of the world's 64-year histories that hold a fit
-(three declines with distinct inflation). TLT's +7.1 at 2% and −6.1 per point over its six episodes
+(three declines, two of them seen under inflation at least 0.0003 points apart, the CPI record's
+resolution). TLT's +7.1 at 2% and −6.1 per point over its six episodes
 is reported beside them, too few to grade: one episode standing in for a statistic is the failure
 above.
 

@@ -40,3 +40,22 @@ class LnDetSuite extends FunSuite:
     assert(MarketSim.lnDet(0.0).isNaN && MarketSim.lnDet(-1.0).isNaN && MarketSim.lnDet(Double.NaN).isNaN)
     assertEquals(MarketSim.lnDet(Double.PositiveInfinity), Double.PositiveInfinity)
   }
+
+  test("expDet is total") {
+    // past the normal range, pinned to the same bits in the Rust twin's `det_math_tests`: the
+    // subnormals and the last doubles below overflow are the platform exp's, the ends 0 and +inf
+    val pinned = Vector(
+      (-745.0,                   0x0000000000000001L),
+      (-740.0,                   0x0000000000000055L),
+      (-708.5,                   0x000E6CF6D08897ACL),
+      (709.5,                    0x7FE81E9B4B52D0C9L),
+      (709.78,                   0x7FEFE9CE5C4C52B4L),
+      (709.79,                   0x7FF0000000000000L),
+      (Double.PositiveInfinity,  0x7FF0000000000000L),
+      (-746.0,                   0x0000000000000000L),
+      (Double.NegativeInfinity,  0x0000000000000000L))
+    pinned.foreach: (y, bits) =>
+      val got = java.lang.Double.doubleToRawLongBits(MarketSim.expDet(y))
+      assertEquals(got, bits, f"expDet($y%s) = 0x$got%016X")
+    assert(MarketSim.expDet(Double.NaN).isNaN)
+  }

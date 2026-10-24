@@ -67,9 +67,30 @@ class MarketSimContractSuite extends FunSuite:
     val worlds = MarketSim.Releases.map((v, w) => (v, w)) ++ MarketSim.Recipes.map((n, w, _) => (n, w))
     for (nm, lo, hi, _, get) <- MarketSim.CalibrateRanges; (label, w) <- worlds do
       val v = get(w)
-      assert(v >= lo && v <= hi,
+      // in the search's coordinates, where a cap's range is off to its tightest
+      val (c, clo, chi) = (MarketSim.searchCoord(nm, v), MarketSim.searchCoord(nm, lo), MarketSim.searchCoord(nm, hi))
+      assert(c >= clo && c <= chi,
         s"$nm = $v in $label is outside its -calibrate range [$lo, $hi]: the search cannot reach " +
         "a world the model has shipped")
+  }
+
+  test("a searched cap's off sits beside its loose caps") {
+    // the tightness is 0 at off and small for a loose cap; the inverse is off at 0 and a cap above
+    // it, so a step from off is a loose cap and never the tightest
+    def bits(x: Double): Long = java.lang.Double.doubleToRawLongBits(x)
+    for nm <- MarketSim.SearchInvDials do
+      assertEquals(bits(MarketSim.searchCoord(nm, 0.0)), bits(0.0), nm)
+      assertEquals(bits(MarketSim.fromSearchCoord(nm, 0.0)), bits(0.0), nm)
+      assert(MarketSim.fromSearchCoord(nm, 1e-6) > 1e3, s"$nm: a small step is a loose cap")
+      assert(math.abs(MarketSim.searchCoord(nm, 0.01) - math.log(2.0)) < 1e-15)
+      val ys = Vector(0.05, 0.2, 0.7, 1.5, 2.4, 4.6)
+      ys.foldLeft(Double.PositiveInfinity): (last, y) =>
+        val x = MarketSim.fromSearchCoord(nm, y)
+        assert(x > 0.0 && x < last, s"$nm: tighter as the coordinate rises")
+        assert(math.abs(MarketSim.searchCoord(nm, x) - y) < 1e-12, s"$nm: round trip at $y")
+        x
+      val (_, lo, hi, _, _) = MarketSim.CalibrateRanges.find(_._1 == nm).getOrElse(fail(s"$nm: searched"))
+      assert(lo == 0.0 && hi > 0.0, s"$nm: off to the tightest cap")
   }
 
   test("the searchable dials are in the order both twins agree on") {
@@ -171,15 +192,15 @@ class MarketSimContractSuite extends FunSuite:
     // and pins the evidence for what each one used to be. A future move of any value here needs the
     // same treatment: measured, recorded, re-derivable.
     val a = MarketSim.SP500Anchors
-    assertEquals(a.vol, 16.0)
-    assertEquals(a.retVol, 0.69)
-    assertEquals(a.kurt, 28.0)
-    assertEquals(a.ac1, 0.299)
-    assertEquals(a.ac20, 0.225)
+    assertEquals(a.vol, 16.8)         // the lag-free record, 2026-10-23
+    assertEquals(a.retVol, 0.643)     // the lag-free record, 2026-10-23
+    assertEquals(a.kurt, 20.5)        // the lag-free record, 2026-10-23
+    assertEquals(a.ac1, 0.285)        // re-read lag-free 2026-10-23; see AmplifierAnchorSuite
+    assertEquals(a.ac20, 0.210)       // re-read lag-free 2026-10-23; see AmplifierAnchorSuite
     assertEquals(a.crashes, 20.7)
-    assertEquals(a.medDepth, -21.4)   // re-measured in 0.22.0; see above
+    assertEquals(a.medDepth, -21.5)   // re-measured in 0.22.0, lag-free 2026-10-23; see above
     assertEquals(a.worstDepth, -84.1) // re-anchored in 0.22.1; see above
-    assertEquals(a.volBand, (14.0, 18.0))
+    assertEquals(a.volBand, (15.0, 19.0)) // the lag-free record's 5th-95th, 2026-10-23
     assertEquals(a.retVolBand, (0.31, 1.09))
   }
 
@@ -840,7 +861,8 @@ class MarketSimContractSuite extends FunSuite:
 
     // The rule catches the band it was written for, so the assertions below can fail.
     val sp = MarketSim.SP500Anchors
-    val (oldEdge, oldNeed) = room((4.0, 30.0), sp.kurt, sp.kurtSd)
+    // the century's 28.0, the S&P target 4-30 was written against
+    val (oldEdge, oldNeed) = room((4.0, 30.0), 28.0, sp.kurtSd)
     assert(oldEdge < oldNeed, f"4-30 should violate: $oldEdge%.3f vs $oldNeed%.3f")
 
     Vector(MarketSim.SP500Anchors, MarketSim.NasdaqAnchors).foreach { a =>
@@ -1078,13 +1100,14 @@ class MarketSimContractSuite extends FunSuite:
     val vw   = MarketSim.verdictWorld(a, MarketSim.Defaults)
     val sims = MarketSim.simPaths(vw, 8, 40, MarketSim.DefaultSeed)
     val st   = MarketSim.measure(sims, 40)
-    val rows = MarketSim.historyRows(a, st, sims, 40, 8, MarketSim.DefaultSeed, vw).map(_.name)
-    for name <- Seq("satellite corr", "bar range vs cc vol", "bar volume sd", MarketSim.DividendRow,
-                    "bar overnight share", "macro cond build-up") do
-      assert(rows.contains(name), s"the default's placement has no `$name` row")
+    val rows = MarketSim.historyRows(a, st, sims, 40, 8, MarketSim.DefaultSeed, vw)
     val gates = MarketSim.gateChecks(a, st)
-    assert(!gates.exists(g => g._3 == MarketSim.GateClass.Fidelity && g._1.startsWith("satellite")),
-      "the channels are placement rows, not fidelity gates")
+    for name <- Seq("satellite corr", "satellite crash ratio", "bar range vs cc vol", "bar volume sd",
+                    MarketSim.DividendRow, "bar overnight share", "macro cond build-up",
+                    "sector momentum 12-1 / xs sd") do
+      val row = rows.find(_.name == name).getOrElse(fail(s"the default's verdict has no `$name` row"))
+      assert(row.record.isDefined, s"`$name` is graded on the S&P")
+      assert(!gates.exists(_._1.startsWith(name)), s"`$name` is a placement row, not a gate")
     assert(st.basket.isEmpty && !gates.exists(_._1.startsWith("basket")), "the basket grades only against a client's ruler")
   }
 

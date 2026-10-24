@@ -31,11 +31,13 @@
 #     band on 27 years would grade nothing
 #   CPI NEWS (`cpi_news_reading`, CPI-U 1954-01..2026-08 / 1999-01..2026-08, monthly log changes):
 #     cpi news by inflation seen  the sd of the month-to-month change over the months whose
-#                             year-over-year rate ending the month before is at or above the
-#                             window's median, over that sd and the sd below it summed, in (0, 1):
-#                             0.63 / 0.59. The level's noise scales with the inflation it carries, and
-#                             with it the inflation news a regime brings to the yield; a world of one
-#                             noise reads 0.5
+#                             year-over-year rate ending the month before is on the upper side of
+#                             the window's median, over that sd and the sd below it summed, in (0, 1):
+#                             0.63 / 0.59. The months within 1e-9 pp of the median are one rate and
+#                             go together to the side nearer equal halves (the upper on a tie): a
+#                             resample's repeated block repeats its rates to the bit. The level's
+#                             noise scales with the inflation it carries, and with it the inflation
+#                             news a regime brings to the yield; a world of one noise reads 0.5
 # Each row carries the record's reading and its spread over 20,000 moving block resamples. FRED's
 # series and the French market are public; the files are not shipped. LAG-FREE: the market's daily
 # returns through 1999-03-10 are read with the stale-price lag removed, an MA(2) inversion fitted per
@@ -52,9 +54,9 @@ sp500	stock-bond corr monthly	DGS10 par bond, French market	1962-01-04..2026-08-
 sp500	stock-bond corr vs inflation seen	DGS10 par bond, French market	1962-01-04..2026-08-03	766	20000	0.145081	-0.062750	0.035693	0.075874	0.093419	0.104202	0.112068	0.118469	0.124089	0.129343	0.134196	0.138855	0.143299	0.147754	0.152055	0.156516	0.161136	0.166055	0.171416	0.177400	0.184963	0.196051	0.219083	0.297397	0.488375	0.039695	0.217061
 sp500	stock-bond corr 3-month less monthly	DGS10 par bond, French market	1962-01-04..2026-08-03	766	20000	-0.026345	-0.213970	-0.153886	-0.117540	-0.094798	-0.081273	-0.070176	-0.061127	-0.052292	-0.044547	-0.037396	-0.030446	-0.023636	-0.016967	-0.010389	-0.003541	0.003386	0.011179	0.019727	0.028446	0.040148	0.058321	0.085488	0.160188	0.488375	-0.150229	0.083986
 sp500	stock-bond corr 12-month less monthly	DGS10 par bond, French market	1962-01-04..2026-08-03	766	20000	0.033172	-0.437579	-0.207857	-0.133825	-0.094396	-0.068833	-0.047444	-0.030165	-0.014904	-0.001826	0.010551	0.022789	0.034598	0.046211	0.058319	0.070583	0.083180	0.096663	0.110907	0.127598	0.149185	0.181214	0.237016	0.346535	0.488375	-0.201244	0.233219
-sp500	cpi news by inflation seen	CPIAUCSL	1954-01-01..2026-08-01	870	20000	0.627660	0.459739	0.526115	0.553627	0.567821	0.577041	0.584076	0.589961	0.595174	0.600017	0.604213	0.608267	0.611977	0.615652	0.619384	0.623240	0.627056	0.631100	0.635382	0.640139	0.645942	0.654185	0.668159	0.701658	0.490025	0.526101	0.668159
+sp500	cpi news by inflation seen	CPIAUCSL	1954-01-01..2026-08-01	870	20000	0.627660	0.459739	0.526073	0.553627	0.567810	0.577015	0.584085	0.589996	0.595132	0.600027	0.604223	0.608267	0.611988	0.615628	0.619406	0.623245	0.627050	0.631097	0.635411	0.640117	0.645969	0.654192	0.668159	0.701658	0.490025	0.526064	0.668159
 nasdaq	stock-bond corr monthly	DGS10 par bond, French market	1999-01-05..2026-08-03	327	20000	-0.203481	-0.477076	-0.405155	-0.371735	-0.353432	-0.338449	-0.325674	-0.313744	-0.302410	-0.291176	-0.280389	-0.269870	-0.258434	-0.246583	-0.234579	-0.222303	-0.208591	-0.192653	-0.176235	-0.155170	-0.125749	-0.081115	0.009956	0.211138	0.487225	-0.400113	-0.002636
 nasdaq	stock-bond corr vs inflation seen	DGS10 par bond, French market	1999-01-05..2026-08-03	327	20000	0.129042	-0.215475	-0.093552	-0.049338	-0.025637	-0.007770	0.007698	0.023938	0.041652	0.066978	0.085837	0.097928	0.107602	0.116368	0.124931	0.134371	0.144304	0.154279	0.164772	0.176199	0.190483	0.216078	0.268016	0.483282	0.487225	-0.087427	0.258545
 nasdaq	stock-bond corr 3-month less monthly	DGS10 par bond, French market	1999-01-05..2026-08-03	327	20000	-0.131202	-0.283930	-0.218869	-0.185698	-0.167867	-0.156575	-0.147151	-0.138513	-0.130356	-0.122912	-0.115524	-0.108776	-0.101534	-0.094458	-0.087010	-0.079441	-0.071026	-0.062019	-0.052184	-0.040113	-0.026194	-0.002851	0.036121	0.124389	0.487225	-0.213999	0.031130
 nasdaq	stock-bond corr 12-month less monthly	DGS10 par bond, French market	1999-01-05..2026-08-03	327	20000	-0.149942	-0.517104	-0.401008	-0.320669	-0.278490	-0.246961	-0.222661	-0.202052	-0.181867	-0.161789	-0.143118	-0.124510	-0.105717	-0.087345	-0.067824	-0.048648	-0.027604	-0.008138	0.014131	0.040198	0.073991	0.125197	0.218334	0.351516	0.487225	-0.392052	0.209047
-nasdaq	cpi news by inflation seen	CPIAUCSL	1999-01-01..2026-08-01	330	20000	0.594286	0.343390	0.464679	0.516804	0.537050	0.549232	0.558162	0.565420	0.571368	0.576680	0.581478	0.585872	0.589948	0.593773	0.597542	0.601154	0.604941	0.608635	0.612508	0.616757	0.621698	0.629076	0.640676	0.681304	0.490025	0.464482	0.640676
+nasdaq	cpi news by inflation seen	CPIAUCSL	1999-01-01..2026-08-01	330	20000	0.594286	0.344517	0.464881	0.516889	0.537208	0.549389	0.558201	0.565458	0.571463	0.576770	0.581524	0.585897	0.589968	0.593835	0.597577	0.601199	0.605031	0.608665	0.612535	0.616866	0.621757	0.629113	0.640698	0.681304	0.490025	0.464874	0.640698

@@ -71,13 +71,15 @@ class PersistenceAnchorSuite extends FunSuite:
         assertEqualsDouble(hi, outward(xs.max, up = true), 1e-9,
           f"vr$q: the high bound no longer follows from the fixture: readings reach ${xs.max}%.3f")
       assertEquals(MarketSim.VarRatioBands.find(_._1 == MarketSim.VarRatioQ).map(b => (b._2, b._3)),
-        Some((0.55, 1.20)), "the loss row's rung carries the 60-session envelope")
+        Some((0.55, 1.05)), "the loss row's rung carries the 60-session envelope")
   }
 
-  test("the lag-1 readings the report quotes are the file's own, and the era flip is real") {
+  test("the lag-1 readings the report quotes are the file's own") {
     if rows.nonEmpty then
       // The rung the ladder cannot see, REPORTED rather than graded -- so the only thing that can
-      // go wrong is the printed claim drifting from the evidence, which is what this pins.
+      // go wrong is the printed claim drifting from the evidence.  This pins it, that every modern
+      // fund reverts at one day, and that a CRSP era reads nearer zero the more of it falls before
+      // `UnlagCut`, where the lag correction leaves lag-1 at about zero.
       def crsp(w: String) = rows.find(r => r.window == w && r.ticker == "CRSP-VW")
         .getOrElse(fail(s"no $w CRSP row")).ac1
       val funds = rows.filter(_.ticker != "CRSP-VW").map(_.ac1)
@@ -87,9 +89,8 @@ class PersistenceAnchorSuite extends FunSuite:
       assertEqualsDouble(rc90, crsp("c1990"), 5e-5, "the 1990 reading the report quotes")
       assertEqualsDouble(rfLo, funds.min, 5e-5, "the modern funds' low the report quotes")
       assertEqualsDouble(rfHi, funds.max, 5e-5, "the modern funds' high the report quotes")
-      // The reason it is not graded: the record has no one sign to grade against.
-      assert(crsp("c1926") > 0.0 && crsp("c1990") < 0.0,
-        "the era flip is what makes a single lag-1 target meaningless")
+      assert(crsp("c1926") > crsp("c1954") && crsp("c1954") > crsp("c1990") && crsp("c1990") < 0.0,
+        "the more of a CRSP era falls before the cut, the nearer zero it reads")
       assert(funds.forall(_ < 0.0), "every modern fund reverts at one day")
   }
 
@@ -115,20 +116,21 @@ class PersistenceAnchorSuite extends FunSuite:
           f"${r.ticker} over ${r.window} has slope $a->$b $sl%+.3f, outside the band the gate enforces")
   }
 
-  test("the era separates these readings and the index does not") {
-    // Why the bands are shared rather than carried per asset. Two indices as different as the
-    // Nasdaq-100 and the S&P over the same era agree far more closely than one index does with
-    // itself across eras -- so a per-asset band would encode a difference the record does not show,
-    // and would have to be invented for every new anchor set.
+  test("the index separates these readings, so each set grades its own") {
+    // Why the rungs are graded per set and the shared envelopes only printed: lag-free, the index
+    // separates these readings about as much as the era does, so a shared band would grade one
+    // index on another's spread.  Each set grades the four rungs on its own record's band.
     if rows.nonEmpty then
       def at(w: String, t: String) = rows.find(r => r.window == w && r.ticker == t).map(_.vr(60))
       (at("wfull", "QQQ"), at("wfull", "SPY"), at("c1926", "CRSP-VW"), at("c1990", "CRSP-VW")) match
         case (Some(qqq), Some(spy), Some(century), Some(modern)) =>
           val acrossIndex = math.abs(qqq - spy)
           val acrossEra   = math.abs(century - modern)
-          assert(acrossIndex < acrossEra / 2.0,
+          assert(acrossIndex >= acrossEra / 2.0,
             f"QQQ and SPY now differ by $acrossIndex%.3f against $acrossEra%.3f between the CRSP " +
-            "century and 1990-2026. If the index has become the larger axis, the band belongs in " +
-            "Anchors, per asset, and this test is the one that says so.")
+            "century and 1990-2026: if the era is again the axis, a shared band could grade the rungs")
+          for a <- Vector(MarketSim.SP500Anchors, MarketSim.NasdaqAnchors); q <- MarketSim.VarRatioLadder do
+            val name = s"variance ratio ${q}d"
+            assert(a.recordBands.exists(_.name == name), s"${a.name}: [$name] has no record band of its own")
         case _ => fail("the fixture no longer carries the four rows this claim is pinned on")
   }

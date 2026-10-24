@@ -65,7 +65,7 @@ depth, which passed one about half the time.
   conformal p P PASS|FAIL|UNDECIDED at 0.10; realism R mechanism M fidelity F on every read`
   (fidelity there the hand bands); `-historyrows` writes the pooled rows. The placement's
   leave-one-out runs across cores: 0.45 s at 1600 histories.
-- The search (`market_sim_search`): a candidate is feasible only if its bounds pass on every read
+- The search (`market_sim_search` and `jsrc/marketSimSearch.sc`): a candidate is feasible only if its bounds pass on every read
   and the placement passes over all its reads' histories pooled (the seed worlds exempt, as from
   `-gap`: a re-solve starts from the recipe that fails it, its placement reported); `-stage`'s
   prefix rejects on bounds alone; an archive written under the per-read placement is refused on
@@ -109,19 +109,63 @@ series) and the 23 fixtures are regenerated on it. CRSP 1954–2026 recorded / l
 - The bubble row weights each all-time-high spell's three-year run-up by its depth, linear in log
   depth from 0 at a 30% decline to 1 at 50%, in place of the 40% cut (record: Nasdaq 0.58, CRSP
   0.10).
-- `record_bands` gains `-block 252|756` (the resample block), `-scales LEDGER.tsv -runs RUNS.tsv`
+- `record_bands` (and `jsrc/recordBands.sc`, byte-identical) gains `-block 252|756` (the resample block), `-scales LEDGER.tsv -runs RUNS.tsv`
   (the record scale of every row), `-resampled OUT -block B -n N -seed S` (one resampled record per
   equity calendar; FRED series as levels in blocks; OHLCV with volume as a ratio to its trailing-252
   median) and the satellite, worst-crash, sector (`-sectors -block`) and dividend record modes; a
   `;`-separated run list.
-- The macro placement literals are the record's (vol premium 0.2723, the S&P oracle bound
+- The macro placement literals are the record's (vol premium 0.2710, the S&P oracle bound
   0.0140), with record tests for the bar, sector and macro rows.
-- Two probe dial groups, CLI only and bit-identical at zero: `-overshootbase S
-  -overshootbaserate R` (a transient share S of every step's move, given back at R a session, its
-  own owed pool beside `overshoot`) and `-disastervolrise DU -disastervolhalf H -disasterfeed F`
-  (a log-vol state gaining DU each session the disaster leg falls, halving over H sessions, scaling
-  the session's noise and feeding the vol response); `-emitvolparts` carries them as
-  `overshootBase` and `disasterVol`. Neither reaches its row at any strength (PLAN 64).
+- The rebound waits for volatility in the step as well as in its estimate: `Market.step` applies
+  `volPull`'s damp as `Market.predict` does (the `volPullStep` key, on in every 0.25.0 world and
+  the default). A world published before 0.25.0 had the damp in `predict` alone, where it reached
+  the price only through the news flip's estimate of the day; those worlds carry it off and
+  reproduce as published. The key is written only when on, so their bodies and digests are
+  unchanged, and a set file without it loads as off (`-volpullstep 0|1`).
+- `-emitvolparts` (with `-emit`, both twins) writes beside each path's `F.tsv` an `F-vol.tsv`: the
+  session's log price change split into every write to the price in the order they happen (the
+  recession, the news, the slow channel, the regime's drift, the bust swing, the cycle, the boom,
+  the flip's lift, then the step's return by its value pull, carry and each input times its
+  amplified liquidity, and the halt and clamp, the markdown last), a `rounding` column closing
+  the sum to the bit, then the conditional vol state as log multipliers, the amplification and
+  the session's sd before and after it. The run refuses a path whose `logPrice` is not its emitted
+  price to the bit and reports on how many sessions the parts close exactly.
+- The Scala twin's `-emitall` behaves as the Rust twin's has since 0.24.7: a path holding a
+  non-finite value in any emitted series refuses the whole batch before any file is written, and
+  the paths are written in parallel. It used to write paths `0..k-1` and then refuse path `k`, and
+  its check skipped the dividend, traded, open and basket series.
+- Every `exp`, `log` and `pow` the simulation takes goes through the deterministic `exp_det`,
+  `ln_det` and `pow_det` in both twins, so a path is the same bits in both. This covers the
+  volatility multipliers, the leverage kick, the vol and jump responses, the credit and
+  recession regimes, the slow channel, the noise asymmetry, the crowd's weights and lookback,
+  the jump rate, the flip kernel, the half-life decays, the halt floor, the range and volume
+  model, the emitted price levels and log columns, and the `-emitvolparts` cells. `exp_det` is
+  now total (NaN, +inf, subnormals and 0 as the platform `exp` gives them) and unchanged inside
+  the normal range. On the 0.25.0 recipes `-validate` prints the same digits as before and
+  emitted values move by at most 2e-9 relative. The generator keeps the platform `exp` and
+  `log1p` in its Gaussian draw's wedge test and tail, where Rust matches NumPy exactly and the
+  JVM may differ by one ulp: the NumPy stream is a third reference, kept on purpose (see
+  `rust/PARITY.md`). The Scala twin's stock-bond report line
+  reads "vs inflation seen", as the Rust twin's does.
+- The readers of the inflation seen treat rates within `SEEN_TOL` (1e-9 pp) as one rate, so a
+  world whose inflation never moves is graded on its rate and not on its rounding noise. The
+  bond crash fit takes only pairs of declines seen at least `CRASH_SEEN_RES` (0.0003 pp, one step
+  of CPI-U's last published digit) apart, since a slope across a smaller gap is one the record
+  could not measure (a near-flat inflation read millions per point); the stock-bond
+  correlation with the inflation seen reads 0 where the seen rate is flat, and the CPI
+  persistence reads NaN where either side of its twelve-month pairing is flat. The CPI news
+  split sends the months within `SEEN_TOL` of the median together to the side that leaves the
+  halves nearest equal, the upper side on a tie: a floor the rate sits on most months goes to
+  the lower side, and a rate without ties splits at `>=` the median as before. The record's
+  readings are unchanged; the CPI news row's resampled band in `stockbond-2026-10-18.tsv` moves
+  by at most 1.1e-3, because a resample's repeated block repeats its rates exactly. The search's
+  objective digest hashes the record bands, so it moves with that band: an archive started on an
+  earlier build is refused on resume (`-force` overrides). The 0.25.0 sets' ledger reads move on
+  the two bond crash rows alone, where a history's declines included a pair seen less than
+  `CRASH_SEEN_RES` apart (29 of 50 Nasdaq and 81 of 128 S&P members, ledger totals by at most
+  0.04 on about 230, tier and worst row unchanged). On the default world the bond crash rows, which read bands near
+  ±1e14, now read a fit wherever a history's declines are seen under rates at least
+  `CRASH_SEEN_RES` apart. Both twins.
 
 **The real side: a TIPS leg, a real yield and graded inflation.** The simulator emits a
 constant-maturity TIPS leg (`-tips D`) beside the nominal ten-year leg, with the real yield it is
