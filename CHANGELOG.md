@@ -163,7 +163,12 @@ series) and the 23 fixtures are regenerated on it. CRSP 1954–2026 recorded / l
   earlier build is refused on resume (`-force` overrides). The 0.25.0 sets' ledger reads move on
   the two bond crash rows alone, where a history's declines included a pair seen less than
   `CRASH_SEEN_RES` apart (29 of 50 Nasdaq and 81 of 128 S&P members, ledger totals by at most
-  0.04 on about 230, tier and worst row unchanged). On the default world the bond crash rows, which read bands near
+  0.04 on about 230, tier and worst row unchanged). Under the sets' admission rule (every member on
+  four seeds at 200 × 100, the pooled placement line), no member's membership or hard-failure list
+  changes: 56 of 71 Nasdaq and 120 of 128 S&P members admitted under both builds, the pooled
+  placement moved by at most 0.0013. The 23 that fail under both predate this change: they are
+  the installed sets judged before the crash rows' fit and the two dials, which the sampler
+  remakes (see "The sets", below). On the default world the bond crash rows, which read bands near
   ±1e14, now read a fit wherever a history's declines are seen under rates at least
   `CRASH_SEEN_RES` apart. Both twins.
 
@@ -361,69 +366,77 @@ could hold the recession where the record is: the 0.25.0 worlds had one earnings
 century (Nasdaq) and four (S&P) against the record's 14, every history under it.
 
 **The recipes.** `0.25.0-sp500` and `0.25.0-nasdaq` are each member 0 of its 0.25.0 set: a world
-the set loop admitted under the membership rule on four fresh seeds at 200 × 100. The S&P's is the
-set's best-scoring member; it holds the seven dials read off the record
-where 0.24.6 held them and with them the breakeven premium (`brkVol` 0.0055) and its nominal share
-(`brkNominal` 0.68), both read off the TIPS era's record, since the set reports the breakeven rows;
-the search put the term state's innovation at 0.0027, the expectation anchor 0.52, the yield's lag
-20.4 and beta 0.0087, the vol feedback 0.069, the CPI noise exponent 0.92 and the policy rule's
-growth term 0.048; the long bond's cut of the beta state 0.3 and the satellite at the set's
-channel dials (beta 1.3, tail drop 0.3), which read the satellite kurtosis ratio 0.63 against
-0.67 and place the record's bond crash response at 2% inflation at the 43rd percentile of the
-recipe's histories, its slope at the 71st; placement p 0.44, 0.36, 0.64 and 0.25 over 52 units, combined 0.50. The Nasdaq's is the member
-the loop was seeded from; it grades the breakeven rows on its own era, so the premium and its share
-were free (0.0045 and 0.025); the term state's innovation 0.0035, the expectation anchor 0.23, the
-yield's lag 14.7 and beta 0.029, the vol feedback 0.11, the CPI noise exponent 0.83, the policy
-rule's growth term 0.13, the volume channel at QQQ's, the long bond's cut 0.3 and the satellite
-at the set's channel dials (beta 1.3, tail drop 0.4), which read the kurtosis ratio 0.69 against
-0.67 and place the record's crash response at the 19th percentile, its slope at the 60th; placement p 0.84, 0.65, 0.87 and 0.45
-over 43 units, combined 0.93. Both hold the equity's discount on the ten-year yield.
+admitted under the membership rule with every class passing on each of four fresh seeds at 200 ×
+100. The S&P's is the lag-free record's ledger (every graded row's CRPS in its record scale with
+the sign cost, every row at weight 1.0) solved with every searched dial free except the eight the
+record reads directly, held at the record's readings (the disaster family's five, `spreadDd` 3.0,
+the breakeven premium `brkVol` 0.0055 and its nominal share `brkNominal` 0.68, the last two off the
+TIPS era's record since the set reports the breakeven rows), and `discountLag` at 0; the search put
+the recession channel's rate at 0.40 with the uniform recovery drag and the recession's vol at 0,
+the crowd's adjustment at 0.82, the noise scale at 1.21, the term state's innovation at 0.0031, the
+expectation anchor 0.37, the yield's lag 28.6 and beta 0, the vol feedback 0.21, the CPI noise
+exponent 0.62 and the policy rule's growth term 0.017; the long bond's cut of the beta state 0.3
+and the satellite at the set's channel dials (beta 1.3, tail drop 0.3). Its placement over the four
+seeds' pooled 800 histories p 0.68, every bound passing on every seed. The Nasdaq's is the same
+ledger solved on its own era, the disaster family's five and `spreadDd` 1.0 held at the record's
+readings and `discountLag` at 0, the breakeven premium and its nominal share free since it grades
+the breakeven rows on that era (0.0041 and 0); the search put the recession channel's rate at 0.14
+with its vol 0.13 and the uniform recovery drag 0.79, the crowd's adjustment at 0.99, the noise
+scale at 1.56, the term state's innovation at 0.0030, the expectation anchor 0.30, the yield's lag
+24.4 and beta 0.033, the vol feedback 0.47, the CPI noise exponent 0.97 and the policy rule's growth
+term 0; the volume channel at QQQ's, the long bond's cut 0.3 and the satellite at the set's channel
+dials (beta 1.3, tail drop 0.4); placement p 0.68 over the pooled histories, every bound passing on
+every seed. Both hold the equity's discount on the ten-year yield.
 
-**The sets.** `0.25.0-sp500.json` holds 128 members and `0.25.0-nasdaq.json` 71, member 0 the
+**The sets.** `0.25.0-sp500.json` holds 75 members and `0.25.0-nasdaq.json` 38, member 0 the
 recipe: the members the set loop admitted under the membership rule, the loop a search over every
-searched dial whose candidates the verdict judges on four fresh seeds at 200 × 100. A member is
-admitted on one test over its four seeds, Fisher's combination of the four placement p's (chi-square
-on eight degrees of freedom) above 0.10, where four separate passes at 0.10 admitted a correct world
-about two times in three; realism, mechanism, a hand band or an undecided read fail it on any one
-seed. The S&P set is the 0.25.0 members re-admitted under that test and the children of one loop
-round aimed at the set's edge rows (148 judged, 127 admitted: 14 out on the placement, 5 on
-mechanism, 1 on realism); the Nasdaq set the same over two aimed rounds (the second 79 judged, 70
-admitted: 6 on the placement, 3 on mechanism). A member's `score` and `worstRow` are the search's,
+searched dial (each set's record dials fixed, the S&P's eight and the Nasdaq's six, so the set
+samples what the record leaves uncertain and not what it pins) whose candidates the verdict judges
+on four fresh seeds at 200 × 100. A member is admitted on one test over its four seeds, the
+placement's conformal p over the pooled 800 histories above 0.10 (four separate tests at 0.10
+rejected a correct world about twice as often, the record being shared); realism, mechanism, a hand
+band or an undecided read fail it on any one seed. Each set is one loop round from its recipe (the
+S&P's 85 judged, 74 admitted; the Nasdaq's 46 judged, 37 admitted: 7 out on the placement, 1 on
+mechanism). A member's `score` and `worstRow` are the search's,
 and its `coverageWeight` the export's — the inverse of its kernel density in the descriptor space,
 mean 1 — so a consumer weighting members by it counts a near-duplicate once; `seededFrom` names the
 loop's seed row. Against the 0.24.6 sets under the release rule (the record's CRPS under each set's
 pooled single-history predictive, summed over every graded row in a fixed yardstick — the record's
 resample sd where the row has one, the outgoing set's predictive sd elsewhere — bootstrapped over
-members): S&P 80.93 → 61.16, difference −19.77 [−21.13, −18.61]; Nasdaq 120.00 → 67.54, −52.46
-[−53.89, −50.79]; both significantly better. As a set, each row also reports where the record falls
-among the set's pooled single histories, and a row outside the central 95% is a set miss. The S&P
-set has none (the 0.24.6 set had seven); its edge rows, every member leaning the same way, are the
-stock-bond correlation's 12-month-less-monthly (the record at the 96th percentile) and the
-satellite's 63-day relative trend (the 5th). The Nasdaq set has two, rows the model leans on and no
-member reaches, which the aimed rounds could not move: the satellite kurtosis ratio (the record at
-the 2nd percentile; every member reads 0.88–0.96 against 0.67) and the bond's return in growth
-crashes under the regime rows then graded (the 2.5th; the 0.24.6 set had the record at the 36th, a row-level regression: the yield's beta on
-the market, which carries the stock-bond correlation, doubles the bond's rally in growth crashes).
-Both rows are answered by the two dials above and the crash rows' fit; the installed sets were
-judged before them and carry both keys unjudged on disk (the satellite tail drop at the set's value,
-the cut at 0.3), so their members' placements and the scores here are the sets' as judged without
-them; the sets are remade under both by the sampler. What moved on the S&P's 112 rows: 67 nearer the record, 45 further;
-the largest gains on the real-side rows (in yardstick units, the TIPS leg's vol per duration 10.1 →
-1.7, the real yield's monthly change sd 6.3 → 1.4, the CPI's 4%+ spells 2.3 → 0.5 and deflation
-share 2.1 → 0.7, the TIPS-equity correlation 2.2 → 0.9, the ten-year leg's vol per duration 3.3 →
-2.5, the CPI's news by inflation seen 0.8 → 0.1, bond vol 2.8 → 2.2, equity vol 1.1 → 0.5); further,
-the stock-bond correlation's 12-month-less-monthly 0.4 → 1.4, the 20-day variance ratio 0.4 → 1.2,
-the TIPS leg's depth vs vol 0.6 → 1.4, the SMA10 exits a year 0.2 → 0.8, the 250-day variance ratio
-0.5 → 0.9, the bond's depth vs vol 0.5 → 0.8 and the 60-day variance ratio 0.4 → 0.7, the rest 0.25
-or under. On the Nasdaq's 99 rows: 57 nearer, 42 further; the largest gains the real-side rows the
-0.24.6 world could not read at all (the TIPS leg's vol per duration 11.1 → 2.9, the breakeven's
-correlation with the yield 6.9 → 0.8 and its own change sd 6.5 → 0.6, the TIPS-nominal correlation
-6.8 → 1.1, the breakeven's monthly change sd 5.4 → 0.5, the ten-year leg's vol per duration 7.8 →
-3.3, bond vol 6.3 → 2.7, the bar's volume sd 3.2 → 0.6, the monthly stock-bond correlation 2.9 →
-0.9); further, the up-day share 0.3 → 1.3 (the record at the 93rd percentile), the bond's growth
-crash 0.2 → 1.1, the bar's volume-range correlation 0.4 → 1.2, the rate floor share 0.8 → 1.5, the
-SMA10 avoided share 0.5 → 0.9, kurtosis 0.9 → 1.2, clustering lag 1 0.4 → 0.7 and the long annual
-autocorrelation 0.8 → 1.1, the rest under 0.3.
+members): S&P 88.05 → 51.64 on its 118 rows, difference −36.41 [−38.10, −34.85]; Nasdaq 119.51 →
+57.77 on its 105 rows, −61.73 [−62.72, −60.43]; both significantly better. As
+a set, each row also reports where the record falls among the set's pooled single histories, and a
+row outside the central 95% is a set miss. The S&P set has none (the 0.24.6 set has seven: the
+CPI's 4%+ spells and deflation share, the TIPS and ten-year legs' vol per duration, the CPI's news
+by inflation seen, bond vol and the real yield's monthly change sd); its edge rows, every member
+leaning the same way, are the bond stress share (the record at the 96th percentile), the lower
+wing's months and the time under water 20% on the long record (the 96th and 91st: the members'
+low valuations end sooner than the record's), the 3-year variance ratio (the 5th), the annual
+autocorrelation and the satellite's 63-day relative trend (the 7th), the macro spread's
+persistence, the ex-post real rate's sd and the SMA10 decline avoided (the 91st). The Nasdaq set
+has none (the 0.24.6 set has thirteen, the real-side rows it could not read among them); its edge
+rows are the bar's volume-range correlation (the record at the 3rd percentile), the bond stress
+share (the 97th), the profit declines a century and the equity's ten-day response to the real rate
+(the 95th), the macro conditional lag (the 94th), the SMA10 decline avoided (the 92nd), the macro
+spread's persistence and the satellite's five-day ratio (the 90th), the median decline length on
+the long record (the 10th) and the satellite's 252-day relative trend (the 8th). What moved on the S&P's 118 rows: 83
+nearer the record, 35 further; the largest gains on the real-side rows (in yardstick units, the
+TIPS leg's vol per duration 10.1 → 1.0, the real yield's monthly change sd 6.3 → 0.7, the ten-year
+leg's vol per duration 3.3 → 0.9, the CPI's 4%+ spells 2.3 → 0.3 and deflation share 2.1 → 0.9,
+bond vol 2.8 → 1.2, the TIPS-equity correlation 2.2 → 0.6, the monthly stock-bond correlation 2.0 →
+0.6 and its slope on inflation seen 1.9 → 0.7, the CPI's news by inflation seen 0.8 → 0.1) and the
+20-day variance ratio 2.9 → 1.0; further, the lower wing's months 0.3 → 0.8 and the time under
+water 20% on the long record 0.3 → 0.7, the satellite beta 0.2 → 0.5, the 120-day variance ratio
+0.7 → 1.0 and the sector pair correlation 0.3 → 0.5, the rest 0.25 or under. On the Nasdaq's 105
+rows: 65 nearer, 40 further; the largest gains the real-side rows the 0.24.6 world could not read
+at all (the TIPS leg's vol per duration 11.2 → 0.8, the ten-year leg's 7.9 → 1.2, the TIPS-nominal
+correlation 6.8 → 0.6, the breakeven's correlation with the yield 6.9 → 1.1 and its own change sd
+6.5 → 0.4, bond vol 6.3 → 1.3, the breakeven's monthly change sd 5.4 → 0.4, the real yield's monthly
+change sd 4.4 → 1.0, the bar's volume sd 3.2 → 0.3, the monthly stock-bond correlation 2.9 → 0.7,
+the CPI's deflation share 2.5 → 0.8 and 4%+ spells 1.9 → 0.3, its news by inflation seen 1.6 → 0.1)
+and the 20-day variance ratio 2.1 → 0.9; further, the bar's volume-range correlation 0.4 → 1.6,
+profit declines a century 0.6 → 1.8, the bond stress share 0.9 → 1.4, the equity's ten-day response
+to the real rate 0.5 → 0.9 and the SMA10 decline avoided 0.5 → 0.8, the rest under 0.3.
 
 - Emit schema 32: the four columns above are present exactly when `tips > 0`, after `bond10`;
   `world` gained `tips`, `termVol`, `brkVol`, `brkNominal` and the five inflation dials; the gate

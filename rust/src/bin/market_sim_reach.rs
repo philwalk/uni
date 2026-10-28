@@ -109,15 +109,13 @@ fn step_of(r: &Range, sigma: f64) -> f64 {
 /// A world with its searched dials set, the news size pulled inside the search's share of the
 /// diffusion budget as the search's `admissible` pulls it.
 fn with_dials(base: &World, rs: &[Range], d: &[f64]) -> World {
-    let rate = rs
-        .iter()
-        .zip(d)
-        .find(|(r, _)| r.0 == "newsRate")
-        .map_or(0.0, |(_, x)| *x);
+    let dial = |n: &str| rs.iter().zip(d).find(|(r, _)| r.0 == n).map(|(_, x)| *x);
+    let rate = dial("newsRate").unwrap_or(0.0);
+    let scale = dial("noiseScale").unwrap_or(1.0);
     let mut w = *base;
     for (r, x) in rs.iter().zip(d) {
         let v = if r.0 == "newsSize" {
-            ms::news_size_within_budget(rate, *x)
+            ms::news_size_within_budget(rate, *x, scale)
         } else {
             *x
         };

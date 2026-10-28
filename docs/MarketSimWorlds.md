@@ -2412,17 +2412,18 @@ rows a seed against 1.50 (better on 13 seeds, worse on 2; sign test p 0.007), th
 seeds against 17 and the 10-year rows on one against 17. Each is member 0 of its `0.24.6` set, and
 the worlds to pin in place of the 0.24.5 recipes.
 
-**`0.25.0-sp500` and `0.25.0-nasdaq`** are each member 0 of its `0.25.0` set, a world the set loop
-under the membership rule admitted with every class passing on each of four fresh seeds at 200 ×
-100: the S&P's the set's best-scoring member, which holds the seven dials read off the record where
-0.24.6 held them and with them `brkVol` 0.0055 and `brkNominal` 0.68, read off the TIPS era's
-record, since the set reports the breakeven rows; the Nasdaq's the member the loop was seeded from,
-which grades the breakeven rows on its own era, so the premium and its share were free (0.0045 and
-0.025). Both hold the equity's discount on the ten-year yield; the dials and the placement p's are
-in the CHANGELOG. They are the worlds to pin in place of the 0.24.6 recipes. The sets are every
-member of one round of the loop that passed, 71 and 44, and both score significantly better than
-the 0.24.6 sets under the release rule (S&P 80.93 → 60.91, Nasdaq 120.00 → 68.21 summed CRPS in a
-fixed yardstick).
+**`0.25.0-sp500` and `0.25.0-nasdaq`** are each member 0 of its `0.25.0` set, a world admitted
+under the membership rule with every class passing on each of four fresh seeds at 200 × 100. The
+S&P's is the lag-free record's ledger solved with every searched dial free except the eight the
+record reads directly, held at the record's readings (the disaster family's five, `spreadDd` 3.0,
+`brkVol` 0.0055 and `brkNominal` 0.68, the last two off the TIPS era's record since the set reports
+the breakeven rows), and `discountLag` at 0; the Nasdaq's the same ledger solved on its own era with
+the disaster family, `spreadDd` 1.0 and `discountLag` 0 held, the breakeven premium and its share
+free since it grades the breakeven rows on that era (0.0041 and 0). Both hold the equity's discount
+on the ten-year yield; the dials and the placement p's are in the CHANGELOG. They are the worlds to
+pin in place of the 0.24.6 recipes. Each set is the members one round of the loop admitted around
+its recipe, 75 and 38; both score significantly better than the 0.24.6 sets under the release rule
+(the CHANGELOG has the numbers and the set misses).
 
 ## The deleveraging — `-delevrate`
 

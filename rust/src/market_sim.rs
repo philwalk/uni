@@ -531,6 +531,11 @@ const BOND_VOL_YEARS: usize = 24;
 /// default. The apparent gain was every drawdown being bigger at higher volatility, not a new
 /// degree of freedom. A dial swept alone can look like it moves a statistic it only co-moves with;
 /// the test is whether it still moves it with the co-movers pinned.
+/// SCALED BY A DIAL since PLAN row 65 (`World::noise_scale`, 1 is this constant to the bit): the
+/// calm-state floor was the one vol source no searched dial reached, and the Nasdaq record's floor
+/// sits above the S&P's (near-high 20-session sd 14.7% against 9.8% a year) while every
+/// Nasdaq-specific vol source acts only in a decline or an episode. The coupling above is the
+/// constraint the search works under, not a reason to hide the dial from it.
 const SIGMA_N: f64 = 0.007;
 
 /// THE SECOND TAIL CHANNEL. Daily kurtosis was a recorded scope exclusion for four releases,
@@ -596,10 +601,12 @@ fn jump_scale(w: &World) -> f64 {
 /// unconditional budget is the right ruler. 1.0 when the channel is off. 0 once the news variance
 /// has consumed the whole budget — a price running on jumps alone, whose bar channels have no
 /// diffusion sd to level on (`world_level` divides by the MEAN diffusion sd); `news_budget_refusal`
-/// turns that world away at the CLI rather than letting it reach a NaN bar.
-fn news_damp_at(news_rate: f64, news_size: f64) -> f64 {
+/// turns that world away at the CLI rather than letting it reach a NaN bar. The budget is the
+/// SCALED diffusion's (`World::noise_scale`), so the channel keeps its share of it.
+fn news_damp_at(news_rate: f64, news_size: f64, noise_scale: f64) -> f64 {
     if news_rate > 0.0 {
-        (1.0 - (news_rate / DAYS_PER_YEAR as f64) * news_size * news_size / (SIGMA_N * SIGMA_N))
+        let sigma = SIGMA_N * noise_scale;
+        (1.0 - (news_rate / DAYS_PER_YEAR as f64) * news_size * news_size / (sigma * sigma))
             .max(0.0)
             .sqrt()
     } else {
@@ -645,9 +652,10 @@ fn skewed_shock(z: f64, u: f64, d: f64, a: f64, b: f64) -> f64 {
 /// The CLI's refusal text for a news channel past the diffusion budget — `news_rate *
 /// news_size^2` must stay below `252 * SIGMA_N^2` — stated at the caller's rate as the largest
 /// admissible size; `None` inside the budget or with the channel off.
-fn news_budget_refusal(news_rate: f64, news_size: f64) -> Option<String> {
-    if news_rate > 0.0 && news_damp_at(news_rate, news_size) <= 0.0 {
-        let budget = DAYS_PER_YEAR as f64 * SIGMA_N * SIGMA_N;
+fn news_budget_refusal(news_rate: f64, news_size: f64, noise_scale: f64) -> Option<String> {
+    if news_rate > 0.0 && news_damp_at(news_rate, news_size, noise_scale) <= 0.0 {
+        let sigma = SIGMA_N * noise_scale;
+        let budget = DAYS_PER_YEAR as f64 * sigma * sigma;
         let max_size = (budget / news_rate).sqrt();
         Some(format!(
             "-newsrate {news_rate} -newssize {news_size} leave no diffusion to displace: newsRate*newsSize^2 must stay below 252*SIGMA_N^2 = {budget:.5} (at -newsrate {news_rate}, -newssize below {max_size:.4})"
@@ -666,8 +674,9 @@ const NEWS_BUDGET_SEARCH: f64 = 0.9;
 /// A proposed news size, pulled back to `NEWS_BUDGET_SEARCH` of the diffusion budget at the
 /// proposed rate; unchanged inside it or with the channel off. Every search path applies it to its
 /// proposal, so no search scores a world the CLI would refuse.
-pub fn news_size_within_budget(news_rate: f64, news_size: f64) -> f64 {
-    let cap = NEWS_BUDGET_SEARCH * DAYS_PER_YEAR as f64 * SIGMA_N * SIGMA_N;
+pub fn news_size_within_budget(news_rate: f64, news_size: f64, noise_scale: f64) -> f64 {
+    let sigma = SIGMA_N * noise_scale;
+    let cap = NEWS_BUDGET_SEARCH * DAYS_PER_YEAR as f64 * sigma * sigma;
     if news_rate > 0.0 && news_rate * news_size * news_size > cap {
         (cap / news_rate).sqrt()
     } else {
@@ -925,6 +934,10 @@ pub fn default_world() -> World {
         value_cap_fall: 0.0,
         recess_spread: 0.0,
         recess_transient: 0.0,
+        noise_scale: 1.0,
+        crowd_adjust: 0.0,
+        recess_step_share: 0.0,
+        recess_steps: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -1106,6 +1119,10 @@ fn v0_19_2() -> World {
         value_cap_fall: 0.0,
         recess_spread: 0.0,
         recess_transient: 0.0,
+        noise_scale: 1.0,
+        crowd_adjust: 0.0,
+        recess_step_share: 0.0,
+        recess_steps: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -1248,6 +1265,10 @@ fn v0_24_1() -> World {
         value_cap_fall: 0.0,
         recess_spread: 0.0,
         recess_transient: 0.0,
+        noise_scale: 1.0,
+        crowd_adjust: 0.0,
+        recess_step_share: 0.0,
+        recess_steps: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -1569,116 +1590,124 @@ fn v0_24_6_sp500() -> World {
     }
 }
 
-/// `0.25.0-sp500`: member 0 of `0.25.0-sp500.json`, the set loop's best-scoring clean member under
-/// the calibrated membership rule (the loop's seed world, the item-61 recipe with the term state's
-/// innovation and the expectation anchor moved by hand, fails the bond spiral's floor on one read
-/// of four and is not a member): the item-61 lineage with every searched dial at the member's --
-/// the seven record dials and the breakeven premium (`brk_vol` 0.0055, `brk_nominal` 0.68) held
-/// at the record's values throughout, the term state's innovation 0.0027, the expectation anchor
-/// 0.52, the yield's lag 20.4 and beta 0.0087, the vol feedback 0.069, the CPI noise exponent
-/// 0.92, the policy rule's growth term 0.048 -- and the equity's discount on the ten-year yield.
-/// Judged on four fresh seeds at 200 x 100: every class passes on all four, the placement's
-/// conformal p 0.41, 0.32, 0.54 and 0.22 over 51 units.
+/// `0.25.0-sp500`: member 0 of `0.25.0-sp500.json`, the PLAN row 65 milestone: the lag-free
+/// record's ledger (the CRPS form, every row at weight 1.0) solved with every searched dial free
+/// except the eight the record reads directly -- the disaster family's five, `spread_dd` 3.0,
+/// `brk_vol` 0.0055 and `brk_nominal` 0.68, held at the record's readings -- and `discount_lag`
+/// at 0; the equity's discount on the ten-year yield. Judged on four fresh seeds at 200 x 100:
+/// every class passes on all four, the ledger 42.5 on the judge's seeds.
 fn recipe_0250_sp500(mut w: World) -> World {
-    w.depth = 16.773506;
-    w.trend_share = 0.060792292;
-    w.drift = 0.14403558;
-    w.fund_vol = 0.040430787;
-    w.crowd_impact = 0.048807162;
-    w.stress = 3.9869773;
-    w.value_pull = 0.057121521;
-    w.recovery_drag = 5.2009841;
+    w.depth = 17.911124;
+    w.trend_share = 0.17328546;
+    w.drift = 0.13684795;
+    w.fund_vol = 0.047353994;
+    w.crowd_impact = 0.040595198;
+    w.stress = 3.8435735;
+    w.value_pull = 0.096683173;
+    w.recovery_drag = 0.0000000;
     w.recovery_floor = 0.055204865;
     w.disaster_rate = 0.60000000;
     w.disaster_size = 1.5000000;
     w.disaster_recover = 0.50000000;
-    w.belief_share = 0.95937062;
-    w.cap_years = 1.5683099;
-    w.vol_of_vol = 0.026288779;
-    w.jump_var = 0.16350340;
-    w.jump_rate = 0.0037710325;
-    w.leverage = 0.10754839;
-    w.down_shock = 0.014653510;
-    w.jump_skew = 0.85630166;
-    w.news_rate = 1.5640158;
-    w.news_size = 0.025298095;
-    w.refuge_days = 1.3211441;
-    w.easing = 0.11792698;
-    w.refuge = 0.11637317;
-    w.infl_size = 0.059685675;
-    w.discount = 6.1257818;
-    w.margin = 0.0070622432;
-    w.slow_share = 0.18037162;
-    w.slow_vol = 1.0662239;
-    w.slow_beta = 0.49814907;
-    w.slow_perm = 0.23128589;
-    w.belief_years = 2.3551805;
-    w.bust_amp = 0.063390082;
-    w.cycle_sd = 0.084766125;
-    w.cycle_years = 19.911873;
-    w.belief_leak = 0.16574779;
-    w.news_lev = 0.0000000;
-    w.news_revert = 0.40694174;
-    w.news_scale = 0.28277557;
-    w.news_bond = 0.030838546;
-    w.noise_skew = 0.89625390;
-    w.news_flip = 0.31122120;
-    w.news_bond_skip = 0.0000000;
-    w.credit_regime = 0.0000000;
-    w.credit_regime_rate = 0.79410362;
-    w.slow_bond_infl = 0.21568583;
-    w.lev_gain = 8.7673411;
-    w.boom_rate = 1.5691618;
-    w.boom_size = 0.98637696;
-    w.boom_len = 11.971072;
-    w.rate_mean = 0.068281740;
-    w.floorhold = 0.056012963;
-    w.recess_rate = 0.13218917;
-    w.recess_size = 0.35473167;
-    w.recess_len = 1.3582839;
-    w.recess_recover = 0.66241236;
-    w.recess_news = 2.6704980;
-    w.recess_vol = 0.083734985;
-    w.regime_drift = 0.00084328835;
+    w.belief_share = 0.97000000;
+    w.cap_years = 0.43818263;
+    w.vol_of_vol = 0.027139691;
+    w.jump_var = 0.16668900;
+    w.jump_rate = 0.0033018076;
+    w.leverage = 0.090605276;
+    w.down_shock = 0.011099640;
+    w.jump_skew = 0.64922989;
+    w.news_rate = 0.86185635;
+    w.news_size = 0.029284706;
+    w.refuge_days = 1.3746734;
+    w.easing = 0.14012794;
+    w.refuge = 0.10096404;
+    w.infl_size = 0.058732693;
+    w.discount = 6.1719315;
+    w.margin = 0.0079948416;
+    w.slow_share = 0.35604766;
+    w.slow_vol = 1.2526227;
+    w.slow_beta = 0.81476229;
+    w.slow_perm = 0.21465557;
+    w.belief_years = 3.0368100;
+    w.bust_amp = 0.058265447;
+    w.cycle_sd = 0.18902832;
+    w.cycle_years = 16.931935;
+    w.belief_leak = 0.30421062;
+    w.news_lev = 7.0559706;
+    w.news_revert = 0.45381200;
+    w.news_scale = 0.42905239;
+    w.news_bond = 0.44190504;
+    w.noise_skew = 0.94190034;
+    w.news_flip = 0.46973512;
+    w.news_bond_skip = 0.041643040;
+    w.credit_regime = 0.36283376;
+    w.credit_regime_rate = 0.80695129;
+    w.slow_bond_infl = 0.15338595;
+    w.lev_gain = 9.0172767;
+    w.boom_rate = 2.1376159;
+    w.boom_size = 0.87873117;
+    w.boom_len = 12.488339;
+    w.rate_mean = 0.067199103;
+    w.floorhold = 0.049687130;
+    w.recess_rate = 0.40368594;
+    w.recess_size = 0.31740919;
+    w.recess_len = 1.9099351;
+    w.recess_recover = 0.81154964;
+    w.recess_news = 1.1675715;
+    w.recess_vol = 0.0000000;
+    w.regime_drift = 0.00087949283;
     w.spread_dd = 3.0000000;
     w.disaster_anticipate = 1.0000000;
     w.disaster_overshoot = 0.31000000;
-    w.vol_pull = 0.92862313;
+    w.vol_pull = 2.0754116;
     w.discount_lag = 0.0000000;
-    w.discount_ref = 1.1338466;
-    w.drift_sd = 0.0081061303;
-    w.boom_fade = 1.5594635;
-    w.delev_rate = 0.063068615;
-    w.delev_from = 2.5152052;
-    w.delev_size = 0.14113277;
-    w.delev_len = 0.10800567;
-    w.recess_reprice = 0.62330515;
-    w.recess_base = 0.0000000;
-    w.recess_shape = 1.1633915;
-    w.overshoot = 0.78418372;
-    w.overshoot_rate = 0.14892127;
-    w.recess_rec_mult = 0.88467729;
-    w.recess_credit = 7.6278974;
-    w.recess_infl = 0.0000000;
-    w.term_premium = 0.075871165;
-    w.cpi_noise = 0.0053563279;
-    w.defl_prob = 0.21034650;
-    w.defl_size = 0.038465040;
-    w.spike_rate = 0.35260174;
-    w.spike_size = 0.021113355;
-    w.term_vol = 0.0026837914;
-    w.brk_vol = 0.0055000000;
-    w.brk_nominal = 0.68000000;
-    w.cpi_noise_level = 0.92227783;
-    w.policy_growth = 0.047605603;
-    w.yield_beta = 0.0087052271;
-    w.yield_lag = 20.422977;
-    w.exp_anchor = 0.51707668;
-    w.vol_feedback = 0.069035176;
-    w.discount_yield = 1.0;
+    w.discount_ref = 2.6125276;
+    w.drift_sd = 0.010815081;
+    w.boom_fade = 1.8766551;
+    w.delev_rate = 0.61444478;
+    w.delev_from = 1.7105632;
+    w.delev_size = 0.15130287;
+    w.delev_len = 0.12133245;
+    w.recess_reprice = 0.99087346;
+    w.recess_base = 0.36145987;
+    w.recess_shape = 2.7221896;
+    w.overshoot = 0.52499669;
+    w.overshoot_rate = 0.18904080;
+    w.recess_rec_mult = 1.7708100;
+    w.recess_credit = 11.116227;
+    w.recess_infl = 0.13664004;
+    w.value_cap = 0.030194117;
+    w.value_cap_fall = 0.018416609;
+    w.recess_transient = 0.088421989;
+    w.noise_scale = 1.2123347;
+    w.crowd_adjust = 0.81750439;
     // the vol pull in the step, as every 0.25.0 world carries it
     w.vol_pull_step = true;
-    with_item62_dials(w, SP500_CHANNEL_DIALS)
+    with_item62_dials(recipe_0250_sp500_rates(w), SP500_CHANNEL_DIALS)
+}
+
+/// `0.25.0-sp500`'s rate leg: the term state, the CPI's noise and its jumps, the breakeven
+/// premium at the record's values, the yield's response to the market and the equity's discount
+/// on the ten-year yield, at member 0's values with the rest of the recipe.
+fn recipe_0250_sp500_rates(mut w: World) -> World {
+    w.term_premium = 0.074038650;
+    w.cpi_noise = 0.0050337320;
+    w.defl_prob = 0.18270386;
+    w.defl_size = 0.032022171;
+    w.spike_rate = 0.49815479;
+    w.spike_size = 0.014520376;
+    w.term_vol = 0.0031154592;
+    w.brk_vol = 0.0055000000;
+    w.brk_nominal = 0.68000000;
+    w.cpi_noise_level = 0.62238551;
+    w.policy_growth = 0.017061144;
+    w.yield_beta = 0.0000000;
+    w.yield_lag = 28.615231;
+    w.exp_anchor = 0.37483225;
+    w.vol_feedback = 0.20839856;
+    w.discount_yield = 1.0000000;
+    w
 }
 
 /// THE ITEM 62 DIALS a 0.25.0 recipe carries: the satellite leg at the set's channel dials (B:
@@ -1714,6 +1743,10 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
         value_cap_fall: 0.0,
         recess_spread: 0.0,
         recess_transient: 0.0,
+        noise_scale: 1.0,
+        crowd_adjust: 0.0,
+        recess_step_share: 0.0,
+        recess_steps: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -1722,109 +1755,100 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
     }
 }
 
-/// `0.25.0-nasdaq`: the seed world of the set loop under the calibrated membership rule, member 0 of
-/// `0.25.0-nasdaq.json`: the item-60 re-solve's lineage with every searched dial at the loop's seed
-/// row (the term state's innovation 0.0035, the expectation anchor 0.23, the yield's lag 14.7 and
-/// beta 0.029, the vol feedback 0.11, the CPI noise exponent 0.83, the policy rule's growth term
-/// 0.13), the equity's discount on the ten-year yield and the volume channel at QQQ's. Judged on four
-/// fresh seeds at 200 x 100: every class passes on all four, the placement's conformal p 0.73,
-/// 0.55, 0.77 and 0.39 over 42 units.
+/// `0.25.0-nasdaq`: member 0 of `0.25.0-nasdaq.json`, the PLAN row 65 milestone on the Nasdaq's
+/// era: the lag-free record's ledger (every row at weight 1.0) solved with every searched dial
+/// free except the disaster family's five and `spread_dd` 1.0, held at the record's readings, and
+/// `discount_lag` at 0, the breakeven premium and its nominal share free on the Nasdaq's own era;
+/// the equity's discount on the ten-year yield and the volume channel at QQQ's. Judged on four
+/// fresh seeds at 200 x 100: every class passes on all four, the placement p 0.68 over the pooled
+/// histories.
 fn recipe_0250_nasdaq(mut w: World) -> World {
-    w.depth = 11.450121;
-    w.trend_share = 0.23183589;
-    w.drift = 0.13292321;
-    w.fund_vol = 0.034507530;
-    w.crowd_impact = 0.048120951;
-    w.stress = 3.1593101;
-    w.value_pull = 0.090116112;
-    w.recovery_drag = 2.7653297;
-    w.recovery_floor = 0.12148979;
-    w.disaster_rate = 0.75999208;
-    w.disaster_size = 1.3111582;
-    w.disaster_recover = 0.48955279;
-    w.belief_share = 0.62546561;
-    w.cap_years = 4.8269529;
-    w.vol_of_vol = 0.018628623;
-    w.jump_var = 0.073129533;
-    w.jump_rate = 0.0049906149;
-    w.leverage = 0.052489722;
-    w.down_shock = 0.0093531916;
-    w.jump_skew = 0.28116924;
-    w.news_rate = 29.437252;
-    w.news_size = 0.0056868289;
-    w.refuge_days = 0.82592821;
-    w.easing = 0.066333206;
-    w.refuge = 0.089236004;
-    w.infl_size = 0.062443738;
-    w.discount = 5.2461914;
-    w.margin = 0.0061523804;
-    w.slow_share = 0.45833298;
-    w.slow_vol = 1.2687500;
-    w.slow_beta = 0.57845340;
-    w.slow_perm = 0.084424657;
-    w.belief_years = 0.69433940;
-    w.bust_amp = 0.21338562;
-    w.cycle_sd = 0.075952632;
-    w.cycle_years = 9.6331015;
-    w.belief_leak = 0.30148008;
-    w.news_lev = 60.000000;
-    w.news_revert = 0.30357545;
-    w.news_scale = 0.14876058;
-    w.news_bond = 0.31295581;
-    w.noise_skew = 0.25032415;
-    w.news_flip = 0.38784764;
-    w.news_bond_skip = 0.31657758;
-    w.credit_regime = 0.58073850;
-    w.credit_regime_rate = 6.6292032;
-    w.slow_bond_infl = 0.61723408;
-    w.lev_gain = 2.8285203;
-    w.boom_rate = 2.4954619;
-    w.boom_size = 1.9960653;
-    w.boom_len = 2.6661261;
-    w.rate_mean = 0.031061953;
-    w.floorhold = 0.10055246;
-    w.recess_rate = 0.013311618;
-    w.recess_size = 0.22999318;
-    w.recess_len = 1.8616783;
-    w.recess_recover = 0.70078690;
-    w.recess_news = 1.7400102;
-    w.recess_vol = 0.85647095;
-    w.regime_drift = 0.00058465100;
-    w.spread_dd = 0.15600533;
-    w.disaster_anticipate = 0.019654535;
-    w.disaster_overshoot = 0.078482824;
-    w.vol_pull = 0.40504607;
+    w.depth = 13.466691;
+    w.trend_share = 0.050000000;
+    w.drift = 0.13610476;
+    w.fund_vol = 0.048775299;
+    w.crowd_impact = 0.14825881;
+    w.stress = 3.3301890;
+    w.value_pull = 0.068937143;
+    w.recovery_drag = 0.79451818;
+    w.recovery_floor = 0.052958010;
+    w.disaster_rate = 0.60000000;
+    w.disaster_size = 1.5000000;
+    w.disaster_recover = 0.50000000;
+    w.belief_share = 0.61203588;
+    w.cap_years = 3.6201472;
+    w.vol_of_vol = 0.022740627;
+    w.jump_var = 0.083195188;
+    w.jump_rate = 0.0043261463;
+    w.leverage = 0.076725205;
+    w.down_shock = 0.0071087374;
+    w.jump_skew = 0.094076273;
+    w.news_rate = 22.403226;
+    w.news_size = 0.010662247;
+    w.refuge_days = 0.41558574;
+    w.easing = 0.081172220;
+    w.refuge = 0.11191281;
+    w.infl_size = 0.040625138;
+    w.discount = 7.5769784;
+    w.margin = 0.0046249107;
+    w.slow_share = 0.25976325;
+    w.slow_vol = 0.99740072;
+    w.slow_beta = 0.68041444;
+    w.slow_perm = 0.25357009;
+    w.belief_years = 1.6558633;
+    w.bust_amp = 0.20667548;
+    w.cycle_sd = 0.10350026;
+    w.cycle_years = 8.8941102;
+    w.belief_leak = 0.29141528;
+    w.news_lev = 51.210173;
+    w.news_revert = 0.23898662;
+    w.news_scale = 0.18013529;
+    w.news_bond = 0.24905648;
+    w.noise_skew = 0.0000000;
+    w.news_flip = 0.58058463;
+    w.news_bond_skip = 0.26802551;
+    w.credit_regime = 0.41687030;
+    w.credit_regime_rate = 2.1976138;
+    w.slow_bond_infl = 0.48413856;
+    w.lev_gain = 7.7059167;
+    w.boom_rate = 1.7101648;
+    w.boom_size = 1.8630846;
+    w.boom_len = 1.2366512;
+    w.rate_mean = 0.032355704;
+    w.floorhold = 0.076867444;
+    w.recess_rate = 0.14035603;
+    w.recess_size = 0.22281525;
+    w.recess_len = 1.4963064;
+    w.recess_recover = 0.77526836;
+    w.recess_news = 1.1005392;
+    w.recess_vol = 0.12710285;
+    w.regime_drift = 5.5542181e-05;
+    w.spread_dd = 1.0000000;
+    w.disaster_anticipate = 1.0000000;
+    w.disaster_overshoot = 0.31000000;
+    w.vol_pull = 0.14188769;
     w.discount_lag = 0.0000000;
-    w.discount_ref = 3.6606125;
-    w.drift_sd = 0.033478470;
-    w.boom_fade = 1.0968268;
-    w.delev_rate = 1.1163501;
-    w.delev_from = 5.2278195;
-    w.delev_size = 0.23686479;
-    w.delev_len = 0.022762360;
-    w.recess_reprice = 0.57602135;
-    w.recess_base = 0.0000000;
-    w.recess_shape = 1.0463852;
-    w.overshoot = 0.56998244;
-    w.overshoot_rate = 0.21072458;
-    w.recess_rec_mult = 1.0967058;
-    w.recess_credit = 2.4681712;
-    w.recess_infl = 0.21667511;
-    w.term_premium = 0.047451711;
-    w.cpi_noise = 0.0096055783;
-    w.defl_prob = 0.29465125;
-    w.defl_size = 0.020940564;
-    w.spike_rate = 0.36650125;
-    w.spike_size = 0.0041978899;
-    w.term_vol = 0.0034576998;
-    w.brk_vol = 0.0044545744;
-    w.brk_nominal = 0.024950044;
-    w.cpi_noise_level = 0.83072830;
-    w.policy_growth = 0.12533479;
-    w.yield_beta = 0.029007258;
-    w.yield_lag = 14.716494;
-    w.exp_anchor = 0.22533506;
-    w.vol_feedback = 0.10855577;
+    w.discount_ref = 6.8062828;
+    w.drift_sd = 0.037594600;
+    w.boom_fade = 2.2459735;
+    w.delev_rate = 1.2257547;
+    w.delev_from = 5.2627886;
+    w.delev_size = 0.052086259;
+    w.delev_len = 0.020000000;
+    w.recess_reprice = 0.96652509;
+    w.recess_base = 1.5000000;
+    w.recess_shape = 1.4128394;
+    w.overshoot = 0.67851232;
+    w.overshoot_rate = 0.26033244;
+    w.recess_rec_mult = 1.6478872;
+    w.recess_credit = 0.15314324;
+    w.recess_infl = 0.33819567;
+    w.value_cap = 0.26524827;
+    w.value_cap_fall = 0.057704003;
+    w.recess_spread = 0.21311599;
+    w.recess_transient = 0.15331538;
+    w.noise_scale = 1.5578075;
+    w.crowd_adjust = 0.98862035;
     // THE VOLUME CHANNEL AT QQQ'S: the idiosyncratic sd that puts QQQ's record (volume sd 0.417,
     // volume vs range 0.56; bars-2026-09-01.tsv, 1999-2026) at the least summed CRPS of the two
     // rows over the set's members (the S&P's 0.34 read 3.84 against 0.27's 2.74 in the
@@ -1837,7 +1861,29 @@ fn recipe_0250_nasdaq(mut w: World) -> World {
     w.discount_yield = 1.0;
     // the vol pull in the step, as every 0.25.0 world carries it
     w.vol_pull_step = true;
-    with_item62_dials(w, NASDAQ_CHANNEL_DIALS)
+    with_item62_dials(recipe_0250_nasdaq_rates(w), NASDAQ_CHANNEL_DIALS)
+}
+
+/// `0.25.0-nasdaq`'s rate leg: the term state, the CPI's noise and its jumps, the breakeven
+/// premium and its nominal share free on the Nasdaq's era, the yield's response to the market, at
+/// member 0's values with the rest of the recipe.
+fn recipe_0250_nasdaq_rates(mut w: World) -> World {
+    w.term_premium = 0.090792417;
+    w.cpi_noise = 0.0063925864;
+    w.defl_prob = 0.20725420;
+    w.defl_size = 0.034976964;
+    w.spike_rate = 0.14320601;
+    w.spike_size = 0.029977103;
+    w.term_vol = 0.0030333366;
+    w.brk_vol = 0.0040672370;
+    w.brk_nominal = 0.0000000;
+    w.cpi_noise_level = 0.97497197;
+    w.policy_growth = 0.0000000;
+    w.yield_beta = 0.033094318;
+    w.yield_lag = 24.417578;
+    w.exp_anchor = 0.30395589;
+    w.vol_feedback = 0.47281556;
+    w
 }
 
 /// The 0.25.0 recipes.
@@ -2560,6 +2606,10 @@ fn v0_23_0() -> World {
         value_cap_fall: 0.0,
         recess_spread: 0.0,
         recess_transient: 0.0,
+        noise_scale: 1.0,
+        crowd_adjust: 0.0,
+        recess_step_share: 0.0,
+        recess_steps: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -2722,6 +2772,10 @@ fn v0_22_1() -> World {
         value_cap_fall: 0.0,
         recess_spread: 0.0,
         recess_transient: 0.0,
+        noise_scale: 1.0,
+        crowd_adjust: 0.0,
+        recess_step_share: 0.0,
+        recess_steps: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -2886,6 +2940,10 @@ fn v0_22_0() -> World {
         value_cap_fall: 0.0,
         recess_spread: 0.0,
         recess_transient: 0.0,
+        noise_scale: 1.0,
+        crowd_adjust: 0.0,
+        recess_step_share: 0.0,
+        recess_steps: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -3050,6 +3108,10 @@ fn v0_21_0() -> World {
         value_cap_fall: 0.0,
         recess_spread: 0.0,
         recess_transient: 0.0,
+        noise_scale: 1.0,
+        crowd_adjust: 0.0,
+        recess_step_share: 0.0,
+        recess_steps: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -3214,6 +3276,10 @@ fn v0_20_0() -> World {
         value_cap_fall: 0.0,
         recess_spread: 0.0,
         recess_transient: 0.0,
+        noise_scale: 1.0,
+        crowd_adjust: 0.0,
+        recess_step_share: 0.0,
+        recess_steps: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -3383,16 +3449,16 @@ pub struct World {
     /// smooth repricing (bit-identical to before the dial), 0 leaves the whole decline to the
     /// step.
     pub recess_reprice: f64,
-    /// THE RECESSION'S CALM ONSET (probe, 2026-10-01, CLI only): added to the stress index in the
+    /// THE RECESSION'S CALM ONSET (probe, 2026-10-01): added to the stress index in the
     /// onset hazard, so a recession can begin in a calm market and the stress arrives through the
     /// slide (`recess_vol`, `recess_news`) rather than before it. 0 is off and bit-identical.
     pub recess_base: f64,
-    /// THE RECESSION'S PROFILE (probe, 2026-10-01, CLI only): the slide's sessions take shares of
+    /// THE RECESSION'S PROFILE (probe, 2026-10-01): the slide's sessions take shares of
     /// `recess_size` growing as (t/T)^shape, so the decline starts slowly and ends in its steepest
     /// leg, the record's shape (the first quarter of a long decline carries a fifth of the fall,
     /// the last quarter half). 0 is the even slide and bit-identical.
     pub recess_shape: f64,
-    /// THE OVERSHOOT (probe, 2026-10-01, CLI only): the share of the spiral's amplification of a
+    /// THE OVERSHOOT (probe, 2026-10-01): the share of the spiral's amplification of a
     /// session's flow and noise that is transient -- liquidity moved the price further than the
     /// order warranted, and the excess is given back over the following sessions at
     /// `overshoot_rate` per session. Inside the record's declines the daily path mean-reverts
@@ -3402,7 +3468,7 @@ pub struct World {
     pub overshoot: f64,
     /// the overshoot's return rate per session (see `overshoot`)
     pub overshoot_rate: f64,
-    /// THE RECOVERY'S LENGTH (probe, 2026-10-01, CLI only) as a multiple of `recess_len`: 2 is the
+    /// THE RECOVERY'S LENGTH (probe, 2026-10-01) as a multiple of `recess_len`: 2 is the
     /// shipped leg and bit-identical; 1 regains the share over the decline's own length, the
     /// record's V (2009, 1933), which turns the slide-and-regain into a reversal inside the year
     pub recess_rec_mult: f64,
@@ -4110,6 +4176,48 @@ pub struct World {
     /// model's tracks the fundamental to the trough and carries all of it. 0 is off and
     /// bit-identical.
     pub recess_transient: f64,
+    /// THE DIFFUSION'S SCALE (PLAN row 65): multiplies the price's diffusive noise `SIGMA_N` and
+    /// the news budget that displaces it (`news_damp_at`), nothing else -- not the jumps' size,
+    /// the slow leg's scale, the bond noise or the crowd flow's normalisation. The calm-state
+    /// floor was the one vol source no searched dial reached, and the Nasdaq record's floor sits
+    /// above the S&P's while every Nasdaq-specific vol source acts only in a decline or an
+    /// episode. Searched in both worlds (range 1.0-1.6). 1 is bit-identical.
+    pub noise_scale: f64,
+    /// THE MOMENTUM CROWD'S GRADUAL EXPOSURE ADJUSTMENT (PLAN row 65): the exposure the crowd
+    /// holds moves toward its target (`trend_pos`) each session by the share
+    /// 1 - exp(-crowdAdjust / 252) of the gap, a per-year rate (2.8 is a three-month half-life,
+    /// 12 a three-week one), and its flow is the exposure TRADED, the move of the held exposure.
+    /// A crowd that jumps to its target every session trades the target's change, the return
+    /// this session less the return the window drops, so it SELLS the old return and the model
+    /// reverts at months where the record trends; a crowd adjusting gradually trades toward the
+    /// target over weeks and carries the persistence. Its performance (`perf_t`) is on the
+    /// exposure held. The other crowds are untouched. 0 is off, the held exposure the target
+    /// itself, and bit-identical.
+    pub crowd_adjust: f64,
+    /// THE RECESSION'S MARKDOWN DELIVERED AT NEWS TIME (PLAN row 65, probe): the share of the
+    /// episode's markdown of value (`recess_size`, as drawn) that lands as ONE STEP at the
+    /// phase's first session -- the onset for the decline, the trough for the regain -- the rest
+    /// gliding over the slide as before (`recess_shape` on the remainder); the price takes the
+    /// step's `recess_reprice` share the same session, the fundamental the whole, and the
+    /// overshoot's give-back (`overshoot`) acts on the step as on a deleveraging order, so the
+    /// price gives back its transient share over the sessions after. The placement is the step
+    /// test's (row 64): the phase's total at its FIRST session reads 1.01 at 250 days where the
+    /// quarter reads 1.10, the middle 1.20 and the end 1.24, and lumps keep 1 - 1/K of a glide,
+    /// so one step, not a ladder. The turbulence spell (`recess_vol`), the news rate
+    /// (`recess_news`) and the falling flag keep the episode's length. 0 is the glide and
+    /// bit-identical; 1 delivers the whole markdown at the step.
+    pub recess_step_share: f64,
+    /// THE STEP AS LUMPS INSIDE THE DECLINE (PLAN row 65, probe; a whole number): with
+    /// `recess_step_share` on, the decline's step share is split into this many equal lumps,
+    /// each landing at the start of its own session drawn uniformly without replacement from the
+    /// slide's sessions (the first allowed) on the lumps' own stream, in place of the one lump at
+    /// the onset; each lump is delivered as the onset's is (the fundamental whole, the price its
+    /// `recess_reprice` share, the overshoot reading it), the remainder glides, and the regain
+    /// keeps its one step at the trough. The record's 10-25% correction carries two thirds of its
+    /// fall in its three worst sessions, spread over sixteen, the first a fifth of the way down.
+    /// More lumps than the slide has sessions take one each. 0 is the onset lump and
+    /// bit-identical.
+    pub recess_steps: f64,
     /// THE RESPONSE'S LAG (item 61): the return the beta's state reads is an EWMA of the
     /// observed equity return with this half-life in sessions, unit mass, so the same move
     /// reprices the path over weeks rather than the next session: the record's correlation
@@ -7449,8 +7557,10 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let slow_norm = w.slow_lev * w.slow_lev;
     let slow_scale = SIGMA_N * w.slow_vol * (12.0 / w.depth);
     let mix = (1.0 - w.slow_share).sqrt();
+    // the diffusion's scale (`noise_scale`): exactly `SIGMA_N` at 1
+    let sigma_n = SIGMA_N * w.noise_scale;
     // News variance DISPLACES diffusive noise (see `news_damp_at`); 1.0 when the channel is off.
-    let news_damp = news_damp_at(w.news_rate, w.news_size);
+    let news_damp = news_damp_at(w.news_rate, w.news_size, w.noise_scale);
     // the bond leg of news (`news_bond`): its state, and the stream that picks the news it
     // answers (`news_bond_skip`)
     let mut news_b = 0.0f64;
@@ -7474,6 +7584,13 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     };
     let mut crowd_e = crowd_init;
     let mut crowd_prev = crowd_init;
+    // the momentum crowd's gradual adjustment (see `crowd_adjust`): the share of the gap to its
+    // target the held exposure closes each session; 0 is the target itself
+    let crowd_adj_k = if w.crowd_adjust > 0.0 {
+        1.0 - exp_det(-w.crowd_adjust / DAYS_PER_YEAR as f64)
+    } else {
+        0.0
+    };
     // BELIEF state for the slow valuation cycle: the EWMA of the price/fair gap that perceived
     // fair value has absorbed. Updated from information strictly before this session.
     let mut belief = 0.0f64;
@@ -7528,6 +7645,17 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     // the running episode's size (see `recess_spread`): drawn at onset on its own stream
     let mut recess_size_rng = NumPyRng::new(seed ^ 0x51ce_2ece_5510u64);
     let mut recess_size_now = w.recess_size;
+    // the size the slide glides (`recess_step_share`): the episode's less the step's lump; the
+    // episode's size with the step off
+    let mut recess_slide_size = w.recess_size;
+    // the price move the step made this session, which the overshoot reads after the market's
+    // step (`recess_step_share`)
+    let mut recess_over = 0.0f64;
+    // the step's lumps inside the decline (`recess_steps`): their own stream, the slide sessions
+    // that carry one (by offset from the slide's first) and each lump's size
+    let mut recess_lump_rng = NumPyRng::new(seed ^ 0x2ece_5510_5e55u64);
+    let mut recess_lump_at: Vec<bool> = Vec::new();
+    let mut recess_lump = 0.0f64;
     // the running recession's decline so far and, from its trough, the recovery still to come:
     // what `recess_transient` adds to the seen fundamental
     let mut recess_down = 0.0f64;
@@ -7683,6 +7811,16 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // to the gate never shifts another stream.
         if recess_prob > 0.0 {
             if recess_left > 0 {
+                // a lump of the step inside the decline (see `recess_steps`), at the session's
+                // start, delivered as the onset's lump is
+                if !recess_lump_at.is_empty() && recess_lump_at[recess_total - recess_left] {
+                    log_vbase -= recess_lump;
+                    let slide = recess_lump * w.recess_reprice * (1.0 - w.recess_transient);
+                    eq_m.log_p -= slide;
+                    vp.recess -= slide;
+                    recess_over -= slide;
+                    recess_down += recess_lump;
+                }
                 // the price falls with the earnings: repriced the same session, as news is, so
                 // the recession opens no gap for the value pull to buy back and the wings (the
                 // price's time off its fundamental) are untouched
@@ -7690,7 +7828,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     let t = (recess_total - recess_left) as f64;
                     let tt = recess_total as f64;
                     let k = w.recess_shape + 1.0;
-                    recess_size_now * (pow_det((t + 1.0) / tt, k) - pow_det(t / tt, k))
+                    recess_slide_size * (pow_det((t + 1.0) / tt, k) - pow_det(t / tt, k))
                 } else {
                     recess_step
                 };
@@ -7707,6 +7845,9 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 if w.recess_transient > 0.0 {
                     recess_down += step;
                 }
+                if recess_left == 0 {
+                    recess_lump_at.clear();
+                }
                 if recess_left == 0 && w.recess_recover > 0.0 {
                     // regained over twice the decline's length: a recovery leg that outruns
                     // the price puts the price under its fundamental for years (the lower wing)
@@ -7715,6 +7856,21 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     rrec_step = w.recess_recover * recess_size_now / rrec_left as f64;
                     if w.recess_transient > 0.0 {
                         recess_back = w.recess_recover * recess_size_now;
+                    }
+                    if w.recess_step_share > 0.0 {
+                        // the regain's step at the trough (see `recess_step_share`): its share of
+                        // the recovery at once, the rest over the regain leg
+                        let total = w.recess_recover * recess_size_now;
+                        let lump = w.recess_step_share * total;
+                        rrec_step = (total - lump) / rrec_left as f64;
+                        log_vbase += lump;
+                        let regain = lump * w.recess_reprice * (1.0 - w.recess_transient);
+                        eq_m.log_p += regain;
+                        vp.recess += regain;
+                        recess_over += regain;
+                        if w.recess_transient > 0.0 {
+                            recess_back = total - lump;
+                        }
                     }
                 }
             } else {
@@ -7758,6 +7914,39 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     };
                     recess_step = recess_size_now / recess_left as f64;
                     recess_down = 0.0;
+                    recess_slide_size = recess_size_now;
+                    if w.recess_step_share > 0.0 {
+                        // the markdown's step at the onset (see `recess_step_share`): its share
+                        // of the drawn size at once, the fundamental whole and the price its
+                        // repriced share, the rest gliding over the slide
+                        let lump = w.recess_step_share * recess_size_now;
+                        recess_slide_size = recess_size_now - lump;
+                        recess_step = recess_slide_size / recess_left as f64;
+                        if w.recess_steps >= 1.0 {
+                            // the step as lumps inside the decline (see `recess_steps`): the
+                            // sessions drawn now, each lump delivered when its session comes
+                            let k = (w.recess_steps as usize).min(recess_left);
+                            recess_lump = lump / k as f64;
+                            let mut idx: Vec<usize> = (0..recess_left).collect();
+                            for j in 0..k {
+                                let r = j + recess_lump_rng
+                                    .next_bounded_u32((recess_left - j) as u32)
+                                    as usize;
+                                idx.swap(j, r);
+                            }
+                            recess_lump_at = vec![false; recess_left];
+                            for &t in &idx[..k] {
+                                recess_lump_at[t] = true;
+                            }
+                        } else {
+                            log_vbase -= lump;
+                            let slide = lump * w.recess_reprice * (1.0 - w.recess_transient);
+                            eq_m.log_p -= slide;
+                            vp.recess -= slide;
+                            recess_over -= slide;
+                            recess_down += lump;
+                        }
+                    }
                     if i >= BURN_IN {
                         recess_count += 1;
                     }
@@ -8194,13 +8383,15 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             },
         );
         let mispricing_pre = fund_seen - eq_m.log_p; // value agents arb the traded component
-        let lookback = 60usize;
-        let past = if i >= lookback {
-            ln_det(px[i - lookback])
-        } else {
-            log_pobs
+        let momentum = {
+            let lookback = 60usize;
+            let past = if i >= lookback {
+                ln_det(px[i - lookback])
+            } else {
+                log_pobs
+            };
+            log_pobs - past
         };
-        let momentum = log_pobs - past;
         // `tanh_p`, not the native tanh, since 0.23.0 — see `tanh_p`: the native form diverged
         // from the JVM's by one ulp on a cycle-world input after four releases of input luck.
         let trend_pos = tanh_p(momentum / 0.12);
@@ -8218,7 +8409,13 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // target flip-flopping across a moving average, and a continuous target has nothing to
         // flip-flop about.
         if matches!(w.crowd, Crowd::Momentum) {
-            crowd_e = trend_pos;
+            // the held exposure (see `crowd_adjust`): the target itself at 0, bit-identical;
+            // otherwise last session's exposure moved a share of the way to the target
+            crowd_e = if w.crowd_adjust > 0.0 {
+                crowd_e + crowd_adj_k * (trend_pos - crowd_e)
+            } else {
+                trend_pos
+            };
         }
         // ONE price-impact rule for every crowd: pressure comes from the exposure TRADED this
         // session, never from the exposure held. A crowd that has been long for a month and is still
@@ -8253,7 +8450,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         } else {
             exp_det(asym_g - asym_norm)
         };
-        let d_noise = news_damp * SIGMA_N * exp_det(log_vol - vol_norm) * z_body * asym_m * mix;
+        let d_noise = news_damp * sigma_n * exp_det(log_vol - vol_norm) * z_body * asym_m * mix;
         // read BEFORE this session's update, like the kick: the response is to PAST declines
         let vol_resp_m = if w.vol_resp > 0.0 {
             exp_det(w.vol_resp * vol_resp_s)
@@ -8334,7 +8531,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 1.0
             };
             let sd_pre = news_damp
-                * SIGMA_N
+                * sigma_n
                 * exp_det(log_vol - vol_norm)
                 * lev_mult
                 * jv_mult
@@ -8443,7 +8640,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 1.0
             };
             news_damp
-                * SIGMA_N
+                * sigma_n
                 * exp_det(log_vol - vol_norm)
                 * lev_mult
                 * jv_mult
@@ -8681,7 +8878,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             let day = (eq_m.log_p - log_p_open) + eq_m.predict(perceived_fair, step_in)
                 - (markdown - markdown_prev);
             let sd_day = news_damp
-                * SIGMA_N
+                * sigma_n
                 * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s)
                 * asym_m
                 * regime_m
@@ -8714,7 +8911,14 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         if w.overshoot > 0.0 {
             // the amplification's excess over the unamplified order: (amp - 1) x input x impact
             over_owed += w.overshoot * step_in * (eq_m.last_liq - eq_m.impact);
+            if recess_over != 0.0 {
+                // the recession's step (see `recess_step_share`) as the order sized in return
+                // that would have made it, so its transient share is the deleveraging's
+                over_owed +=
+                    w.overshoot * (recess_over / eq_m.last_liq) * (eq_m.last_liq - eq_m.impact);
+            }
         }
+        recess_over = 0.0;
         if w.vol_resp > 0.0 || w.jump_resp > 0.0 {
             // The REALIZED decline, in units of the sd that generated it, saturated at four like
             // the kick's and centred at a normal's E[max(-z,0)] so the state has mean zero and the
@@ -8965,8 +9169,10 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // they are different questions. A crowd earns or loses on what it is holding; it moves the
         // price by what it is buying or selling. Conflating the two is the defect that shipped
         // through 0.21.0.
+        // the momentum crowd's exposure is `crowd_e`, its target at `crowd_adjust` 0 and the
+        // exposure it has adjusted to otherwise
         let crowd_pos = match w.crowd {
-            Crowd::Momentum => trend_pos,
+            Crowd::Momentum => crowd_e,
             _ => crowd_e - 1.0,
         };
         perf_t = 0.99 * perf_t + 0.01 * (crowd_pos * ret_e) * 100.0;
@@ -24347,6 +24553,22 @@ fn n_star_str(x: f64) -> String {
 pub type Setter = fn(&mut World, f64);
 pub type Getter = fn(&World) -> f64;
 
+/// THE ROW 65 PROBE DIALS a search may set on its seed worlds and never steps (`-seedset`): the
+/// recession's step share and its lumps, by their world keys. Outside `calibrate_ranges`, so no child moves them and the archive's columns are
+/// unchanged; written in a world's body only when on (`OPTIONAL_WORLD_KEYS`), so a seed carrying
+/// one moves the seed worlds' digest and the export carries it.
+#[must_use]
+pub fn probe_dials() -> Vec<(&'static str, Setter, Getter)> {
+    vec![
+        (
+            "recessStep",
+            |w, x| w.recess_step_share = x,
+            |w| w.recess_step_share,
+        ),
+        ("recessSteps", |w, x| w.recess_steps = x, |w| w.recess_steps),
+    ]
+}
+
 /// Parameters that say WHICH ASSET is being simulated, not how a market behaves. Each is a real
 /// fund's published number: MEASURED once and then held, never fitted. `-calibrate` must not
 /// search one, for two reasons that are separate. A duration chosen to reduce loss describes no
@@ -24377,7 +24599,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "tips", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 99] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 101] = [
     "depth",
     "trendShare",
     "drift",
@@ -24477,6 +24699,8 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 99] = [
     "valueCapFall",
     "recessSpread",
     "recessTransient",
+    "noiseScale",
+    "crowdAdjust",
 ];
 
 /// THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration search
@@ -24576,7 +24800,7 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
         (
             "valuePull",
             0.010,
-            0.100,
+            0.25,
             |w, x| w.value_pull = x,
             |w| w.value_pull,
         ),
@@ -24888,14 +25112,14 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
         ),
         (
             "recessSize",
-            0.1,
+            0.08,
             2.0,
             |w, x| w.recess_size = x,
             |w| w.recess_size,
         ),
         (
             "recessLen",
-            0.5,
+            0.10,
             3.0,
             |w, x| w.recess_len = x,
             |w| w.recess_len,
@@ -25045,7 +25269,7 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
         (
             "overshootRate",
             0.05,
-            0.4,
+            0.6,
             |w, x| w.overshoot_rate = x,
             |w| w.overshoot_rate,
         ),
@@ -25212,6 +25436,23 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             |w, x| w.recess_transient = x,
             |w| w.recess_transient,
         ),
+        // the diffusion's scale (PLAN row 65): the Nasdaq's calm floor sits 1.2x the model's at 1;
+        // searched in both worlds
+        (
+            "noiseScale",
+            1.0,
+            1.6,
+            |w, x| w.noise_scale = x,
+            |w| w.noise_scale,
+        ),
+        // the momentum crowd's adjustment rate a year (PLAN row 65): 12 is a three-week half-life
+        (
+            "crowdAdjust",
+            0.0,
+            12.0,
+            |w, x| w.crowd_adjust = x,
+            |w| w.crowd_adjust,
+        ),
     ]
 }
 
@@ -25258,7 +25499,7 @@ fn calibrate(a: Anchors, n_samples: usize, base: &World, seed: u64) {
             }
             // the size pulled inside the news budget, and the description read off the world
             // scored, so a printed world is the one that was scored
-            w.news_size = news_size_within_budget(w.news_rate, w.news_size);
+            w.news_size = news_size_within_budget(w.news_rate, w.news_size, w.noise_scale);
             let desc: Vec<String> = ranges
                 .iter()
                 .map(|(nm, _, _, _, get)| format!("{nm}={}", jf(get(&w), 0, 4)))
@@ -28930,6 +29171,7 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("cycleYears", num(w.cycle_years)),
         ("crowd", json_str(&crowd_name(w.crowd))),
         ("crowdImpact", num(w.crowd_impact)),
+        ("crowdAdjust", num(w.crowd_adjust)),
         ("panic", num(w.panic)),
         ("duration", num(w.duration)),
         ("bond10", num(w.bond10)),
@@ -28987,6 +29229,7 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("levGain", num(w.lev_gain)),
         ("stressScale", num(w.stress_scale)),
         ("levPersist", num(w.lev_persist)),
+        ("noiseScale", num(w.noise_scale)),
         ("noiseAsym", num(w.noise_asym)),
         ("noiseAsymPhi", num(w.noise_asym_phi)),
         ("noiseAsymCap", num(w.noise_asym_cap)),
@@ -29021,6 +29264,28 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
             .position(|(k, _)| *k == "volPull")
             .map_or(fields.len(), |k| k + 1);
         fields.insert(at, ("volPullStep", num(1.0)));
+    }
+    // THE ROW 65 PROBES, each beside the mechanism it changes: written only when on, so every
+    // world without them keeps its body and digest (`OPTIONAL_WORLD_KEYS`)
+    for (after, key, x) in [
+        (
+            ["recessTransient", "recessTransient"],
+            "recessStep",
+            w.recess_step_share,
+        ),
+        (
+            ["recessStep", "recessTransient"],
+            "recessSteps",
+            w.recess_steps,
+        ),
+    ] {
+        if x > 0.0 {
+            let at = after
+                .iter()
+                .find_map(|a| fields.iter().position(|(k, _)| k == a))
+                .map_or(fields.len(), |k| k + 1);
+            fields.insert(at, (key, num(x)));
+        }
     }
     fields
         .iter()
@@ -30045,17 +30310,18 @@ fn world_set_flags(text: &str, file: &str, index: i64) -> Result<Vec<String>, St
         };
         fields.push(kv);
     }
-    // `volPullStep` is the one key a member may omit: the worlds before 0.25.0 were written
-    // without it, and absent it reads as off (`World::vol_pull_step`)
+    // the keys a member may omit (`OPTIONAL_WORLD_KEYS`): the worlds before them were written
+    // without them, and absent each reads as off
+    let optional = |k: &String| OPTIONAL_WORLD_KEYS.iter().any(|(o, _)| o == k);
     let want: Vec<String> = world_json_body(&default_world())
         .iter()
         .filter_map(|l| json_field(l.trim()).map(|(k, _)| k))
-        .filter(|k| *k != OPTIONAL_WORLD_KEY)
+        .filter(|k| !optional(k))
         .collect();
     let got: Vec<String> = fields
         .iter()
         .map(|(k, _)| k.clone())
-        .filter(|k| *k != OPTIONAL_WORLD_KEY)
+        .filter(|k| !optional(k))
         .collect();
     let mut seen = got.clone();
     let mut expect = want.clone();
@@ -30092,18 +30358,22 @@ fn world_set_flags(text: &str, file: &str, index: i64) -> Result<Vec<String>, St
             [format!("-{}", k.to_lowercase()), val.to_string()]
         })
         .collect();
-    if !fields.iter().any(|(k, _)| k == OPTIONAL_WORLD_KEY) {
-        flags.extend([
-            format!("-{}", OPTIONAL_WORLD_KEY.to_lowercase()),
-            "0".to_string(),
-        ]);
+    for (key, off) in OPTIONAL_WORLD_KEYS {
+        if !fields.iter().any(|(k, _)| k == key) {
+            flags.extend([format!("-{}", key.to_lowercase()), (*off).to_string()]);
+        }
     }
     Ok(flags)
 }
 
-/// The world key a set member may omit (`world_set_flags`): absent, the vol pull stays out of
-/// the step, as every world before 0.25.0 was published.
-const OPTIONAL_WORLD_KEY: &str = "volPullStep";
+/// The world keys a set member may omit (`world_set_flags`), each with the value an absent key
+/// reads: the vol pull out of the step, as every world before 0.25.0 was published; the row 65
+/// probes off (`World::recess_step_share`, `World::recess_steps`).
+const OPTIONAL_WORLD_KEYS: &[(&str, &str)] = &[
+    ("volPullStep", "0"),
+    ("recessStep", "0"),
+    ("recessSteps", "0"),
+];
 
 /// `-worldset F -worldindex K` runs member K of an exported archive. Pre-scanned as `-atrelease`
 /// is, but it arrives as ARGUMENTS placed BEFORE the command line's own, so a dial flag after it
@@ -30721,6 +30991,10 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut value_cap_fall = dw.value_cap_fall;
     let mut recess_spread = dw.recess_spread;
     let mut recess_transient = dw.recess_transient;
+    let mut noise_scale = dw.noise_scale;
+    let mut crowd_adjust = dw.crowd_adjust;
+    let mut recess_step_share = dw.recess_step_share;
+    let mut recess_steps = dw.recess_steps;
     let mut yield_lag = dw.yield_lag;
     let mut exp_anchor = dw.exp_anchor;
     let mut vol_feedback = dw.vol_feedback;
@@ -30975,6 +31249,10 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-valuecapfall" => value_cap_fall = req_f64(&mut it, "-valuecapfall"),
             "-recessspread" => recess_spread = req_f64(&mut it, "-recessspread"),
             "-recesstransient" => recess_transient = req_f64(&mut it, "-recesstransient"),
+            "-noisescale" => noise_scale = req_f64(&mut it, "-noisescale"),
+            "-crowdadjust" => crowd_adjust = req_f64(&mut it, "-crowdadjust"),
+            "-recessstep" => recess_step_share = req_f64(&mut it, "-recessstep"),
+            "-recesssteps" => recess_steps = req_f64(&mut it, "-recesssteps"),
             "-yieldlag" => yield_lag = req_f64(&mut it, "-yieldlag"),
             "-expanchor" => exp_anchor = req_f64(&mut it, "-expanchor"),
             "-volfeedback" => vol_feedback = req_f64(&mut it, "-volfeedback"),
@@ -31153,6 +31431,20 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         non_neg("-valuecapfall", value_cap_fall);
         non_neg("-recessspread", recess_spread);
         non_neg("-recesstransient", recess_transient);
+        if noise_scale.is_nan() || noise_scale <= 0.0 {
+            cli_die(&format!("-noisescale {noise_scale} must be above 0"));
+        }
+        non_neg("-crowdadjust", crowd_adjust);
+        if !(0.0..=1.0).contains(&recess_step_share) {
+            cli_die(&format!(
+                "-recessstep {recess_step_share} must be in [0, 1]"
+            ));
+        }
+        if !(recess_steps >= 0.0 && recess_steps.fract() == 0.0) {
+            cli_die(&format!(
+                "-recesssteps {recess_steps} must be a whole number, 0 or more"
+            ));
+        }
         non_neg("-yieldlag", yield_lag);
         if !(0.0..=1.0).contains(&exp_anchor) {
             cli_die("-expanchor is a share from 0 to 1");
@@ -31168,7 +31460,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         non_neg("-newsrate", news_rate);
         non_neg("-newssize", news_size);
         non_neg("-newslev", news_lev);
-        if let Some(why) = news_budget_refusal(news_rate, news_size) {
+        if let Some(why) = news_budget_refusal(news_rate, news_size, noise_scale) {
             cli_die(&why);
         }
         non_neg("-newsbond", news_bond);
@@ -31584,6 +31876,10 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         value_cap_fall,
         recess_spread,
         recess_transient,
+        noise_scale,
+        crowd_adjust,
+        recess_step_share,
+        recess_steps,
         yield_lag,
         exp_anchor,
         vol_feedback,
@@ -33846,9 +34142,9 @@ mod emit_sidecar_tests {
     /// wrote the file, and an edit to the world block's fields moves it visibly, here.
     #[test]
     fn the_world_digest_is_pinned_across_the_twins() {
-        assert_eq!(world_digest(&default_world()), "cb31d4c592e42b14");
+        assert_eq!(world_digest(&default_world()), "da85502840cec85b");
         let (nq, _) = named_world("0.24.5-nasdaq").expect("recipe");
-        assert_eq!(world_digest(&nq), "febff8eea1dace49");
+        assert_eq!(world_digest(&nq), "99103fceafe75a22");
     }
 
     /// One ulp in one dial moves the digest, where the sidecar's six significant digits cannot.
@@ -34140,20 +34436,24 @@ mod contract_tests {
     #[test]
     fn a_news_channel_past_the_diffusion_budget_is_refused() {
         let dw = default_world();
-        assert!(news_budget_refusal(dw.news_rate, dw.news_size).is_none());
+        assert!(news_budget_refusal(dw.news_rate, dw.news_size, 1.0).is_none());
         assert!(
-            news_budget_refusal(0.0, 1.0).is_none(),
+            news_budget_refusal(0.0, 1.0, 1.0).is_none(),
             "rate 0 is the channel off"
         );
         assert!(
-            news_budget_refusal(1.3, 0.097).is_none(),
+            news_budget_refusal(1.3, 0.097, 1.0).is_none(),
             "just inside the budget"
         );
         assert!(
-            news_damp_at(1.3, 0.10) <= 0.0,
+            news_damp_at(1.3, 0.10, 1.0) <= 0.0,
             "past it the damp clamps to nothing"
         );
-        let why = news_budget_refusal(1.3, 0.10).expect("past the budget is refused");
+        assert!(
+            news_damp_at(1.3, 0.10, 1.25) > 0.0,
+            "a scaled diffusion has budget left for it"
+        );
+        let why = news_budget_refusal(1.3, 0.10, 1.0).expect("past the budget is refused");
         assert!(why.contains("0.0975"), "{why}");
         let hi = |name: &str| {
             calibrate_ranges()
@@ -34163,16 +34463,16 @@ mod contract_tests {
                 .expect("a -calibrate range")
         };
         // the ranges' corner is past the budget; a search pulls its size back inside
-        let corner = news_size_within_budget(hi("newsRate"), hi("newsSize"));
+        let corner = news_size_within_budget(hi("newsRate"), hi("newsSize"), 1.0);
         assert!(corner < hi("newsSize"));
-        assert!(news_budget_refusal(hi("newsRate"), corner).is_none());
+        assert!(news_budget_refusal(hi("newsRate"), corner, 1.0).is_none());
         assert_eq!(
-            news_size_within_budget(1.3, 0.05),
+            news_size_within_budget(1.3, 0.05, 1.0),
             0.05,
             "inside it is untouched"
         );
         assert_eq!(
-            news_size_within_budget(0.0, 1.0),
+            news_size_within_budget(0.0, 1.0, 1.0),
             1.0,
             "and so is the channel off"
         );
@@ -35718,6 +36018,46 @@ mod contract_tests {
         assert_eq!(verdict_spec(true, 0, 40, 33), (40, 33));
     }
 
+    /// THE ROW 65 PROBES' KEYS (`recessStep`, `recessSteps`): absent from every frozen world's
+    /// body, so no digest moves; written beside their mechanisms when on; a member without them
+    /// loads them off and a member with them loads them as written.
+    #[test]
+    fn the_row_65_probes_are_absent_until_on_and_load_either_way() {
+        let d = default_world();
+        let body = world_json_body(&d);
+        assert!(
+            body.iter()
+                .all(|l| !l.contains("\"recessStep\"") && !l.contains("\"recessSteps\""))
+        );
+        let pair = |f: &[String], k: &str| f.iter().position(|x| x == k).map(|i| f[i + 1].clone());
+        let off = world_set_flags(&member_file(&body), "f.json", 0).expect("loads");
+        assert_eq!(pair(&off, "-recessstep").as_deref(), Some("0"));
+        assert_eq!(pair(&off, "-recesssteps").as_deref(), Some("0"));
+        let mut on = d;
+        on.recess_step_share = 0.5;
+        on.recess_steps = 3.0;
+        let b = world_json_body(&on);
+        let at = |k: &str| {
+            b.iter()
+                .position(|l| l.contains(&format!("\"{k}\"")))
+                .expect(k)
+        };
+        assert_eq!(at("recessStep"), at("recessTransient") + 1);
+        assert_eq!(at("recessSteps"), at("recessStep") + 1);
+        assert_ne!(world_digest(&on), world_digest(&d));
+        let got = world_set_flags(&member_file(&b), "f.json", 0).expect("loads");
+        assert_eq!(pair(&got, "-recessstep").as_deref(), Some(ef(0.5).as_str()));
+        assert_eq!(
+            pair(&got, "-recesssteps").as_deref(),
+            Some(ef(3.0).as_str())
+        );
+        assert_eq!(
+            got.len(),
+            b.len() * 2,
+            "nothing injected when every key is present"
+        );
+    }
+
     fn member_file(body: &[String]) -> String {
         let mut v = vec![
             "[".to_string(),
@@ -35747,12 +36087,18 @@ mod contract_tests {
             .filter_map(|l| json_field(l.trim()).map(|(k, _)| k))
             .collect();
         let got = world_set_flags(&member_file(&body), "f.json", 0).expect("the default loads");
+        // the optional keys the body leaves out (their dials off) load at their off value, after
+        // the body's own
+        let absent = OPTIONAL_WORLD_KEYS
+            .iter()
+            .filter(|(k, _)| !keys.iter().any(|x| x == k))
+            .count();
         assert_eq!(
             got.len(),
-            body.len() * 2,
-            "a flag and a value for every dial"
+            (body.len() + absent) * 2,
+            "a flag and a value for every dial, the absent optional keys at their off value"
         );
-        let flags: Vec<&String> = got.iter().step_by(2).collect();
+        let flags: Vec<&String> = got.iter().step_by(2).take(body.len()).collect();
         let want: Vec<String> = keys
             .iter()
             .map(|k| format!("-{}", k.to_lowercase()))
@@ -37962,6 +38308,120 @@ mod seen_tol_tests {
             .chain(noisy_steps(84))
             .collect();
         assert!(cpi_persistence(&settles).is_nan());
+    }
+}
+
+/// THE ROW 65 PROBES (`recess_step_share`, `recess_steps`): off in every frozen world, zero the
+/// released code path, and on, the recession's step lands the markdown's repriced share in the
+/// onset session where the glide spreads it.
+#[cfg(test)]
+mod row65_probe_tests {
+    use super::*;
+
+    #[test]
+    fn both_probes_are_off_in_every_frozen_world() {
+        let d = default_world();
+        let off = |w: &World| w.recess_step_share == 0.0 && w.recess_steps == 0.0;
+        assert!(off(&d));
+        for (v, w) in releases() {
+            assert!(off(&w), "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            assert!(off(&w), "recipe {n}");
+        }
+    }
+
+    /// The probe dials a search sets and never steps: outside the searched table, each an
+    /// optional world key, each setter reaching its field.
+    #[test]
+    fn the_probe_dials_are_optional_keys_outside_the_searched_table() {
+        for (name, set, get) in probe_dials() {
+            assert!(!CALIBRATE_DIAL_ORDER.contains(&name), "{name} is searched");
+            assert!(
+                OPTIONAL_WORLD_KEYS.iter().any(|(k, _)| *k == name),
+                "{name} is not optional"
+            );
+            let mut w = default_world();
+            set(&mut w, 3.0);
+            assert!(get(&w) == 3.0, "{name}");
+            assert!(
+                world_json_body(&w)
+                    .iter()
+                    .any(|l| l.contains(&format!("\"{name}\""))),
+                "{name} written when on"
+            );
+        }
+    }
+
+    /// The lumps inside the decline: alone (no step share) they reach no price; with the share
+    /// they split it, so no session carries the whole step and the worst carries at least a
+    /// lump; a different world from the onset lump's.
+    #[test]
+    fn the_lumps_split_the_step_inside_the_decline() {
+        let mut w = default_world();
+        w.recess_rate = 1.0;
+        w.recess_base = 2.0;
+        w.recess_size = 0.30;
+        w.recess_len = 1.0;
+        w.recess_recover = 0.5;
+        w.recess_reprice = 0.6;
+        let plain = simulate(&w, 40, DEFAULT_SEED);
+        let mut k = w;
+        k.recess_steps = 3.0;
+        assert!(
+            simulate(&k, 40, DEFAULT_SEED).price == plain.price,
+            "lumps without a share"
+        );
+        let mut one = w;
+        one.recess_step_share = 1.0;
+        let onset = simulate(&one, 40, DEFAULT_SEED);
+        let mut three = one;
+        three.recess_steps = 3.0;
+        let lumps = simulate(&three, 40, DEFAULT_SEED);
+        assert!(lumps.price != onset.price);
+        let worst = |p: &Path| {
+            p.price
+                .windows(2)
+                .map(|x| ln_det(x[1] / x[0]))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let share = 0.30 * 0.6;
+        assert!(
+            worst(&lumps) <= -0.9 * share / 3.0,
+            "lumps {}",
+            worst(&lumps)
+        );
+        assert!(worst(&lumps) > -0.9 * share, "lumps {}", worst(&lumps));
+    }
+
+    /// A world whose recessions begin in a calm market, the size fixed: with the step the worst
+    /// session carries the markdown's repriced share, which no session of the glide approaches;
+    /// zero is the released path, bit for bit.
+    #[test]
+    fn the_step_lands_the_repriced_share_in_the_onset_session() {
+        let mut w = default_world();
+        w.recess_rate = 1.0;
+        w.recess_base = 2.0;
+        w.recess_size = 0.30;
+        w.recess_len = 1.0;
+        w.recess_recover = 0.5;
+        w.recess_reprice = 0.6;
+        let glide = simulate(&w, 40, DEFAULT_SEED);
+        let mut s = w;
+        s.recess_step_share = 1.0;
+        let step = simulate(&s, 40, DEFAULT_SEED);
+        let worst = |p: &Path| {
+            p.price
+                .windows(2)
+                .map(|x| ln_det(x[1] / x[0]))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let share = 0.30 * 0.6;
+        assert!(worst(&step) <= -0.9 * share, "step {}", worst(&step));
+        assert!(worst(&glide) > -0.5 * share, "glide {}", worst(&glide));
+        let mut z = w;
+        z.recess_step_share = 0.0;
+        assert!(simulate(&z, 40, DEFAULT_SEED).price == glide.price);
     }
 }
 
@@ -43454,6 +43914,194 @@ mod placement_verdict_tests {
             short.verdict,
             PlacementVerdict::Undecided,
             "one history short"
+        );
+    }
+}
+
+/// The diffusion's scale (`World::noise_scale`, PLAN row 65).
+#[cfg(test)]
+mod noise_scale_tests {
+    use super::*;
+
+    fn med_of(v: &mut [f64]) -> f64 {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    }
+
+    /// At 1 the scale is `SIGMA_N` to the bit, the news budget as it was, and a path of either
+    /// 0.25.0 world with the dial at 1 is the path before the dial existed: a search setting 1
+    /// through the table reproduces it. Off 1 the path moves.
+    #[test]
+    fn a_noise_scale_at_one_is_bit_identical() {
+        let set = calibrate_ranges()
+            .into_iter()
+            .find(|r| r.0 == "noiseScale")
+            .map(|r| r.3)
+            .expect("searched");
+        for name in ["0.25.0-nasdaq", "0.25.0-sp500"] {
+            let (mut w, _) = named_world(name).expect(name);
+            w.noise_scale = 1.0;
+            let before = news_damp_at(w.news_rate, w.news_size, 1.0);
+            let plain = (1.0
+                - (w.news_rate / DAYS_PER_YEAR as f64) * w.news_size * w.news_size
+                    / (SIGMA_N * SIGMA_N))
+                .max(0.0)
+                .sqrt();
+            assert_eq!(before.to_bits(), plain.to_bits(), "{name} budget");
+            let a = simulate(&w, 3, 11);
+            let mut w1 = w;
+            set(&mut w1, 1.0);
+            let b = simulate(&w1, 3, 11);
+            assert!(
+                a.price
+                    .iter()
+                    .zip(&b.price)
+                    .all(|(x, y)| x.to_bits() == y.to_bits()),
+                "{name}: the path at 1 is the path"
+            );
+            let mut w2 = w;
+            set(&mut w2, 1.25);
+            let c = simulate(&w2, 3, 11);
+            assert!(
+                a.price
+                    .iter()
+                    .zip(&c.price)
+                    .any(|(x, y)| x.to_bits() != y.to_bits()),
+                "{name}: off 1 the path moves"
+            );
+        }
+        assert!(
+            world_json_body(&default_world())
+                .iter()
+                .any(|l| l.contains("\"noiseScale\": 1.0")),
+            "the body carries the key"
+        );
+    }
+
+    /// At 1.25 a path's session diffusion sd (`sdPre`, the record `-emitvolparts` keeps) scales
+    /// about 1.25 at its median over the same world at 1: the vol state feeds back, so not
+    /// exactly.
+    #[test]
+    fn a_noise_scale_scales_the_calm_sd() {
+        let (mut w, _) = named_world("0.25.0-nasdaq").expect("recipe");
+        w.noise_scale = 1.0;
+        let sd_pre = |w: &World| -> f64 {
+            let years = 6;
+            let mut tape = BondTape::new(years * DAYS_PER_YEAR + BURN_IN);
+            tape.vol = Some(Box::default());
+            let _ = simulate_at_taped(w, years, 5, world_level(w), Some(&mut tape));
+            let v = tape.vol.expect("kept");
+            let at = VOL_PART_COLUMNS
+                .iter()
+                .position(|c| *c == "sdPre")
+                .expect("column");
+            let mut xs: Vec<f64> = v.rows.iter().map(|r| r[at]).collect();
+            assert!(xs.len() > 1000);
+            med_of(&mut xs)
+        };
+        let one = sd_pre(&w);
+        let mut w2 = w;
+        w2.noise_scale = 1.25;
+        let ratio = sd_pre(&w2) / one;
+        assert!(
+            (1.15..=1.35).contains(&ratio),
+            "median session sd scales {ratio} for 1.25"
+        );
+    }
+}
+
+/// The momentum crowd's gradual adjustment (`World::crowd_adjust`, PLAN row 65).
+#[cfg(test)]
+mod crowd_adjust_tests {
+    use super::*;
+
+    /// At 0 the crowd's exposure is its target and a path of either 0.25.0 world with the dial
+    /// at 0 is the path before the dial existed: a search setting 0 through the table reproduces
+    /// it. On, the path moves.
+    #[test]
+    fn a_crowd_adjust_at_zero_is_bit_identical() {
+        let set = calibrate_ranges()
+            .into_iter()
+            .find(|r| r.0 == "crowdAdjust")
+            .map(|r| r.3)
+            .expect("searched");
+        for name in ["0.25.0-nasdaq", "0.25.0-sp500"] {
+            let (mut w, _) = named_world(name).expect(name);
+            w.crowd_adjust = 0.0;
+            assert!(
+                matches!(w.crowd, Crowd::Momentum),
+                "{name} runs the momentum crowd"
+            );
+            let a = simulate(&w, 3, 11);
+            let mut w1 = w;
+            set(&mut w1, 0.0);
+            let b = simulate(&w1, 3, 11);
+            assert!(
+                a.price
+                    .iter()
+                    .zip(&b.price)
+                    .all(|(x, y)| x.to_bits() == y.to_bits()),
+                "{name}: the path at 0 is the path"
+            );
+            let mut w2 = w;
+            set(&mut w2, 2.8);
+            let c = simulate(&w2, 3, 11);
+            assert!(
+                a.price
+                    .iter()
+                    .zip(&c.price)
+                    .any(|(x, y)| x.to_bits() != y.to_bits()),
+                "{name}: on, the path moves"
+            );
+        }
+        assert!(
+            world_json_body(&default_world())
+                .iter()
+                .any(|l| l.contains("\"crowdAdjust\": 0.0")),
+            "the body carries the key"
+        );
+    }
+
+    /// The crowd leg's flow (the `crowd` column `-emitvolparts` keeps) over a path: at 0 the
+    /// crowd trades its target's change, the return this session less the one the window drops,
+    /// and the flow's lag-1 autocorrelation is the world's own return structure (below 0.3 on
+    /// the recipe); at 2.8 a year it trades toward the target over weeks and the flow persists,
+    /// above 0.9 and more than three times the off reading on the same world and seed: the off
+    /// reading is the world's, the mechanism is the persistence.
+    #[test]
+    fn a_crowd_adjust_makes_the_crowd_flow_persist() {
+        let (mut w, _) = named_world("0.25.0-nasdaq").expect("recipe");
+        w.crowd_adjust = 0.0;
+        let flow_ac1 = |w: &World| -> f64 {
+            let years = 6;
+            let mut tape = BondTape::new(years * DAYS_PER_YEAR + BURN_IN);
+            tape.vol = Some(Box::default());
+            let _ = simulate_at_taped(w, years, 5, world_level(w), Some(&mut tape));
+            let v = tape.vol.expect("kept");
+            let at = VOL_PART_COLUMNS
+                .iter()
+                .position(|c| *c == "crowd")
+                .expect("column");
+            let xs: Vec<f64> = v.rows.iter().map(|r| r[at]).collect();
+            assert!(xs.len() > 1000);
+            let n = xs.len() as f64;
+            let mean = xs.iter().sum::<f64>() / n;
+            let var = xs.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / n;
+            let cov = xs
+                .windows(2)
+                .map(|p| (p[0] - mean) * (p[1] - mean))
+                .sum::<f64>()
+                / n;
+            cov / var
+        };
+        let off = flow_ac1(&w);
+        let mut w2 = w;
+        w2.crowd_adjust = 2.8;
+        let on = flow_ac1(&w2);
+        assert!(off < 0.3, "at 0 the flow's lag-1 autocorrelation is {off}");
+        assert!(
+            on > 0.9 && on > 3.0 * off,
+            "at 2.8 a year the flow persists: lag-1 autocorrelation {on} against {off} at 0"
         );
     }
 }

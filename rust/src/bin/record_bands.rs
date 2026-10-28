@@ -96,9 +96,15 @@ const USAGE: &str =
                 rows it supplies, `*` or names joined by `;`, then its arguments, tab-separated;
                 `#` a comment) run as this tool at its own blocks, at -block 252 and at -block 756
                 (-resamples N in place of its own), each printed row's (p95 - p5) / 3.29 read at
-                each; one line a world and row of LEDGER.tsv's first column: world, row,
-                scale252, scale756, scaleNative and scale, the largest of the three, `none` where
-                no run reaches the row, those listed on stderr by world
+                each; one line a world and row of LEDGER.tsv's `row` column: world, row,
+                scale252, scale756, scaleNative, scale (the largest of the three), resolution
+                and knee, the last two from the resamples the scale came from -- the resolution
+                the record's own vote on its sign against the table's `null` column (the share
+                of resamples strictly on the record's side less the share strictly on the other,
+                floored at 0), the knee the CRPS an indistinguishable world earns (the mean over
+                the resamples of each one's CRPS under the others, in the row's scale); `none`
+                where no run reaches the row (those listed on stderr by world), the resolution
+                also without a null or with the record at it
 
   -rateafter    THE CONDITIONAL RATE ROWS (`RATE_AFTER_ROWS`): the -fred rate on the equity window's
                 session dates, the two years after each 20% decline's trough; the record by
@@ -464,6 +470,8 @@ fn parse_args(args: &[String]) -> Opts {
             "-rateafter" => rateafter = true,
             // the lag-free record's switches, read by `lag_of`
             "-recorded" => {}
+            // the resamples behind each band row, for `-scales` (`band_quantiles`)
+            "-raw" => {}
             "-index" | "-fund" => {
                 next();
             }
@@ -1824,10 +1832,7 @@ fn print_resampled_rows<const N: usize>(
     let (c, edges) = ms::record_band_joint(reads, &ks, joint);
     for (k, (lo, hi)) in edges.iter().enumerate() {
         let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
-        let qs: Vec<String> = ms::record_band_quantiles(&col)
-            .iter()
-            .map(|v| format!("{v:.6}"))
-            .collect();
+        let qs = band_quantiles(record[k], &col);
         println!(
             "{set}\t{}\t{series}\t{window}\t{n}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
             names[k],
@@ -1864,6 +1869,21 @@ fn level_resamples<const N: usize, F: Fn(&[f64]) -> [f64; N] + Sync>(
 }
 
 /// The record-band column header, when the arguments ask for it (`-header`).
+/// A band row's resample quantiles as the band line prints them (`{:.6}`), and under `-raw` the
+/// resamples themselves on the line before it -- `raw`, the record, each resample at full
+/// precision -- for `-scales` to read the record's own vote on its sign and its knee
+/// (`read_scale_lines`). Without `-raw` the output is as it was.
+fn band_quantiles(record: f64, col: &[f64]) -> Vec<String> {
+    if std::env::args().any(|a| a == "-raw") {
+        let vals: Vec<String> = col.iter().map(|v| format!("{v:?}")).collect();
+        println!("raw\t{record:?}\t{}", vals.join("\t"));
+    }
+    ms::record_band_quantiles(col)
+        .iter()
+        .map(|v| format!("{v:.6}"))
+        .collect()
+}
+
 fn print_band_header(args: &[String]) {
     if args.iter().any(|a| a == "-header") {
         let pcts: Vec<String> = ms::RECORD_BAND_PCTS
@@ -1951,10 +1971,7 @@ fn volexit_mode(args: &[String]) -> bool {
     let (c, edges) = ms::record_band_joint(&reads, &ks, joint * 3.0 / of as f64);
     for (&k, (lo, hi)) in ks.iter().zip(&edges) {
         let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
-        let qs: Vec<String> = ms::record_band_quantiles(&col)
-            .iter()
-            .map(|v| format!("{v:.6}"))
-            .collect();
+        let qs = band_quantiles(record[k], &col);
         println!(
             "{set}\t{}\t{series}\t{window}\t{}\t{resamples}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
             ms::VOL_EXIT_ROWS[k],
@@ -2148,10 +2165,7 @@ fn vol_state_mode(args: &[String]) -> bool {
         let (c, edges) = ms::record_band_joint(&reads, &ks, alpha);
         for (&k, (lo, hi)) in ks.iter().zip(&edges) {
             let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
-            let qs: Vec<String> = ms::record_band_quantiles(&col)
-                .iter()
-                .map(|v| format!("{v:.6}"))
-                .collect();
+            let qs = band_quantiles(record[k], &col);
             println!(
                 "{set}\t{}\t{label}\t{window}\t{}\t{resamples}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
                 names[k],
@@ -2259,10 +2273,7 @@ fn ledger_rows_mode(args: &[String]) -> bool {
         let (c, edges) = ms::record_band_joint(&reads, &ks, joint);
         for (&k, (lo, hi)) in ks.iter().zip(&edges) {
             let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
-            let qs: Vec<String> = ms::record_band_quantiles(&col)
-                .iter()
-                .map(|v| format!("{v:.6}"))
-                .collect();
+            let qs = band_quantiles(record[k], &col);
             println!(
                 "{set}\t{}\t{series}\t{window}\t{}\t{resamples}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
                 ms::LEDGER_ROWS[k],
@@ -2303,10 +2314,7 @@ fn print_lag1_row(
     let reads = ms::ledger_lag1_resamples(&r, resamples, seed, block_years());
     let (c, edges) = ms::record_band_joint(&reads, &[0], joint);
     let col: Vec<f64> = reads.iter().map(|x| x[0]).collect();
-    let qs: Vec<String> = ms::record_band_quantiles(&col)
-        .iter()
-        .map(|v| format!("{v:.6}"))
-        .collect();
+    let qs = band_quantiles(ms::ledger_lag1_of(&r), &col);
     let (lo, hi) = edges[0];
     println!(
         "{set}\t{}\t{series}\t{lag_window}\t{}\t{resamples}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
@@ -2317,12 +2325,28 @@ fn print_lag1_row(
     );
 }
 
-/// One record-scale reading: a printed band row's world and name, and (p95 - p5) / 3.29.
-type ScaleRow = (String, String, f64);
+/// One band row as a `-scales` run prints it under `-raw`: its world and name, (p95 - p5) / 3.29,
+/// the record and the resamples the quantiles were read from.
+struct ScaleRead {
+    world: String,
+    row: String,
+    scale: f64,
+    record: f64,
+    resamples: Vec<f64>,
+}
 /// One `-scales` run: the rows it supplies (empty, every row) and its arguments.
 type ScaleRun = (Vec<String>, Vec<String>);
-/// A world and row's scale at its own blocks, at 252 and at 756, each with the run it came from.
-type ScaleSlots = [Option<(f64, usize)>; 3];
+/// A world and row's reading at one block: its scale, the record's vote on its sign and its knee
+/// (`vote_and_knee`), and the run it came from.
+#[derive(Clone, Copy)]
+struct ScaleSlot {
+    scale: f64,
+    resolution: Option<f64>,
+    knee: Option<f64>,
+    run: usize,
+}
+/// A world and row's readings at its own blocks, at 252 and at 756.
+type ScaleSlots = [Option<ScaleSlot>; 3];
 
 /// The `-scales` run list: a line a run, its rows (`*`, or names joined by `;`), then its
 /// arguments, tab-separated, `#` a comment; each run's own `-header`, `-resamples` and `-block`
@@ -2353,13 +2377,44 @@ fn read_scale_runs(text: &str) -> Vec<ScaleRun> {
         .collect()
 }
 
-/// The band rows one run of this tool prints, each with its spread in normal sd: the band
-/// columns (`print_band_header`), p5 and p95 at `RECORD_BAND_PCTS`' third and twenty-first
-/// places; a record-only line is not a band row.
-fn scales_of_run(args: &[String]) -> Vec<ScaleRow> {
+/// The ledger table's rows and nulls, by its `row` and `null` columns: a null `none`, or absent,
+/// is no null.
+fn read_scale_rows(ledger: &str, text: &str) -> Vec<(String, Option<f64>)> {
+    let mut lines = text.lines();
+    let head: Vec<&str> = lines
+        .next()
+        .unwrap_or("")
+        .split('\t')
+        .map(str::trim)
+        .collect();
+    let col = |name: &str| {
+        head.iter()
+            .position(|h| *h == name)
+            .unwrap_or_else(|| usage(&format!("-scales: {ledger} has no [{name}] column")))
+    };
+    let (row_at, null_at) = (col("row"), col("null"));
+    lines
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (
+                f.get(row_at)
+                    .map_or(String::new(), |r| r.trim().to_string()),
+                f.get(null_at).and_then(|v| v.trim().parse::<f64>().ok()),
+            )
+        })
+        .filter(|(r, _)| !r.is_empty())
+        .collect()
+}
+
+/// The band rows one run of this tool prints, run under `-raw` so each carries its resamples
+/// (`read_scale_lines`).
+fn scales_of_run(args: &[String]) -> Vec<ScaleRead> {
     let exe = std::env::current_exe().unwrap_or_else(|e| usage(&format!("-scales: {e}")));
+    let mut with_raw = args.to_vec();
+    with_raw.push("-raw".to_string());
     let out = std::process::Command::new(exe)
-        .args(args)
+        .args(&with_raw)
         .output()
         .unwrap_or_else(|e| usage(&format!("-scales: cannot run [{}]: {e}", args.join(" "))));
     if !out.status.success() {
@@ -2369,23 +2424,110 @@ fn scales_of_run(args: &[String]) -> Vec<ScaleRow> {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
+    read_scale_lines(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// A run's band rows from its output, each with its spread in normal sd: the band columns
+/// (`print_band_header`), p5 and p95 at `RECORD_BAND_PCTS`' third and twenty-first places; a
+/// record-only line is not a band row. A `raw` line (`band_quantiles`) carries the record and the
+/// resamples of the band line after it; a band row without one has neither.
+fn read_scale_lines(text: &str) -> Vec<ScaleRead> {
     let cols = 7 + ms::RECORD_BAND_PCTS.len() + 3;
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(|l| l.split('\t').collect::<Vec<&str>>())
-        .filter(|f| f.len() == cols && f[0] != "set")
-        .map(|f| {
-            let q = |i: usize| f[7 + i].parse::<f64>().unwrap_or(f64::NAN);
-            (f[0].to_string(), f[1].to_string(), (q(20) - q(2)) / 3.29)
-        })
-        .collect()
+    let num = |v: &str| v.parse::<f64>().unwrap_or(f64::NAN);
+    let mut raw: Option<(f64, Vec<f64>)> = None;
+    let mut out = Vec::new();
+    for l in text.lines() {
+        let f: Vec<&str> = l.split('\t').collect();
+        if f.first() == Some(&"raw") {
+            raw = Some((
+                f.get(1).map_or(f64::NAN, |v| num(v)),
+                f.iter().skip(2).map(|v| num(v)).collect(),
+            ));
+        } else if f.len() == cols && f[0] != "set" {
+            let q = |i: usize| num(f[7 + i]);
+            let (record, resamples) = raw.take().unwrap_or((f64::NAN, Vec::new()));
+            out.push(ScaleRead {
+                world: f[0].to_string(),
+                row: f[1].to_string(),
+                scale: (q(20) - q(2)) / 3.29,
+                record,
+                resamples,
+            });
+        }
+    }
+    out
+}
+
+/// THE RECORD'S OWN VOTE ON ITS SIGN, AND ITS KNEE, from one band row's finite resamples at the
+/// row's scale: the resolution is the share of resamples strictly on the record's side of the
+/// row's null less the share strictly on the other side, floored at 0 (a resample at the null
+/// votes for neither); the knee is the CRPS an indistinguishable world earns, the mean over the
+/// resamples of each one's CRPS under the others (`leave_one_out_crps`), in the row's scale.
+/// The resolution is `None` without a null, with the record at the null, or without a scale;
+/// the knee `None` without a scale or under three resamples.
+fn vote_and_knee(
+    resamples: &[f64],
+    null: Option<f64>,
+    record: f64,
+    scale: f64,
+) -> (Option<f64>, Option<f64>) {
+    let mut xs: Vec<f64> = resamples
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .collect();
+    if !(scale.is_finite() && scale > 0.0) || xs.is_empty() {
+        return (None, None);
+    }
+    let n = xs.len() as f64;
+    let resolution = null
+        .filter(|&nl| record.is_finite() && record != nl)
+        .map(|nl| {
+            let up = record > nl;
+            let rec_side = |x: f64| if up { x > nl } else { x < nl };
+            let other_side = |x: f64| if up { x < nl } else { x > nl };
+            let p_rec = xs.iter().filter(|&&x| rec_side(x)).count() as f64 / n;
+            let p_other = xs.iter().filter(|&&x| other_side(x)).count() as f64 / n;
+            (p_rec - p_other).max(0.0)
+        });
+    (resolution, leave_one_out_crps(&mut xs).map(|c| c / scale))
+}
+
+/// The mean over a sample of each value's `ms::crps` under the others, the sample sorted in
+/// place: from the sorted prefix sums, each value's summed distance to the others and the
+/// others' pairwise sum (the whole sample's less those distances), in `ms::crps`'s form, so the
+/// sum is the one the leave-one-out calls would make, in one pass. `None` under three values.
+fn leave_one_out_crps(xs: &mut [f64]) -> Option<f64> {
+    let n = xs.len();
+    if n < 3 {
+        return None;
+    }
+    xs.sort_by(f64::total_cmp);
+    let total: f64 = xs.iter().sum();
+    // the whole sample's pairwise sum, over j < k of x_k - x_j
+    let pairs: f64 = xs
+        .iter()
+        .enumerate()
+        .map(|(i, v)| ((2 * (i + 1)) as f64 - (n + 1) as f64) * v)
+        .sum();
+    let m = (n - 1) as f64;
+    let mut before = 0.0f64;
+    let mut acc = 0.0f64;
+    for (p, &x) in xs.iter().enumerate() {
+        let after = total - before - x;
+        let dist = x * p as f64 - before + after - x * (n - 1 - p) as f64;
+        acc += dist / m - (pairs - dist) / (m * m);
+        before += x;
+    }
+    Some(acc / n as f64)
 }
 
 /// `-scales`' table: a line a world and row, its scales at 252, at 756 and at its run's own
-/// blocks, and the largest; `none` where no run reaches the row, those listed on stderr by world.
+/// blocks, the largest, and that reading's resolution and knee; `none` where no run reaches the
+/// row, those listed on stderr by world.
 fn print_scales(rows: &[String], got: &std::collections::BTreeMap<(String, String), ScaleSlots>) {
     let cell = |v: Option<f64>| v.map_or_else(|| "none".to_string(), |x| format!("{x:.6}"));
-    println!("world\trow\tscale252\tscale756\tscaleNative\tscale");
+    println!("world\trow\tscale252\tscale756\tscaleNative\tscale\tresolution\tknee");
     for world in ["sp500", "nasdaq"] {
         let mut missing: Vec<&str> = Vec::new();
         for row in rows {
@@ -2393,21 +2535,26 @@ fn print_scales(rows: &[String], got: &std::collections::BTreeMap<(String, Strin
                 .get(&(world.to_string(), row.clone()))
                 .copied()
                 .unwrap_or_default();
-            let v = |j: usize| s[j].map(|x| x.0).filter(|x| x.is_finite() && *x > 0.0);
+            let v = |j: usize| s[j].filter(|x| x.scale.is_finite() && x.scale > 0.0);
             let (native, b252, b756) = (v(0), v(1), v(2));
-            let scale = [native, b252, b756]
+            // the largest scale, the first of equals
+            let best = [native, b252, b756]
                 .into_iter()
                 .flatten()
-                .fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))));
-            if scale.is_none() {
+                .fold(None, |m: Option<ScaleSlot>, x| {
+                    Some(m.filter(|m| m.scale >= x.scale).unwrap_or(x))
+                });
+            if best.is_none() {
                 missing.push(row);
             }
             println!(
-                "{world}\t{row}\t{}\t{}\t{}\t{}",
-                cell(b252),
-                cell(b756),
-                cell(native),
-                cell(scale)
+                "{world}\t{row}\t{}\t{}\t{}\t{}\t{}\t{}",
+                cell(b252.map(|x| x.scale)),
+                cell(b756.map(|x| x.scale)),
+                cell(native.map(|x| x.scale)),
+                cell(best.map(|x| x.scale)),
+                cell(best.and_then(|x| x.resolution)),
+                cell(best.and_then(|x| x.knee))
             );
         }
         eprintln!("{world}: {} rows no run reaches", missing.len());
@@ -2417,7 +2564,8 @@ fn print_scales(rows: &[String], got: &std::collections::BTreeMap<(String, Strin
     }
 }
 
-/// `-scales LEDGER -runs RUNS`: the record scales of the ledger's rows (the usage's `-scales`).
+/// `-scales LEDGER -runs RUNS`: the record scales of the ledger's rows, each with the record's
+/// vote on its sign and its knee (the usage's `-scales`).
 fn scales_mode(args: &[String]) -> bool {
     let Some(i) = args.iter().position(|a| a == "-scales") else {
         return false;
@@ -2433,14 +2581,10 @@ fn scales_mode(args: &[String]) -> bool {
     let runs_file = opt("-runs").unwrap_or_else(|| usage("-scales wants -runs RUNS.tsv"));
     let resamples = opt("-resamples");
     let read = |f: &str| std::fs::read_to_string(f).unwrap_or_else(|e| usage(&format!("{f}: {e}")));
-    let rows: Vec<String> = read(ledger)
-        .lines()
-        .skip(1)
-        .filter_map(|l| l.split('\t').next())
-        .map(|r| r.trim().to_string())
-        .filter(|r| !r.is_empty())
-        .collect();
-    // (world, row) -> the scale at each block, and the run that gave it
+    let rows = read_scale_rows(ledger, &read(ledger));
+    let names: Vec<String> = rows.iter().map(|(r, _)| r.clone()).collect();
+    let null_of = |row: &str| rows.iter().find(|(r, _)| r == row).and_then(|(_, n)| *n);
+    // (world, row) -> the reading at each block
     let mut got: std::collections::BTreeMap<(String, String), ScaleSlots> =
         std::collections::BTreeMap::new();
     let runs = read_scale_runs(&read(&runs_file));
@@ -2459,26 +2603,34 @@ fn scales_mode(args: &[String]) -> bool {
                 runs.len(),
                 block.unwrap_or("its own blocks")
             );
-            for (world, row, s) in scales_of_run(&a) {
-                if !(pick.is_empty() || pick.contains(&row)) {
+            for rd in scales_of_run(&a) {
+                if !(pick.is_empty() || pick.contains(&rd.row)) {
                     continue;
                 }
-                let slot = &mut got.entry((world.clone(), row.clone())).or_default()[j];
-                if let Some((_, other)) = slot {
-                    if *other != k {
-                        usage(&format!(
-                            "-scales: [{row}] in {world} comes from runs {} and {}; name it in \
-                             one run's rows",
-                            *other + 1,
-                            k + 1
-                        ));
-                    }
+                let slot = &mut got.entry((rd.world.clone(), rd.row.clone())).or_default()[j];
+                if let Some(other) = slot
+                    && other.run != k
+                {
+                    usage(&format!(
+                        "-scales: [{}] in {} comes from runs {} and {}; name it in one run's rows",
+                        rd.row,
+                        rd.world,
+                        other.run + 1,
+                        k + 1
+                    ));
                 }
-                *slot = Some((s, k));
+                let (resolution, knee) =
+                    vote_and_knee(&rd.resamples, null_of(&rd.row), rd.record, rd.scale);
+                *slot = Some(ScaleSlot {
+                    scale: rd.scale,
+                    resolution,
+                    knee,
+                    run: k,
+                });
             }
         }
     }
-    print_scales(&rows, &got);
+    print_scales(&names, &got);
     true
 }
 
@@ -2846,10 +2998,7 @@ impl TipsOpts {
         let (c, edges) = ms::record_band_joint(&g.reads, &ks, self.alpha(N));
         for (k, name) in g.names.iter().enumerate() {
             let col: Vec<f64> = g.reads.iter().map(|x| x[k]).collect();
-            let qs: Vec<String> = ms::record_band_quantiles(&col)
-                .iter()
-                .map(|v| format!("{v:.6}"))
-                .collect();
+            let qs = band_quantiles(g.record[k], &col);
             let (lo, hi) = edges[k];
             println!(
                 "{}\t{name}\t{}\t{}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
@@ -3752,10 +3901,7 @@ fn main() {
     for (&k, (lo, hi)) in ks.iter().zip(&edges) {
         let name = ms::RECORD_BAND_ROWS[k];
         let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
-        let qs: Vec<String> = ms::record_band_quantiles(&col)
-            .iter()
-            .map(|v| format!("{v:.6}"))
-            .collect();
+        let qs = band_quantiles(record[k], &col);
         println!(
             "{}\t{name}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
             o.set,
@@ -3930,10 +4076,7 @@ fn print_rate_rows(o: &Opts, rate: &[f64], window: &str) {
     for (&k, (lo, hi)) in ks.iter().zip(&edges) {
         let name = ms::RATE_BAND_ROWS[k];
         let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
-        let qs: Vec<String> = ms::record_band_quantiles(&col)
-            .iter()
-            .map(|v| format!("{v:.6}"))
-            .collect();
+        let qs = band_quantiles(record[k], &col);
         println!(
             "{}\t{name}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
             o.set,
@@ -3975,10 +4118,7 @@ fn print_bond_rows(o: &Opts, r: &[f64], window: &str) {
     let alpha = o.joint / of as f64;
     let (c, edges) = ms::record_band_joint(&reads, &ks, alpha);
     let col: Vec<f64> = reads.iter().map(|x| x[0]).collect();
-    let qs: Vec<String> = ms::record_band_quantiles(&col)
-        .iter()
-        .map(|v| format!("{v:.6}"))
-        .collect();
+    let qs = band_quantiles(record[0], &col);
     let (lo, hi) = edges[0];
     println!(
         "{}\t{}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
@@ -4138,10 +4278,7 @@ fn print_bond10_rows(o: &Opts, dated: &[(String, f64)], window: &str) {
     let (c, edges) = ms::record_band_joint(&reads, &ks, alpha);
     for (k, name) in ms::BOND10_BAND_ROWS.iter().enumerate() {
         let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
-        let qs: Vec<String> = ms::record_band_quantiles(&col)
-            .iter()
-            .map(|v| format!("{v:.6}"))
-            .collect();
+        let qs = band_quantiles(record[k], &col);
         let (lo, hi) = edges[k];
         println!(
             "{}\t{}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
@@ -4375,10 +4512,7 @@ fn print_rate_after_rows(o: &Opts, r: &[f64], rate: &[f64], window: &str) {
     for (&k, (lo, hi)) in ks.iter().zip(&edges) {
         let name = ms::RATE_AFTER_ROWS[k];
         let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
-        let qs: Vec<String> = ms::record_band_quantiles(&col)
-            .iter()
-            .map(|v| format!("{v:.6}"))
-            .collect();
+        let qs = band_quantiles(record[k], &col);
         println!(
             "{}\t{name}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
             o.set,
@@ -4419,6 +4553,107 @@ mod block_tests {
         assert_eq!(runs[0].0, ["satellite |r| corr", "satellite corr"]);
         assert_eq!(runs[0].1, ["-satellite", "-set", "sp500"]);
         assert!(runs[1].0.is_empty());
+    }
+
+    /// The record's vote on its sign is the share of resamples strictly on its side of the null
+    /// less the share strictly on the other, floored at 0, a resample at the null voting for
+    /// neither; the knee is the mean leave-one-out CRPS of the resamples in the row's scale, the
+    /// one-pass form agreeing with the calls it stands for; neither without a scale, no vote
+    /// without a null or with the record at it.
+    #[test]
+    fn the_vote_and_the_knee_read_the_records_own_resamples() {
+        let xs = [-1.0, 0.0, 1.0, 2.0, 3.0];
+        let (res, knee) = vote_and_knee(&xs, Some(0.0), 2.0, 1.0);
+        assert!(
+            (res.expect("voted") - 0.4).abs() < 1e-12,
+            "3 of 5 above 0, 1 of 5 below: {res:?}"
+        );
+        // by hand: the five leave-one-out CRPS are 1.875, 0.9375, 0.625, 0.9375, 1.875
+        assert!(
+            (knee.expect("three or more") - 1.25).abs() < 1e-12,
+            "{knee:?}"
+        );
+        let by_calls: f64 = (0..xs.len())
+            .map(|i| {
+                let others: Vec<f64> = xs
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, v)| *v)
+                    .collect();
+                ms::crps(&others, xs[i])
+            })
+            .sum::<f64>()
+            / xs.len() as f64;
+        assert!((knee.expect("three or more") - by_calls).abs() < 1e-12);
+        let halved = vote_and_knee(&xs, Some(0.0), 2.0, 2.0).1;
+        assert!(
+            (halved.expect("three or more") - 0.625).abs() < 1e-12,
+            "in the row's scale: {halved:?}"
+        );
+        assert_eq!(
+            vote_and_knee(&xs, Some(0.0), -1.0, 1.0).0,
+            Some(0.0),
+            "the record below with most resamples above: floored at 0"
+        );
+        assert_eq!(
+            vote_and_knee(&xs, Some(2.0), 2.0, 1.0).0,
+            None,
+            "the record at the null"
+        );
+        assert_eq!(vote_and_knee(&xs, None, 2.0, 1.0).0, None, "no null");
+        assert_eq!(
+            vote_and_knee(&xs, Some(0.0), 2.0, 0.0),
+            (None, None),
+            "no scale"
+        );
+        assert_eq!(
+            vote_and_knee(&[1.0, 2.0], Some(0.0), 2.0, 1.0).1,
+            None,
+            "two resamples"
+        );
+        let mut skewed = vec![0.5f64; 97];
+        skewed.extend([-3.0, 1.0, f64::NAN]);
+        let vote = vote_and_knee(&skewed, Some(0.0), 0.5, 1.0).0;
+        assert!(
+            (vote.expect("voted") - 97.0 / 99.0).abs() < 1e-12,
+            "the finite resamples vote: {vote:?}"
+        );
+    }
+
+    /// A run's `raw` line carries the record and the resamples of the band row after it; a band
+    /// row without one has neither.
+    #[test]
+    fn a_raw_line_belongs_to_the_band_row_after_it() {
+        let pcts: Vec<String> = (0..ms::RECORD_BAND_PCTS.len())
+            .map(|i| format!("{}", i as f64 * 0.1))
+            .collect();
+        let band = |set: &str, row: &str| {
+            format!(
+                "{set}\t{row}\tS\tW\t10\t5\t0.300000\t{}\t0.1\t0.0\t2.0",
+                pcts.join("\t")
+            )
+        };
+        let text = format!(
+            "raw\t0.3\t-1.0\t0.0\t1.0\t2.0\t3.0\n{}\n{}\nsp500\tno band\n",
+            band("sp500", "x"),
+            band("nasdaq", "y")
+        );
+        let reads = read_scale_lines(&text);
+        assert_eq!(reads.len(), 2);
+        assert_eq!(
+            (reads[0].world.as_str(), reads[0].row.as_str()),
+            ("sp500", "x")
+        );
+        assert_eq!(reads[0].record, 0.3);
+        assert_eq!(reads[0].resamples, [-1.0, 0.0, 1.0, 2.0, 3.0]);
+        assert!((reads[0].scale - (2.0 - 0.2) / 3.29).abs() < 1e-12);
+        assert!(reads[1].record.is_nan() && reads[1].resamples.is_empty());
+        let rows = read_scale_rows("t", "row\tunits\tnull\nx\tvol\t0\ny\tshape\tnone\n");
+        assert_eq!(
+            rows,
+            [("x".to_string(), Some(0.0)), ("y".to_string(), None)]
+        );
     }
 
     #[test]
