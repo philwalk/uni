@@ -2422,7 +2422,7 @@ the disaster family, `spreadDd` 1.0 and `discountLag` 0 held, the breakeven prem
 free since it grades the breakeven rows on that era (0.0041 and 0). Both hold the equity's discount
 on the ten-year yield; the dials and the placement p's are in the CHANGELOG. They are the worlds to
 pin in place of the 0.24.6 recipes. Each set is the members one round of the loop admitted around
-its recipe, 75 and 38; both score significantly better than the 0.24.6 sets under the release rule
+its recipe, 60 and 38; both score significantly better than the 0.24.6 sets under the release rule
 (the CHANGELOG has the numbers and the set misses).
 
 ## The deleveraging — `-delevrate`
