@@ -385,9 +385,13 @@ it (the spiral's `stress` 3.84 → 3.33, `jumpVar` 0.167 → 0.092, `volOfVol` 0
 leverage profile's k = 3..10 sum −0.29 → −0.38, the drawdown bins 1.15/1.18/1.57 → 1.19/1.26/1.68,
 clustering lag 20 0.17 → 0.19 against 0.21, at the cost of equity vol 16.7 → 17.9 against 16.8 and
 the sign trend 0.29 → 0.23. The gap term above about 1 is affordable only with the spiral lowered,
-and a factor on the diffusion does not reach the vol coupling rows (monthly −0.24 → −0.25 against
-−0.41): the model's month-to-month vol change is diluted by variation the month's return does not
-drive, which is the next mechanism's question, not this dial's. The Nasdaq recipe carries the four
+and the vol coupling rows (monthly −0.25 against −0.41, quarterly −0.36 against −0.53) are out of
+reach of any factor on one channel: the daily variance is split among the order flow, the slow
+repricing channel, the valuation cycle and the markdown, which answer the price on different
+clocks (the order flow within the session, the slow channel over months, the other two not at
+all), and each channel's variance buys rows the record demands (the |r| memory, the implied-vol
+persistence, the cross-section, the stock-bond correlation, the long record's valuation rows). The
+rows stay a known gap until every channel shares one vol regime, a re-solve-scale change. The Nasdaq recipe carries the four
 off. The search harness re-draws a proposal outside the world's domain (the CLI's domain checks and
 the search's share one table, `WORLD_DOMAIN`; a jump variance with a zero rate was the pair that
 made a NaN world) and scores a path with a non-finite series infeasible, naming the series.
