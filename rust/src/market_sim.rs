@@ -615,14 +615,16 @@ fn news_damp_at(news_rate: f64, news_size: f64, noise_scale: f64) -> f64 {
 }
 
 /// The conditional-vol multiplier the diffusion's noise carries, read from the states as they
-/// stood before the session: the log-vol state's level-preserving factor, the leverage kick and
-/// the vol response, each only when its dial is on. `news_scale` sizes news by it.
+/// stood before the session: the log-vol state's level-preserving factor, the leverage kick, the
+/// vol response and the linear answer's factor `lin_m` (`World::decline_vol`), each only when its
+/// dial is on. `news_scale` sizes news by it.
 fn news_vol_multiplier(
     w: &World,
     log_vol: f64,
     vol_norm: f64,
     kick_s: f64,
     vol_resp_s: f64,
+    lin_m: f64,
 ) -> f64 {
     let mut m = exp_det(log_vol - vol_norm);
     if w.leverage > 0.0 {
@@ -631,8 +633,15 @@ fn news_vol_multiplier(
     if w.vol_resp > 0.0 {
         m *= exp_det(w.vol_resp * vol_resp_s);
     }
+    if w.decline_vol > 0.0 || w.drawdown_vol > 0.0 {
+        m *= lin_m;
+    }
     m
 }
+
+/// The printed closes the drawdown's high is read over (`World::drawdown_vol`): a trading year,
+/// the window the record's drawdown is read on.
+const DRAWDOWN_VOL_WINDOW: usize = 250;
 
 /// A day flip's expected gain per unit of the day's sd at `q0` = 1:
 /// 2 E[|z| exp(-z^2 / 2); z < 0] = 1 / sqrt(2 pi), for a unit normal `z`. See `news_flip`.
@@ -663,6 +672,469 @@ fn news_budget_refusal(news_rate: f64, news_size: f64, noise_scale: f64) -> Opti
     } else {
         None
     }
+}
+
+/// A share's refusal (the CLI's text): `x` outside 0..=1, NaN included.
+fn share_refusal(flag: &str, x: f64) -> Option<String> {
+    (!(0.0..=1.0).contains(&x))
+        .then(|| format!("{flag} wants a share in 0..1, got {}", scala_dbl(x)))
+}
+
+/// A refusal of `x` outside 0..1, NaN included.
+fn below_one_refusal(flag: &str, x: f64) -> Option<String> {
+    (!(0.0..1.0).contains(&x))
+        .then(|| format!("{flag} wants at least 0 and below 1, got {}", scala_dbl(x)))
+}
+
+/// A refusal of a negative or NaN `x`.
+fn non_neg_refusal(flag: &str, x: f64) -> Option<String> {
+    (x.is_nan() || x < 0.0)
+        .then(|| format!("{flag} wants a non-negative number, got {}", scala_dbl(x)))
+}
+
+/// A refusal of an `x` at or below 0, or NaN.
+fn positive_refusal(flag: &str, x: f64) -> Option<String> {
+    (x.is_nan() || x <= 0.0)
+        .then(|| format!("{flag} wants a positive number, got {}", scala_dbl(x)))
+}
+
+/// `why` when `bad`.
+fn refused(bad: bool, why: &str) -> Option<String> {
+    bad.then(|| why.to_string())
+}
+
+/// THE WORLD DIALS' DOMAIN, in the order the CLI refuses: each check the CLI's text when the world
+/// fails it. Out of domain the dials do not fail on their own: `-jumprate 0` with a positive
+/// `-jumpvar` divides by zero in `jump_scale` and emitted a file of NaN at exit 0, and
+/// `-recoveryfloor 3` inverts asymmetric recovery -- arbitrage STRONGER in a deep drawdown, the
+/// documented mechanism run backwards -- into a world that then PASSES the acceptance gate.
+///
+/// Reject what the mechanism cannot express, never what merely looks unusual -- an over-tight
+/// bound breaks a sweep script for no defect. Every value recorded anywhere in this repo is
+/// admitted, `-jumpvar 0` and `-haltlimit 0` (the documented disable values) included, as is
+/// every range `calibrate` sweeps. A `contains` test is false for NaN, so a NaN literal is
+/// refused here rather than reaching the model. Value-level checks only: a check on which flags
+/// were given stays in the parser.
+const WORLD_DOMAIN: [fn(&World) -> Option<String>; 160] = [
+    |w| share_refusal("-trendshare", w.trend_share),
+    |w| share_refusal("-leverage", w.leverage),
+    |w| share_refusal("-downshock", w.down_shock),
+    |w| share_refusal("-jumpvar", w.jump_var),
+    |w| share_refusal("-jumprate", w.jump_rate),
+    |w| share_refusal("-recoveryfloor", w.recovery_floor),
+    |w| share_refusal("-disasterrecover", w.disaster_recover),
+    |w| share_refusal("-inflprob", w.infl_prob),
+    |w| share_refusal("-inflspeed", w.infl_speed),
+    |w| below_one_refusal("-volpersist", w.vol_persist),
+    |w| below_one_refusal("-haltlimit", w.halt_limit),
+    |w| positive_refusal("-depth", w.depth),
+    |w| positive_refusal("-duration", w.duration),
+    |w| non_neg_refusal("-bond10", w.bond10),
+    |w| non_neg_refusal("-tips", w.tips),
+    |w| non_neg_refusal("-termpremium", w.term_premium),
+    |w| non_neg_refusal("-cpinoise", w.cpi_noise),
+    |w| share_refusal("-deflprob", w.defl_prob),
+    |w| non_neg_refusal("-deflsize", w.defl_size),
+    |w| non_neg_refusal("-spikerate", w.spike_rate),
+    |w| non_neg_refusal("-spikesize", w.spike_size),
+    |w| non_neg_refusal("-termvol", w.term_vol),
+    |w| non_neg_refusal("-brkvol", w.brk_vol),
+    |w| {
+        refused(
+            !(0.0..=1.0).contains(&w.brk_nominal),
+            "-brknominal is a share in [0, 1]",
+        )
+    },
+    |w| {
+        refused(
+            w.discount_yield != 0.0 && w.discount_yield != 1.0,
+            "-discountyield is 0 (the policy rate) or 1 (the ten-year yield)",
+        )
+    },
+    |w| non_neg_refusal("-cpinoiselevel", w.cpi_noise_level),
+    |w| non_neg_refusal("-policygrowth", w.policy_growth),
+    |w| non_neg_refusal("-yieldbeta", w.yield_beta),
+    |w| non_neg_refusal("-bondbetacut", w.bond_beta_cut),
+    |w| non_neg_refusal("-valuecap", w.value_cap),
+    |w| non_neg_refusal("-valuecapfall", w.value_cap_fall),
+    |w| non_neg_refusal("-recessspread", w.recess_spread),
+    |w| non_neg_refusal("-recesstransient", w.recess_transient),
+    |w| {
+        (w.noise_scale.is_nan() || w.noise_scale <= 0.0)
+            .then(|| format!("-noisescale {} must be above 0", w.noise_scale))
+    },
+    |w| non_neg_refusal("-crowdadjust", w.crowd_adjust),
+    |w| {
+        (!(0.0..=1.0).contains(&w.recess_step_share))
+            .then(|| format!("-recessstep {} must be in [0, 1]", w.recess_step_share))
+    },
+    |w| {
+        (!(w.recess_steps >= 0.0 && w.recess_steps.fract() == 0.0)).then(|| {
+            format!(
+                "-recesssteps {} must be a whole number, 0 or more",
+                w.recess_steps
+            )
+        })
+    },
+    |w| non_neg_refusal("-declinevol", w.decline_vol),
+    |w| {
+        (w.decline_vol_half.is_nan() || w.decline_vol_half <= 0.0)
+            .then(|| format!("-declinevolhalf {} must be above 0", w.decline_vol_half))
+    },
+    |w| non_neg_refusal("-drawdownvol", w.drawdown_vol),
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.decline_vol_attack),
+            "-declinevolattack is a persistence in [0, 1)",
+        )
+    },
+    |w| non_neg_refusal("-yieldlag", w.yield_lag),
+    |w| {
+        refused(
+            !(0.0..=1.0).contains(&w.exp_anchor),
+            "-expanchor is a share from 0 to 1",
+        )
+    },
+    |w| non_neg_refusal("-volfeedback", w.vol_feedback),
+    |w| {
+        refused(
+            w.yield_beta > 0.0 && w.term_vol <= 0.0,
+            "-yieldbeta needs the ten-year yield: -termvol above 0",
+        )
+    },
+    |w| non_neg_refusal("-stress", w.stress),
+    |w| non_neg_refusal("-beta", w.beta),
+    |w| non_neg_refusal("-volofvol", w.vol_of_vol),
+    |w| non_neg_refusal("-value", w.value_pull),
+    |w| non_neg_refusal("-newsrate", w.news_rate),
+    |w| non_neg_refusal("-newssize", w.news_size),
+    |w| non_neg_refusal("-newslev", w.news_lev),
+    |w| news_budget_refusal(w.news_rate, w.news_size, w.noise_scale),
+    |w| non_neg_refusal("-newsbond", w.news_bond),
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.news_bond_skip),
+            "-newsbondskip is a share in [0, 1)",
+        )
+    },
+    |w| non_neg_refusal("-creditregime", w.credit_regime),
+    |w| non_neg_refusal("-creditregimerate", w.credit_regime_rate),
+    |w| {
+        refused(
+            !(0.0..=1.0).contains(&w.slow_bond_infl),
+            "-slowbondinfl is a share in [0, 1]",
+        )
+    },
+    |w| non_neg_refusal("-refugedays", w.refuge_days),
+    |w| non_neg_refusal("-satbeta", w.sat_beta),
+    |w| non_neg_refusal("-satidio", w.sat_idio),
+    |w| non_neg_refusal("-sattaildrop", w.sat_tail_drop),
+    |w| non_neg_refusal("-satcyclesd", w.sat_cycle_sd),
+    |w| {
+        refused(
+            w.sat_cycle_sd > 0.0 && (w.sat_drift_half <= 0.0 || w.sat_level_half <= 0.0),
+            "-satcyclesd needs -satdrifthalf and -satlevelhalf above 0",
+        )
+    },
+    |w| non_neg_refusal("-rangescale", w.range_scale),
+    |w| non_neg_refusal("-rangedown", w.range_down),
+    |w| {
+        refused(
+            w.range_down > 0.0 && w.range_scale <= 0.0,
+            "-rangedown requires -rangescale > 0: it shapes the sampled bar",
+        )
+    },
+    |w| non_neg_refusal("-volidio", w.vol_idio),
+    |w| non_neg_refusal("-divyield", w.div_yield),
+    |w| non_neg_refusal("-overnight", w.overnight),
+    |w| non_neg_refusal("-basketbeta", w.basket_beta),
+    |w| non_neg_refusal("-basketsector", w.basket_sector),
+    |w| non_neg_refusal("-levgain", w.lev_gain),
+    |w| non_neg_refusal("-stressscale", w.stress_scale),
+    |w| non_neg_refusal("-noiseasym", w.noise_asym),
+    |w| non_neg_refusal("-noiseasymcap", w.noise_asym_cap),
+    |w| non_neg_refusal("-volresp", w.vol_resp),
+    |w| non_neg_refusal("-bustamp", w.bust_amp),
+    |w| non_neg_refusal("-cyclesd", w.cycle_sd),
+    |w| non_neg_refusal("-beliefleak", w.belief_leak),
+    |w| {
+        (w.cycle_sd > 0.0 && w.cycle_years <= 0.0)
+            .then(|| format!("-cyclesd {} needs -cycleyears above 0", w.cycle_sd))
+    },
+    |w| non_neg_refusal("-volrespcap", w.vol_resp_cap),
+    |w| non_neg_refusal("-jumpresp", w.jump_resp),
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.lev_persist),
+            "-levpersist is a persistence in [0, 1)",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.noise_asym_phi),
+            "-noiseasymphi is a persistence in [0, 1)",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.vol_resp_phi),
+            "-volrespphi is a persistence in [0, 1)",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.vol_resp_attack),
+            "-volrespattack is a persistence in [0, 1)",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.stress_adapt) || w.stress_adapt <= 0.0,
+            "-stressadapt is an EWMA weight in (0, 1)",
+        )
+    },
+    |w| non_neg_refusal("-slowvol", w.slow_vol),
+    |w| non_neg_refusal("-slowlev", w.slow_lev),
+    |w| non_neg_refusal("-slowbeta", w.slow_beta),
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.slow_share),
+            "-slowshare is a share in [0, 1)",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.slow_phi),
+            "-slowphi is a persistence in [0, 1)",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..=1.0).contains(&w.slow_perm),
+            "-slowperm is a share in [0, 1]",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..=1.0).contains(&w.news_revert),
+            "-newsrevert is a share in [0, 1]",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..=1.0).contains(&w.news_scale),
+            "-newsscale is a share in [0, 1]",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..1.0).contains(&w.noise_skew),
+            "-noiseskew is a skew in [0, 1)",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..=1.0).contains(&w.news_flip),
+            "-newsflip is a share in [0, 1]",
+        )
+    },
+    |w| non_neg_refusal("-basketidio", w.basket_idio),
+    |w| non_neg_refusal("-basketgaps", w.basket_gaps),
+    |w| non_neg_refusal("-basketdrift", w.basket_drift),
+    |w| non_neg_refusal("-sectoridio", w.sector_idio),
+    |w| non_neg_refusal("-sectordriftsd", w.sector_drift_sd),
+    |w| {
+        refused(
+            w.sectors > 0 && w.sector_drift_half <= 0.0,
+            "-sectors requires -sectordrifthalf > 0: the legs' drift state needs a half-life",
+        )
+    },
+    |w| (w.macro_panel > 1).then(|| format!("-macro {}: 0 (off) or 1 (the panel)", w.macro_panel)),
+    |w| {
+        (w.macro_null > 2).then(|| {
+            format!(
+                "-macronull {}: 0 (the path's own panel), 1 (a sibling's) or 2 (both)",
+                w.macro_null
+            )
+        })
+    },
+    |w| {
+        refused(
+            w.macro_null > 0 && w.macro_panel == 0,
+            "-macronull needs -macro 1: it is the panel's null, not a panel",
+        )
+    },
+    |w| {
+        refused(
+            w.basket > 0 && w.basket_beta <= 0.0,
+            "-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything",
+        )
+    },
+    |w| {
+        (w.overnight >= 1.0).then(|| format!("-overnight {} leaves the intraday session no variance to run the bridge on; it must be below 1", w.overnight))
+    },
+    |w| {
+        refused(
+            w.vol_idio > 0.0 && w.range_scale <= 0.0,
+            "-volidio requires -rangescale > 0: volume rides the range",
+        )
+    },
+    |w| non_neg_refusal("-disasterrate", w.disaster_rate),
+    |w| non_neg_refusal("-disastersize", w.disaster_size),
+    |w| non_neg_refusal("-recessrate", w.recess_rate),
+    |w| {
+        (w.recess_rate > 0.0 && (w.recess_size <= 0.0 || w.recess_len <= 0.0)).then(|| {
+            format!(
+                "-recessrate {} needs -recesssize and -recesslen above 0",
+                w.recess_rate
+            )
+        })
+    },
+    |w| {
+        (!(0.0..=1.0).contains(&w.recess_recover))
+            .then(|| format!("-recessrecover {} must be in [0, 1]", w.recess_recover))
+    },
+    |w| (w.recess_news < 1.0).then(|| format!("-recessnews {} must be at least 1", w.recess_news)),
+    |w| {
+        (!(0.0..=1.0).contains(&w.recess_reprice))
+            .then(|| format!("-recessreprice {} must be in [0, 1]", w.recess_reprice))
+    },
+    |w| non_neg_refusal("-recessbase", w.recess_base),
+    |w| non_neg_refusal("-recessshape", w.recess_shape),
+    |w| {
+        (!(0.0..=1.0).contains(&w.overshoot))
+            .then(|| format!("-overshoot {} must be in [0, 1]", w.overshoot))
+    },
+    |w| {
+        (!(w.overshoot_rate > 0.0 && w.overshoot_rate <= 1.0))
+            .then(|| format!("-overshootrate {} must be in (0, 1]", w.overshoot_rate))
+    },
+    |w| non_neg_refusal("-recesscredit", w.recess_credit),
+    |w| non_neg_refusal("-recessinfl", w.recess_infl),
+    |w| {
+        (w.recess_rec_mult <= 0.0)
+            .then(|| format!("-recessrecmult {} must be above 0", w.recess_rec_mult))
+    },
+    |w| (w.recess_vol < 0.0).then(|| format!("-recessvol {} must be at least 0", w.recess_vol)),
+    |w| {
+        (w.regime_drift < 0.0)
+            .then(|| format!("-regimedrift {} must be at least 0", w.regime_drift))
+    },
+    |w| non_neg_refusal("-driftsd", w.drift_sd),
+    |w| non_neg_refusal("-delevrate", w.delev_rate),
+    |w| non_neg_refusal("-delevfrom", w.delev_from),
+    |w| {
+        (w.delev_rate > 0.0 && (w.delev_size <= 0.0 || w.delev_len <= 0.0)).then(|| {
+            format!(
+                "-delevrate {} needs -delevsize and -delevlen above 0",
+                w.delev_rate
+            )
+        })
+    },
+    |w| (w.boom_fade <= 0.0).then(|| format!("-boomfade {} must be above 0", w.boom_fade)),
+    |w| (w.spread_dd < 0.0).then(|| format!("-spreaddd {} must be at least 0", w.spread_dd)),
+    |w| {
+        (!(0.0..=1.0).contains(&w.disaster_overshoot)).then(|| {
+            format!(
+                "-disasterovershoot {} must be in 0..1",
+                w.disaster_overshoot
+            )
+        })
+    },
+    |w| {
+        (!(0.0..=1.0).contains(&w.disaster_anticipate)).then(|| {
+            format!(
+                "-disasteranticipate {} must be in 0..1",
+                w.disaster_anticipate
+            )
+        })
+    },
+    |w| non_neg_refusal("-volpull", w.vol_pull),
+    |w| non_neg_refusal("-boomrate", w.boom_rate),
+    |w| {
+        (w.boom_rate > 0.0 && (w.boom_size <= 0.0 || w.boom_len <= 0.0)).then(|| {
+            format!(
+                "-boomrate {} needs -boomsize and -boomlen above 0",
+                w.boom_rate
+            )
+        })
+    },
+    |w| {
+        (w.disaster_rate > 0.0 && (w.disaster_size <= 0.0 || w.disaster_len <= 0.0)).then(|| {
+            format!(
+                "-disasterrate {} needs -disastersize and -disasterlen above 0",
+                w.disaster_rate
+            )
+        })
+    },
+    |w| {
+        (w.disaster_recover > 0.0 && w.disaster_rec_len <= 0.0).then(|| {
+            format!(
+                "-disasterrecover {} needs -disasterreclen above 0",
+                w.disaster_recover
+            )
+        })
+    },
+    // A 2-sd shift is already past every fitted setting; negative would skew jumps UP.
+    |w| {
+        (!(0.0..=2.0).contains(&w.jump_skew)).then(|| {
+            format!(
+                "-jumpskew {} out of range; needs 0 <= skew <= 2",
+                w.jump_skew
+            )
+        })
+    },
+    // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely — the pull
+    // chases its own shadow and nothing anchors the price level. Strictly below 1.
+    |w| {
+        (!(0.0..1.0).contains(&w.belief_share)).then(|| {
+            format!(
+                "-beliefshare {} out of range; needs 0 <= share < 1",
+                w.belief_share
+            )
+        })
+    },
+    |w| {
+        (w.belief_share > 0.0 && w.belief_years <= 0.0)
+            .then(|| format!("-beliefshare {} needs -beliefyears above 0", w.belief_share))
+    },
+    |w| non_neg_refusal("-capyears", w.cap_years),
+    |w| {
+        (w.cap_years > 0.0 && w.cap_window <= 0.0)
+            .then(|| format!("-capyears {} needs -capwindow above 0", w.cap_years))
+    },
+    |w| non_neg_refusal("-recoverydrag", w.recovery_drag),
+    |w| non_neg_refusal("-crowdimpact", w.crowd_impact),
+    |w| non_neg_refusal("-panic", w.panic),
+    |w| non_neg_refusal("-fundvol", w.fund_vol),
+    |w| non_neg_refusal("-ratemean", w.rate_mean),
+    |w| non_neg_refusal("-easing", w.easing),
+    |w| non_neg_refusal("-unwind", w.unwind),
+    |w| non_neg_refusal("-floorhold", w.floorhold),
+    |w| non_neg_refusal("-refuge", w.refuge),
+    |w| non_neg_refusal("-inflsize", w.infl_size),
+    |w| non_neg_refusal("-ratespeed", w.rate_speed),
+    |w| non_neg_refusal("-discount", w.discount),
+    |w| non_neg_refusal("-discountlag", w.discount_lag),
+    |w| non_neg_refusal("-discountref", w.discount_ref),
+    |w| non_neg_refusal("-margin", w.margin),
+    // `-drift` carries no domain: a negative fundamental drift is a world, not an error.
+    // The PAIR is what no per-dial check can see -- `jump_scale` divides by `jump_rate`.
+    |w| {
+        (w.jump_var > 0.0 && w.jump_rate <= 0.0).then(|| {
+            format!(
+                "-jumpvar {} needs -jumprate above 0: the jump size is set by jumpVar/jumpRate",
+                scala_dbl(w.jump_var)
+            )
+        })
+    },
+];
+
+/// The first check of `WORLD_DOMAIN` the world fails, as the CLI's refusal text; `None` inside the
+/// domain. The CLI refuses such a world and the search proposes none (`admissible`).
+#[must_use]
+pub fn world_domain_refusal(w: &World) -> Option<String> {
+    WORLD_DOMAIN.iter().find_map(|check| check(w))
 }
 
 /// The share of the diffusion budget a searched news channel may take. The ranges' corner
@@ -938,6 +1410,10 @@ pub fn default_world() -> World {
         crowd_adjust: 0.0,
         recess_step_share: 0.0,
         recess_steps: 0.0,
+        decline_vol: 0.0,
+        decline_vol_half: 5.0,
+        drawdown_vol: 0.0,
+        decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -1123,6 +1599,10 @@ fn v0_19_2() -> World {
         crowd_adjust: 0.0,
         recess_step_share: 0.0,
         recess_steps: 0.0,
+        decline_vol: 0.0,
+        decline_vol_half: 5.0,
+        drawdown_vol: 0.0,
+        decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -1269,6 +1749,10 @@ fn v0_24_1() -> World {
         crowd_adjust: 0.0,
         recess_step_share: 0.0,
         recess_steps: 0.0,
+        decline_vol: 0.0,
+        decline_vol_half: 5.0,
+        drawdown_vol: 0.0,
+        decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -1590,19 +2074,21 @@ fn v0_24_6_sp500() -> World {
     }
 }
 
-/// `0.25.0-sp500`: member 0 of `0.25.0-sp500.json`, the PLAN row 65 milestone: the lag-free
-/// record's ledger (the CRPS form, every row at weight 1.0) solved with every searched dial free
-/// except the eight the record reads directly -- the disaster family's five, `spread_dd` 3.0,
-/// `brk_vol` 0.0055 and `brk_nominal` 0.68, held at the record's readings -- and `discount_lag`
-/// at 0; the equity's discount on the ten-year yield. Judged on four fresh seeds at 200 x 100:
-/// every class passes on all four, the placement p 0.69 over the pooled histories.
+/// `0.25.0-sp500`: member 0 of `0.25.0-sp500.json`, the PLAN row 65 vol line's point (2026-10-29):
+/// the second milestone re-solved locally around the vol's answer to declines (`decline_vol` 0.41
+/// at an attack of 0.8, the half-life 5) and to the drawdown (`drawdown_vol` 0.85), the vol
+/// budget's carriers free and seven of them read back to the milestone's values, under the lag-free
+/// record's ledger (the CRPS form, every row at weight 1.0) with the record's pins held and
+/// `discount_lag` at 0; the equity's discount on the ten-year yield. Kurtosis 27.8 to 20.8 and the
+/// downside vol excess 3.88 to 2.67 (the record's 20.5 and 2.07), the ledger 39.6 against the
+/// milestone's 40.25, membership p 0.78; the monthly vol coupling rows unreached.
 fn recipe_0250_sp500(mut w: World) -> World {
-    w.depth = 17.911124;
+    w.depth = 16.924810;
     w.trend_share = 0.16832922;
     w.drift = 0.13684795;
     w.fund_vol = 0.047353994;
     w.crowd_impact = 0.036018520;
-    w.stress = 3.8435735;
+    w.stress = 3.3274730;
     w.value_pull = 0.10644725;
     w.recovery_drag = 0.0000000;
     w.recovery_floor = 0.055204865;
@@ -1611,11 +2097,11 @@ fn recipe_0250_sp500(mut w: World) -> World {
     w.disaster_recover = 0.50000000;
     w.belief_share = 0.97000000;
     w.cap_years = 0.43818263;
-    w.vol_of_vol = 0.027139691;
-    w.jump_var = 0.16668900;
+    w.vol_of_vol = 0.017640799;
+    w.jump_var = 0.091499568;
     w.jump_rate = 0.0033018076;
     w.leverage = 0.090605276;
-    w.down_shock = 0.011099640;
+    w.down_shock = 0.017130954;
     w.jump_skew = 0.64922989;
     w.news_rate = 0.86185635;
     w.news_size = 0.029284706;
@@ -1644,7 +2130,7 @@ fn recipe_0250_sp500(mut w: World) -> World {
     w.credit_regime = 0.36283376;
     w.credit_regime_rate = 0.80695129;
     w.slow_bond_infl = 0.15338595;
-    w.lev_gain = 9.0172767;
+    w.lev_gain = 4.5653917;
     w.boom_rate = 2.3125451;
     w.boom_size = 0.78899023;
     w.boom_len = 14.360127;
@@ -1680,8 +2166,11 @@ fn recipe_0250_sp500(mut w: World) -> World {
     w.value_cap = 0.021681704;
     w.value_cap_fall = 0.0092329487;
     w.recess_transient = 0.088421989;
-    w.noise_scale = 1.2123347;
+    w.noise_scale = 1.1204038;
     w.crowd_adjust = 1.5957984;
+    w.decline_vol = 0.40683655;
+    w.drawdown_vol = 0.85020807;
+    w.decline_vol_attack = 0.80000000;
     // the vol pull in the step, as every 0.25.0 world carries it
     w.vol_pull_step = true;
     with_item62_dials(recipe_0250_sp500_rates(w), SP500_CHANNEL_DIALS)
@@ -1705,7 +2194,7 @@ fn recipe_0250_sp500_rates(mut w: World) -> World {
     w.yield_beta = 0.0000000;
     w.yield_lag = 28.615231;
     w.exp_anchor = 0.37483225;
-    w.vol_feedback = 0.20839856;
+    w.vol_feedback = 0.29804094;
     w.discount_yield = 1.0000000;
     w
 }
@@ -1747,6 +2236,10 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
         crowd_adjust: 0.0,
         recess_step_share: 0.0,
         recess_steps: 0.0,
+        decline_vol: 0.0,
+        decline_vol_half: 5.0,
+        drawdown_vol: 0.0,
+        decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -2610,6 +3103,10 @@ fn v0_23_0() -> World {
         crowd_adjust: 0.0,
         recess_step_share: 0.0,
         recess_steps: 0.0,
+        decline_vol: 0.0,
+        decline_vol_half: 5.0,
+        drawdown_vol: 0.0,
+        decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -2776,6 +3273,10 @@ fn v0_22_1() -> World {
         crowd_adjust: 0.0,
         recess_step_share: 0.0,
         recess_steps: 0.0,
+        decline_vol: 0.0,
+        decline_vol_half: 5.0,
+        drawdown_vol: 0.0,
+        decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -2944,6 +3445,10 @@ fn v0_22_0() -> World {
         crowd_adjust: 0.0,
         recess_step_share: 0.0,
         recess_steps: 0.0,
+        decline_vol: 0.0,
+        decline_vol_half: 5.0,
+        drawdown_vol: 0.0,
+        decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -3112,6 +3617,10 @@ fn v0_21_0() -> World {
         crowd_adjust: 0.0,
         recess_step_share: 0.0,
         recess_steps: 0.0,
+        decline_vol: 0.0,
+        decline_vol_half: 5.0,
+        drawdown_vol: 0.0,
+        decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -3280,6 +3789,10 @@ fn v0_20_0() -> World {
         crowd_adjust: 0.0,
         recess_step_share: 0.0,
         recess_steps: 0.0,
+        decline_vol: 0.0,
+        decline_vol_half: 5.0,
+        drawdown_vol: 0.0,
+        decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         vol_feedback: 0.0,
@@ -4218,6 +4731,25 @@ pub struct World {
     /// More lumps than the slide has sessions take one each. 0 is the onset lump and
     /// bit-identical.
     pub recess_steps: f64,
+    /// THE LINEAR VOL ANSWER TO DECLINES (PLAN row 65, searched): the conditional-vol multiplier
+    /// carries the factor `1 + decline_vol * D + drawdown_vol * G`, `D` the EWMA (half-life
+    /// `decline_vol_half` sessions) of the previous session's decline in units of the session's
+    /// own conditional sd -- the leverage kick's decline, uncentred, saturated at four -- and `G`
+    /// the last printed close's log gap under the high of the 250 printed closes before it.
+    /// Linear and bounded, on the diffusion alone: the jump intensity does not read it, and it
+    /// takes no draw. 0 is off and bit-identical.
+    pub decline_vol: f64,
+    /// the decline state's half-life in sessions (see `decline_vol`); 5 is its off value, inert
+    /// while `decline_vol` is 0
+    pub decline_vol_half: f64,
+    /// THE LINEAR VOL ANSWER TO THE DRAWDOWN (PLAN row 65, searched): the factor's `G` term (see
+    /// `decline_vol`). 0 is off and bit-identical.
+    pub drawdown_vol: f64,
+    /// the linear answer's ATTACK, 0 = none (see `decline_vol`): each session's decline passes
+    /// through a fast EWMA with this weight before the decline state, and the gap through one
+    /// before the factor, so the answer builds over three or four sessions and then holds, where
+    /// at 0 it is largest at lag 1. Inert while `decline_vol` and `drawdown_vol` are 0.
+    pub decline_vol_attack: f64,
     /// THE RESPONSE'S LAG (item 61): the return the beta's state reads is an EWMA of the
     /// observed equity return with this half-life in sessions, unit mass, so the same move
     /// reprices the path over weeks rather than the next session: the record's correlation
@@ -4382,6 +4914,41 @@ pub struct Path {
 }
 
 impl Path {
+    /// THE FIRST SERIES OF THE PATH THAT IS NOT A NUMBER: its printed price, then the channel level
+    /// its world's derived series were sampled at (`ChannelLevel`, solved on an ensemble of its
+    /// own, so one NaN session there reaches every path), then each series `-emit` writes
+    /// (`path_is_finite`'s); `None` for a path every statistic can read. The search scores a
+    /// candidate with such a path infeasible (`nan`).
+    #[must_use]
+    pub fn nan_series(&self) -> Option<&'static str> {
+        let level = [
+            self.chan_k,
+            self.chan_k_sat,
+            self.chan_k_div,
+            self.chan_k_vs,
+            self.chan_k_iv,
+            self.chan_k_dr,
+        ];
+        let series: [(&'static str, &[f64]); 9] = [
+            ("price", &self.price),
+            ("level", &level),
+            ("satellite", &self.sat),
+            ("high", &self.log_hi),
+            ("low", &self.log_lo),
+            ("volume", &self.log_volume),
+            ("dividend yield", &self.div_yield),
+            ("traded", &self.traded),
+            ("open", &self.log_open),
+        ];
+        let nan = |s: &[f64]| s.iter().any(|x| x.is_nan());
+        series
+            .iter()
+            .find(|(_, s)| nan(s))
+            .map(|(name, _)| *name)
+            .or_else(|| self.names.iter().any(|s| nan(s)).then_some("basket"))
+            .or_else(|| self.sectors.iter().any(|s| nan(s)).then_some("sectors"))
+    }
+
     /// The path's first `years` of sessions, for the rows read at a record's length: every series
     /// cut to them, and the channels and the macro panel -- read over the whole path, and by no
     /// banded or extreme row -- dropped; the scalar summaries stay the whole path's. A fresh
@@ -5159,11 +5726,16 @@ const SAT_TAIL_SD: f64 = 2.0;
 
 /// The primary's session move as the satellite's beta reads it: the observed log return less
 /// `sat_tail_drop` of its part beyond `SAT_TAIL_SD` times the world's realized session sd
-/// (`ChannelLevel::k_dr` a year's); the return whole at 0, bit-identical.
+/// (`ChannelLevel::k_dr` a year's); the return whole at 0, bit-identical; NaN under a level that
+/// is not a number (`Path::nan_series`), which the clamp's bounds would panic on.
 fn sat_primary_move(r_p: f64, w: &World, level: ChannelLevel) -> f64 {
     if w.sat_tail_drop > 0.0 {
         let c = SAT_TAIL_SD * level.k_dr / (DAYS_PER_YEAR as f64).sqrt();
-        r_p - w.sat_tail_drop * (r_p - r_p.clamp(-c, c))
+        if c.is_nan() {
+            f64::NAN
+        } else {
+            r_p - w.sat_tail_drop * (r_p - r_p.clamp(-c, c))
+        }
     } else {
         r_p
     }
@@ -7130,8 +7702,9 @@ pub struct BondTape {
 /// markdown included) into every write to the equity's log price, in the order they happen, the
 /// step's return split by its own pull, carry, input terms (each times the step's amplified
 /// liquidity) and halt/clamp; `rounding` closes the sum (the step's distribution over its terms
-/// is not exact in floating point). Group B is the conditional vol state as log multipliers.
-pub const VOL_PART_COLUMNS: [&str; 34] = [
+/// is not exact in floating point). Group B is the conditional vol state as log multipliers;
+/// `declineVol` and `drawdownVol` are the linear answer's two terms, the shares its factor adds.
+pub const VOL_PART_COLUMNS: [&str; 36] = [
     "logPrice",
     "dLogPrice",
     "recess",
@@ -7160,6 +7733,8 @@ pub const VOL_PART_COLUMNS: [&str; 34] = [
     "logVol",
     "levKick",
     "volResp",
+    "declineVol",
+    "drawdownVol",
     "asym",
     "regime",
     "slowState",
@@ -7191,6 +7766,8 @@ struct VolSession {
     vol_feedback: f64,
     lev_kick: f64,
     vol_resp: f64,
+    decline_vol: f64,
+    drawdown_vol: f64,
     asym: f64,
     regime: f64,
     slow_state: f64,
@@ -7202,7 +7779,7 @@ struct VolSession {
 /// change reads.
 #[derive(Clone, Default)]
 pub struct VolParts {
-    rows: Vec<[f64; 34]>,
+    rows: Vec<[f64; 36]>,
     last_x: f64,
     last_md: f64,
 }
@@ -7266,7 +7843,7 @@ impl BondTape {
             + self
                 .vol
                 .as_ref()
-                .map_or(0, |v| v.rows.len() * size_of::<[f64; 34]>())
+                .map_or(0, |v| v.rows.len() * size_of::<[f64; 36]>())
     }
 }
 
@@ -7481,6 +8058,21 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     // the DIFFUSIVE DRAW rather than by any price-derived quantity.
     let mut kick_s = 0.0f64;
     let mut vol_resp_s = 0.0f64;
+    // THE LINEAR VOL ANSWER's states (see `decline_vol`, `drawdown_vol`): the decline EWMA and its
+    // weight, and the printed closes' running high over `DRAWDOWN_VOL_WINDOW` as a monotone deque
+    // of (session, log close), filled only while the dial is on; the attack's fast EWMAs of the
+    // decline and of the gap (`decline_vol_attack`). Draw-free.
+    let mut decline_s = 0.0f64;
+    let mut decline_att = 0.0f64;
+    let mut gap_att = 0.0f64;
+    let decline_a = if w.decline_vol > 0.0 {
+        exp_det(-ln_det(2.0) / w.decline_vol_half)
+    } else {
+        0.0
+    };
+    let mut dd_high: std::collections::VecDeque<(usize, f64)> = std::collections::VecDeque::new();
+    let mut last_close = 0.0f64;
+    let lin_on = w.decline_vol > 0.0 || w.drawdown_vol > 0.0;
     // THE BUST SWING's state (see `bust_amp`): the gap's slow mean, the level at the running
     // peak, the armed state, the episode's low and the sessions since it, the swing and its own
     // stream. Draw-free at 0: the stream is only drawn while the dial is on.
@@ -7954,6 +8546,23 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             }
         }
         log_vbase += drift_now * dt + w.fund_vol * sqdt * rng.randn();
+        // THE LINEAR VOL ANSWER (see `decline_vol`): the session's factor, read from the states as
+        // they stood before it -- the decline EWMA, and the last printed close's gap under the
+        // high of the printed closes before it
+        let gap_s = dd_high
+            .front()
+            .map_or(0.0, |&(_, hi)| (hi - last_close).max(0.0));
+        // the attack stage (see `decline_vol_attack`): at 0 the factor reads the gap whole; above
+        // 0 it reads a fast EWMA of it
+        if w.drawdown_vol > 0.0 && w.decline_vol_attack > 0.0 {
+            gap_att = w.decline_vol_attack * gap_att + (1.0 - w.decline_vol_attack) * gap_s;
+        }
+        let gap_in = if w.decline_vol_attack > 0.0 {
+            gap_att
+        } else {
+            gap_s
+        };
+        let lin_m = 1.0 + w.decline_vol * decline_s + w.drawdown_vol * gap_in;
         // FAIR-VALUE NEWS JUMP (prototype): a permanent markdown repriced the SAME session — the
         // fundamental and the price take the full drop together, so the price/fair gap, and with
         // it the value channel, the belief EWMA and `mispricing_pre`, are untouched: a pure
@@ -7997,7 +8606,8 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // expressions
             let (size, comp) = if w.news_scale > 0.0 {
                 let m = 1.0 - w.news_scale
-                    + w.news_scale * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s);
+                    + w.news_scale
+                        * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s, lin_m);
                 (w.news_size * m, comp * m)
             } else {
                 (w.news_size, comp)
@@ -8467,6 +9077,10 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         } else {
             d_noise
         };
+        // the linear answer to declines and the drawdown (see `decline_vol`), after the vol
+        // response's factor; the off branch keeps the released expression
+        let d_noise = if lin_on { d_noise * lin_m } else { d_noise };
+        let lin_mult = if lin_on { lin_m } else { 1.0 };
         // THE CREDIT-TRIGGERED VOL REGIME (see `credit_regime`): the plateau holds, then decays;
         // outside a spell an onset is drawn against the credit growth gap as it stood before the
         // session. The noise and the session's sd both take it, so the vol response's state stays
@@ -8518,6 +9132,8 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         if vp_on {
             vp.lev_kick = w.leverage * kick_s;
             vp.vol_resp = w.vol_resp * vol_resp_s;
+            vp.decline_vol = w.decline_vol * decline_s;
+            vp.drawdown_vol = w.drawdown_vol * gap_in;
             vp.asym = ln_det(asym_m);
             vp.regime = ln_det(regime_m);
             let lev_mult = if w.leverage > 0.0 {
@@ -8537,6 +9153,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 * jv_mult
                 * asym_m
                 * vol_resp_m
+                * lin_mult
                 * regime_m
                 * mix;
             vp.sd_pre = sd_pre;
@@ -8628,6 +9245,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             || w.macro_panel > 0
             || w.vol_resp > 0.0
             || w.jump_resp > 0.0
+            || w.decline_vol > 0.0
         {
             let lev_mult = if w.leverage > 0.0 {
                 exp_det(w.leverage * kick_s)
@@ -8646,6 +9264,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 * jv_mult
                 * asym_m
                 * vol_resp_m
+                * lin_mult
                 * regime_m
                 * mix
         } else {
@@ -8879,7 +9498,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                 - (markdown - markdown_prev);
             let sd_day = news_damp
                 * sigma_n
-                * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s)
+                * news_vol_multiplier(w, log_vol, vol_norm, kick_s, vol_resp_s, lin_m)
                 * asym_m
                 * regime_m
                 * slope;
@@ -8975,6 +9594,22 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // sum to 1, so the integrated log-multiplier per unit decline is what it is today and
             // only its SHAPE over the following sessions changes. At 0 this is `lev_sig` itself.
             kick_s = w.lev_persist * kick_s + (1.0 - w.lev_persist) * lev_sig;
+        }
+        if w.decline_vol > 0.0 {
+            // THE DECLINE STATE (see `decline_vol`): the leverage signal's decline, uncentred, in
+            // units of the session's own conditional sd -- every multiplier in it, this factor
+            // included, so a stretch the state has made volatile reads no larger -- saturated at
+            // four like the kick's and the vol response's
+            let u = ((news_j - ret_e).max(0.0) / sess_sigma.max(1e-12)).min(4.0);
+            // the attack stage (see `decline_vol_attack`): at 0 the state receives the reading
+            // whole; above 0 it receives a fast EWMA of it
+            let dec_in = if w.decline_vol_attack > 0.0 {
+                decline_att = w.decline_vol_attack * decline_att + (1.0 - w.decline_vol_attack) * u;
+                decline_att
+            } else {
+                u
+            };
+            decline_s = decline_a * decline_s + (1.0 - decline_a) * dec_in;
         }
         // joint-stress margin selling: when both markets are stressed, the bond gets dumped too —
         // and against it the refuge bid, flight-to-quality into a bond that is itself still
@@ -9079,6 +9714,8 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
                     log_vol - vol_norm,
                     vp.lev_kick,
                     vp.vol_resp,
+                    vp.decline_vol,
+                    vp.drawdown_vol,
                     vp.asym,
                     vp.regime,
                     vp.slow_state,
@@ -9091,6 +9728,20 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             v.last_md = markdown;
         }
         px[i] = exp_det(eq_m.log_p - markdown);
+        if w.drawdown_vol > 0.0 {
+            // the printed close the next session's gap reads (see `drawdown_vol`)
+            last_close = eq_m.log_p - markdown;
+            while dd_high.back().is_some_and(|&(_, x)| x <= last_close) {
+                dd_high.pop_back();
+            }
+            dd_high.push_back((i, last_close));
+            while dd_high
+                .front()
+                .is_some_and(|&(k, _)| k + DRAWDOWN_VOL_WINDOW <= i)
+            {
+                dd_high.pop_front();
+            }
+        }
         fv[i] = exp_det(log_vbase - markdown);
         rt[i] = rate;
         lq[i] = eq_m.last_liq;
@@ -24554,9 +25205,10 @@ pub type Setter = fn(&mut World, f64);
 pub type Getter = fn(&World) -> f64;
 
 /// THE ROW 65 PROBE DIALS a search may set on its seed worlds and never steps (`-seedset`): the
-/// recession's step share and its lumps, by their world keys. Outside `calibrate_ranges`, so no child moves them and the archive's columns are
-/// unchanged; written in a world's body only when on (`OPTIONAL_WORLD_KEYS`), so a seed carrying
-/// one moves the seed worlds' digest and the export carries it.
+/// recession's step share and its lumps, by their world keys. Outside `calibrate_ranges`, so no
+/// child moves them and the archive's columns are unchanged; written in a world's body only when
+/// on (`OPTIONAL_WORLD_KEYS`), so a seed carrying one moves the seed worlds' digest and the export
+/// carries it.
 #[must_use]
 pub fn probe_dials() -> Vec<(&'static str, Setter, Getter)> {
     vec![
@@ -24599,7 +25251,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "tips", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 101] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 105] = [
     "depth",
     "trendShare",
     "drift",
@@ -24701,6 +25353,10 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 101] = [
     "recessTransient",
     "noiseScale",
     "crowdAdjust",
+    "declineVol",
+    "drawdownVol",
+    "declineVolAttack",
+    "declineVolHalf",
 ];
 
 /// THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration search
@@ -25452,6 +26108,37 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             12.0,
             |w, x| w.crowd_adjust = x,
             |w| w.crowd_adjust,
+        ),
+        // the linear vol answer (PLAN row 65): the decline term, the drawdown term, their attack
+        // and the decline state's half-life in sessions; each term off at its floor, the
+        // half-life's off value 5 inside its range
+        (
+            "declineVol",
+            0.0,
+            0.6,
+            |w, x| w.decline_vol = x,
+            |w| w.decline_vol,
+        ),
+        (
+            "drawdownVol",
+            0.0,
+            6.0,
+            |w, x| w.drawdown_vol = x,
+            |w| w.drawdown_vol,
+        ),
+        (
+            "declineVolAttack",
+            0.0,
+            0.95,
+            |w, x| w.decline_vol_attack = x,
+            |w| w.decline_vol_attack,
+        ),
+        (
+            "declineVolHalf",
+            2.0,
+            20.0,
+            |w, x| w.decline_vol_half = x,
+            |w| w.decline_vol_half,
         ),
     ]
 }
@@ -29265,21 +29952,51 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
             .map_or(fields.len(), |k| k + 1);
         fields.insert(at, ("volPullStep", num(1.0)));
     }
-    // THE ROW 65 PROBES, each beside the mechanism it changes: written only when on, so every
-    // world without them keeps its body and digest (`OPTIONAL_WORLD_KEYS`)
-    for (after, key, x) in [
+    // the attack shapes the linear answer's two terms alone and the half-life its decline term:
+    // each is inert while what it shapes is off and reads as its off value then, so it moves no
+    // body or digest
+    let attack = if w.decline_vol > 0.0 || w.drawdown_vol > 0.0 {
+        w.decline_vol_attack
+    } else {
+        0.0
+    };
+    let half = if w.decline_vol > 0.0 {
+        w.decline_vol_half
+    } else {
+        5.0
+    };
+    // THE ROW 65 KEYS (the recession's probes, the linear vol answer's searched dials), each
+    // beside the mechanism it changes: written only away from its off value, so every world
+    // without them keeps its body and digest (`OPTIONAL_WORLD_KEYS`)
+    for (after, key, x, off) in [
         (
-            ["recessTransient", "recessTransient"],
+            &["recessTransient"][..],
             "recessStep",
             w.recess_step_share,
+            0.0,
         ),
         (
-            ["recessStep", "recessTransient"],
+            &["recessStep", "recessTransient"][..],
             "recessSteps",
             w.recess_steps,
+            0.0,
+        ),
+        (&["jumpResp"][..], "declineVol", w.decline_vol, 0.0),
+        (&["declineVol", "jumpResp"][..], "declineVolHalf", half, 5.0),
+        (
+            &["declineVolHalf", "declineVol", "jumpResp"][..],
+            "drawdownVol",
+            w.drawdown_vol,
+            0.0,
+        ),
+        (
+            &["drawdownVol", "declineVolHalf", "declineVol", "jumpResp"][..],
+            "declineVolAttack",
+            attack,
+            0.0,
         ),
     ] {
-        if x > 0.0 {
+        if x != off {
             let at = after
                 .iter()
                 .find_map(|a| fields.iter().position(|(k, _)| k == a))
@@ -30368,11 +31085,17 @@ fn world_set_flags(text: &str, file: &str, index: i64) -> Result<Vec<String>, St
 
 /// The world keys a set member may omit (`world_set_flags`), each with the value an absent key
 /// reads: the vol pull out of the step, as every world before 0.25.0 was published; the row 65
-/// probes off (`World::recess_step_share`, `World::recess_steps`).
-const OPTIONAL_WORLD_KEYS: &[(&str, &str)] = &[
+/// probes off (`World::recess_step_share`, `World::recess_steps`), and the linear vol answer's
+/// searched dials (`World::decline_vol` with its half-life at 5, `World::drawdown_vol`,
+/// `World::decline_vol_attack`).
+pub const OPTIONAL_WORLD_KEYS: &[(&str, &str)] = &[
     ("volPullStep", "0"),
     ("recessStep", "0"),
     ("recessSteps", "0"),
+    ("declineVol", "0"),
+    ("declineVolHalf", "5"),
+    ("drawdownVol", "0"),
+    ("declineVolAttack", "0"),
 ];
 
 /// `-worldset F -worldindex K` runs member K of an exported archive. Pre-scanned as `-atrelease`
@@ -30995,6 +31718,10 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut crowd_adjust = dw.crowd_adjust;
     let mut recess_step_share = dw.recess_step_share;
     let mut recess_steps = dw.recess_steps;
+    let mut decline_vol = dw.decline_vol;
+    let mut decline_vol_half = dw.decline_vol_half;
+    let mut drawdown_vol = dw.drawdown_vol;
+    let mut decline_vol_attack = dw.decline_vol_attack;
     let mut yield_lag = dw.yield_lag;
     let mut exp_anchor = dw.exp_anchor;
     let mut vol_feedback = dw.vol_feedback;
@@ -31253,6 +31980,10 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-crowdadjust" => crowd_adjust = req_f64(&mut it, "-crowdadjust"),
             "-recessstep" => recess_step_share = req_f64(&mut it, "-recessstep"),
             "-recesssteps" => recess_steps = req_f64(&mut it, "-recesssteps"),
+            "-declinevol" => decline_vol = req_f64(&mut it, "-declinevol"),
+            "-declinevolhalf" => decline_vol_half = req_f64(&mut it, "-declinevolhalf"),
+            "-drawdownvol" => drawdown_vol = req_f64(&mut it, "-drawdownvol"),
+            "-declinevolattack" => decline_vol_attack = req_f64(&mut it, "-declinevolattack"),
             "-yieldlag" => yield_lag = req_f64(&mut it, "-yieldlag"),
             "-expanchor" => exp_anchor = req_f64(&mut it, "-expanchor"),
             "-volfeedback" => vol_feedback = req_f64(&mut it, "-volfeedback"),
@@ -31351,367 +32082,16 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             ));
         }
     }
-    // DOMAINS for the world dials. Out of domain they do not fail on their own: `-jumprate 0` with a
-    // positive `-jumpvar` divides by zero in `jump_scale` and emitted a file of NaN at exit 0, and
-    // `-recoveryfloor 3` inverts asymmetric recovery -- arbitrage STRONGER in a deep drawdown, the
-    // documented mechanism run backwards -- into a world that then PASSES the acceptance gate.
-    //
-    // Reject what the mechanism cannot express, never what merely looks unusual -- an over-tight
-    // bound breaks a sweep script for no defect. Every value recorded anywhere in this repo is
-    // admitted, `-jumpvar 0` and `-haltlimit 0` (the documented disable values) included, as is
-    // every range `calibrate` sweeps. A `contains` test is false for NaN, so a NaN literal is
-    // refused here rather than reaching the model.
-    {
-        let share = |flag: &str, x: f64| {
-            if !(0.0..=1.0).contains(&x) {
-                cli_die(&format!(
-                    "{flag} wants a share in 0..1, got {}",
-                    scala_dbl(x)
-                ));
-            }
-        };
-        let below_one = |flag: &str, x: f64| {
-            if !(0.0..1.0).contains(&x) {
-                cli_die(&format!(
-                    "{flag} wants at least 0 and below 1, got {}",
-                    scala_dbl(x)
-                ));
-            }
-        };
-        let non_neg = |flag: &str, x: f64| {
-            if x.is_nan() || x < 0.0 {
-                cli_die(&format!(
-                    "{flag} wants a non-negative number, got {}",
-                    scala_dbl(x)
-                ));
-            }
-        };
-        let positive = |flag: &str, x: f64| {
-            if x.is_nan() || x <= 0.0 {
-                cli_die(&format!(
-                    "{flag} wants a positive number, got {}",
-                    scala_dbl(x)
-                ));
-            }
-        };
-        share("-trendshare", trend_share);
-        share("-leverage", leverage);
-        share("-downshock", down_shock);
-        share("-jumpvar", jump_var);
-        share("-jumprate", jump_rate);
-        share("-recoveryfloor", recovery_floor);
-        share("-disasterrecover", disaster_recover);
-        share("-inflprob", infl_prob);
-        share("-inflspeed", infl_speed);
-        below_one("-volpersist", vol_persist);
-        below_one("-haltlimit", halt_limit);
-        positive("-depth", depth);
-        positive("-duration", duration);
-        non_neg("-bond10", bond10);
-        non_neg("-tips", tips);
-        non_neg("-termpremium", term_premium);
-        non_neg("-cpinoise", cpi_noise);
-        share("-deflprob", defl_prob);
-        non_neg("-deflsize", defl_size);
-        non_neg("-spikerate", spike_rate);
-        non_neg("-spikesize", spike_size);
-        non_neg("-termvol", term_vol);
-        non_neg("-brkvol", brk_vol);
-        if !(0.0..=1.0).contains(&brk_nominal) {
-            cli_die("-brknominal is a share in [0, 1]");
-        }
-        if discount_yield != 0.0 && discount_yield != 1.0 {
-            cli_die("-discountyield is 0 (the policy rate) or 1 (the ten-year yield)");
-        }
-        non_neg("-cpinoiselevel", cpi_noise_level);
-        non_neg("-policygrowth", policy_growth);
-        non_neg("-yieldbeta", yield_beta);
-        non_neg("-bondbetacut", bond_beta_cut);
-        non_neg("-valuecap", value_cap);
-        non_neg("-valuecapfall", value_cap_fall);
-        non_neg("-recessspread", recess_spread);
-        non_neg("-recesstransient", recess_transient);
-        if noise_scale.is_nan() || noise_scale <= 0.0 {
-            cli_die(&format!("-noisescale {noise_scale} must be above 0"));
-        }
-        non_neg("-crowdadjust", crowd_adjust);
-        if !(0.0..=1.0).contains(&recess_step_share) {
-            cli_die(&format!(
-                "-recessstep {recess_step_share} must be in [0, 1]"
-            ));
-        }
-        if !(recess_steps >= 0.0 && recess_steps.fract() == 0.0) {
-            cli_die(&format!(
-                "-recesssteps {recess_steps} must be a whole number, 0 or more"
-            ));
-        }
-        non_neg("-yieldlag", yield_lag);
-        if !(0.0..=1.0).contains(&exp_anchor) {
-            cli_die("-expanchor is a share from 0 to 1");
-        }
-        non_neg("-volfeedback", vol_feedback);
-        if yield_beta > 0.0 && term_vol <= 0.0 {
-            cli_die("-yieldbeta needs the ten-year yield: -termvol above 0");
-        }
-        non_neg("-stress", stress);
-        non_neg("-beta", beta);
-        non_neg("-volofvol", vol_of_vol);
-        non_neg("-value", value_pull);
-        non_neg("-newsrate", news_rate);
-        non_neg("-newssize", news_size);
-        non_neg("-newslev", news_lev);
-        if let Some(why) = news_budget_refusal(news_rate, news_size, noise_scale) {
-            cli_die(&why);
-        }
-        non_neg("-newsbond", news_bond);
-        if !(0.0..1.0).contains(&news_bond_skip) {
-            cli_die("-newsbondskip is a share in [0, 1)");
-        }
-        non_neg("-creditregime", credit_regime);
-        non_neg("-creditregimerate", credit_regime_rate);
-        if !(0.0..=1.0).contains(&slow_bond_infl) {
-            cli_die("-slowbondinfl is a share in [0, 1]");
-        }
-        non_neg("-refugedays", refuge_days);
-        non_neg("-satbeta", sat_beta);
-        non_neg("-satidio", sat_idio);
-        non_neg("-sattaildrop", sat_tail_drop);
-        non_neg("-satcyclesd", sat_cycle_sd);
-        if sat_cycle_sd > 0.0 && (sat_drift_half <= 0.0 || sat_level_half <= 0.0) {
-            cli_die("-satcyclesd needs -satdrifthalf and -satlevelhalf above 0");
-        }
-        non_neg("-rangescale", range_scale);
-        non_neg("-rangedown", range_down);
-        if range_down > 0.0 && range_scale <= 0.0 {
-            cli_die("-rangedown requires -rangescale > 0: it shapes the sampled bar");
-        }
-        non_neg("-volidio", vol_idio);
-        non_neg("-divyield", div_yield);
-        non_neg("-overnight", overnight);
-        non_neg("-basketbeta", basket_beta);
-        non_neg("-basketsector", basket_sector);
-        non_neg("-levgain", lev_gain);
-        non_neg("-stressscale", stress_scale);
-        non_neg("-noiseasym", noise_asym);
-        non_neg("-noiseasymcap", noise_asym_cap);
-        non_neg("-volresp", vol_resp);
-        non_neg("-bustamp", bust_amp);
-        non_neg("-cyclesd", cycle_sd);
-        non_neg("-beliefleak", belief_leak);
-        if cycle_sd > 0.0 && cycle_years <= 0.0 {
-            cli_die(&format!("-cyclesd {cycle_sd} needs -cycleyears above 0"));
-        }
-        non_neg("-volrespcap", vol_resp_cap);
-        non_neg("-jumpresp", jump_resp);
-        if !(0.0..1.0).contains(&lev_persist) {
-            cli_die("-levpersist is a persistence in [0, 1)");
-        }
-        if !(0.0..1.0).contains(&noise_asym_phi) {
-            cli_die("-noiseasymphi is a persistence in [0, 1)");
-        }
-        if !(0.0..1.0).contains(&vol_resp_phi) {
-            cli_die("-volrespphi is a persistence in [0, 1)");
-        }
-        if !(0.0..1.0).contains(&vol_resp_attack) {
-            cli_die("-volrespattack is a persistence in [0, 1)");
-        }
-        if !(0.0..1.0).contains(&stress_adapt) || stress_adapt <= 0.0 {
-            cli_die("-stressadapt is an EWMA weight in (0, 1)");
-        }
-        non_neg("-slowvol", slow_vol);
-        non_neg("-slowlev", slow_lev);
-        non_neg("-slowbeta", slow_beta);
-        if !(0.0..1.0).contains(&slow_share) {
-            cli_die("-slowshare is a share in [0, 1)");
-        }
-        if !(0.0..1.0).contains(&slow_phi) {
-            cli_die("-slowphi is a persistence in [0, 1)");
-        }
-        if !(0.0..=1.0).contains(&slow_perm) {
-            cli_die("-slowperm is a share in [0, 1]");
-        }
-        if !(0.0..=1.0).contains(&news_revert) {
-            cli_die("-newsrevert is a share in [0, 1]");
-        }
-        if !(0.0..=1.0).contains(&news_scale) {
-            cli_die("-newsscale is a share in [0, 1]");
-        }
-        if !(0.0..1.0).contains(&noise_skew) {
-            cli_die("-noiseskew is a skew in [0, 1)");
-        }
-        if !(0.0..=1.0).contains(&news_flip) {
-            cli_die("-newsflip is a share in [0, 1]");
-        }
-        non_neg("-basketidio", basket_idio);
-        non_neg("-basketgaps", basket_gaps);
-        non_neg("-basketdrift", basket_drift);
-        non_neg("-sectoridio", sector_idio);
-        non_neg("-sectordriftsd", sector_drift_sd);
-        if sectors > 0 && sector_drift_half <= 0.0 {
-            cli_die(
-                "-sectors requires -sectordrifthalf > 0: the legs' drift state needs a half-life",
-            );
-        }
-        if macro_panel > 1 {
-            cli_die(&format!("-macro {macro_panel}: 0 (off) or 1 (the panel)"));
-        }
-        if macro_null > 2 {
-            cli_die(&format!(
-                "-macronull {macro_null}: 0 (the path's own panel), 1 (a sibling's) or 2 (both)"
-            ));
-        }
-        if macro_null > 0 && macro_panel == 0 {
-            cli_die("-macronull needs -macro 1: it is the panel's null, not a panel");
-        }
-        if basket > 0 && basket_beta <= 0.0 {
-            cli_die(
-                "-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything",
-            );
-        }
-        if overnight >= 1.0 {
-            cli_die(&format!(
-                "-overnight {overnight} leaves the intraday session no variance to run the bridge on; it must be below 1"
-            ));
-        }
-        if vol_idio > 0.0 && range_scale <= 0.0 {
-            cli_die("-volidio requires -rangescale > 0: volume rides the range");
-        }
-        non_neg("-disasterrate", disaster_rate);
-        non_neg("-disastersize", disaster_size);
-        non_neg("-recessrate", recess_rate);
-        if recess_rate > 0.0 && (recess_size <= 0.0 || recess_len <= 0.0) {
-            cli_die(&format!(
-                "-recessrate {recess_rate} needs -recesssize and -recesslen above 0"
-            ));
-        }
-        if !(0.0..=1.0).contains(&recess_recover) {
-            cli_die(&format!(
-                "-recessrecover {recess_recover} must be in [0, 1]"
-            ));
-        }
-        if recess_news < 1.0 {
-            cli_die(&format!("-recessnews {recess_news} must be at least 1"));
-        }
-        if !(0.0..=1.0).contains(&recess_reprice) {
-            cli_die(&format!(
-                "-recessreprice {recess_reprice} must be in [0, 1]"
-            ));
-        }
-        non_neg("-recessbase", recess_base);
-        non_neg("-recessshape", recess_shape);
-        if !(0.0..=1.0).contains(&overshoot) {
-            cli_die(&format!("-overshoot {overshoot} must be in [0, 1]"));
-        }
-        if !(overshoot_rate > 0.0 && overshoot_rate <= 1.0) {
-            cli_die(&format!(
-                "-overshootrate {overshoot_rate} must be in (0, 1]"
-            ));
-        }
-        non_neg("-recesscredit", recess_credit);
-        non_neg("-recessinfl", recess_infl);
-        if recess_rec_mult <= 0.0 {
-            cli_die(&format!("-recessrecmult {recess_rec_mult} must be above 0"));
-        }
-        if recess_vol < 0.0 {
-            cli_die(&format!("-recessvol {recess_vol} must be at least 0"));
-        }
-        if regime_drift < 0.0 {
-            cli_die(&format!("-regimedrift {regime_drift} must be at least 0"));
-        }
-        non_neg("-driftsd", drift_sd);
-        non_neg("-delevrate", delev_rate);
-        non_neg("-delevfrom", delev_from);
-        if delev_rate > 0.0 && (delev_size <= 0.0 || delev_len <= 0.0) {
-            cli_die(&format!(
-                "-delevrate {delev_rate} needs -delevsize and -delevlen above 0"
-            ));
-        }
-        if boom_fade <= 0.0 {
-            cli_die(&format!("-boomfade {boom_fade} must be above 0"));
-        }
-        if spread_dd < 0.0 {
-            cli_die(&format!("-spreaddd {spread_dd} must be at least 0"));
-        }
-        if !(0.0..=1.0).contains(&disaster_overshoot) {
-            cli_die(&format!(
-                "-disasterovershoot {disaster_overshoot} must be in 0..1"
-            ));
-        }
-        if !(0.0..=1.0).contains(&disaster_anticipate) {
-            cli_die(&format!(
-                "-disasteranticipate {disaster_anticipate} must be in 0..1"
-            ));
-        }
-        non_neg("-volpull", vol_pull);
-        non_neg("-boomrate", boom_rate);
-        if boom_rate > 0.0 && (boom_size <= 0.0 || boom_len <= 0.0) {
-            cli_die(&format!(
-                "-boomrate {boom_rate} needs -boomsize and -boomlen above 0"
-            ));
-        }
-        if disaster_rate > 0.0 && (disaster_size <= 0.0 || disaster_len <= 0.0) {
-            cli_die(&format!(
-                "-disasterrate {disaster_rate} needs -disastersize and -disasterlen above 0"
-            ));
-        }
-        if disaster_recover > 0.0 && disaster_rec_len <= 0.0 {
-            cli_die(&format!(
-                "-disasterrecover {disaster_recover} needs -disasterreclen above 0"
-            ));
-        }
-        // A 2-sd shift is already past every fitted setting; negative would skew jumps UP.
-        if !(0.0..=2.0).contains(&jump_skew) {
-            cli_die(&format!(
-                "-jumpskew {jump_skew} out of range; needs 0 <= skew <= 2"
-            ));
-        }
-        // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely — the pull
-        // chases its own shadow and nothing anchors the price level. Strictly below 1.
-        if !(0.0..1.0).contains(&belief_share) {
-            cli_die(&format!(
-                "-beliefshare {belief_share} out of range; needs 0 <= share < 1"
-            ));
-        }
-        if belief_share > 0.0 && belief_years <= 0.0 {
-            cli_die(&format!(
-                "-beliefshare {belief_share} needs -beliefyears above 0"
-            ));
-        }
-        non_neg("-capyears", cap_years);
-        if cap_years > 0.0 && cap_window <= 0.0 {
-            cli_die(&format!("-capyears {cap_years} needs -capwindow above 0"));
-        }
-        non_neg("-recoverydrag", recovery_drag);
-        non_neg("-crowdimpact", crowd_impact);
-        non_neg("-panic", panic_k);
-        non_neg("-fundvol", fund_vol);
-        non_neg("-ratemean", rate_mean);
-        non_neg("-easing", easing);
-        non_neg("-unwind", unwind);
-        non_neg("-floorhold", floorhold);
-        non_neg("-refuge", refuge);
-        non_neg("-inflsize", infl_size);
-        non_neg("-ratespeed", rate_speed);
-        non_neg("-discount", discount);
-        non_neg("-discountlag", discount_lag);
-        non_neg("-discountref", discount_ref);
-        non_neg("-margin", margin);
-        non_neg("-cost", cost);
-        // `-drift` carries no domain: a negative fundamental drift is a world, not an error.
-        // The PAIR is what no per-dial check can see -- `jump_scale` divides by `jump_rate`.
-        if jump_var > 0.0 && jump_rate <= 0.0 {
-            cli_die(&format!(
-                "-jumpvar {} needs -jumprate above 0: the jump size is set by jumpVar/jumpRate",
-                scala_dbl(jump_var)
-            ));
-        }
-        // The loss is only comparable on the ensemble the -noise weights were frozen from, so
-        // -fitness pins 60x80 -- and REFUSES rather than ignores an explicit override, the same
-        // rule -emitfrom follows. Accepted-then-ignored is how "the loss improved" gets read off a
-        // different sample.
-        if fitness_only && (paths_given || years_given) {
-            cli_die("-fitness scores the frozen 60x80 ensemble; -paths/-years do not apply");
-        }
+    // THE FLAGS' OWN DOMAINS; the world dials' is `world_domain_refusal`, read once the world is
+    // built
+    if let Some(why) = non_neg_refusal("-cost", cost) {
+        cli_die(&why);
+    }
+    // The loss is only comparable on the ensemble the -noise weights were frozen from, so -fitness
+    // pins 60x80 -- and REFUSES rather than ignores an explicit override, the same rule -emitfrom
+    // follows. Accepted-then-ignored is how "the loss improved" gets read off a different sample.
+    if fitness_only && (paths_given || years_given) {
+        cli_die("-fitness scores the frozen 60x80 ensemble; -paths/-years do not apply");
     }
 
     let crowd = match crowd_name.to_lowercase().as_str() {
@@ -31880,6 +32260,10 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         crowd_adjust,
         recess_step_share,
         recess_steps,
+        decline_vol,
+        decline_vol_half,
+        drawdown_vol,
+        decline_vol_attack,
         yield_lag,
         exp_anchor,
         vol_feedback,
@@ -31896,6 +32280,9 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         discount_ref,
         margin,
     };
+    if let Some(why) = world_domain_refusal(&w) {
+        cli_die(&why);
+    }
     // the digest of the world the other flags select, the one an `-emit` sidecar would carry
     if digest_only {
         println!("{}", world_digest(&w));
@@ -36053,9 +36440,112 @@ mod contract_tests {
         );
         assert_eq!(
             got.len(),
-            b.len() * 2,
-            "nothing injected when every key is present"
+            (b.len() + absent_optional(&b)) * 2,
+            "nothing injected but the optional keys the body leaves out"
         );
+    }
+
+    /// THE LINEAR VOL ANSWER'S KEYS (`declineVol`, `declineVolHalf`, `drawdownVol`): absent from
+    /// every frozen world's body, so no digest moves; written beside the vol response when on,
+    /// the half-life only away from 5 while `declineVol` is on; a member without them loads them
+    /// off and a member with them loads them as written.
+    #[test]
+    fn the_linear_vol_keys_are_absent_until_on_and_load_either_way() {
+        let d = default_world();
+        let body = world_json_body(&d);
+        assert!(
+            body.iter()
+                .all(|l| !l.contains("\"declineVol") && !l.contains("\"drawdownVol\""))
+        );
+        let pair = |f: &[String], k: &str| f.iter().position(|x| x == k).map(|i| f[i + 1].clone());
+        let off = world_set_flags(&member_file(&body), "f.json", 0).expect("loads");
+        assert_eq!(pair(&off, "-declinevol").as_deref(), Some("0"));
+        assert_eq!(pair(&off, "-declinevolhalf").as_deref(), Some("5"));
+        assert_eq!(pair(&off, "-drawdownvol").as_deref(), Some("0"));
+        let mut half = d;
+        half.decline_vol_half = 9.0;
+        assert_eq!(
+            world_json_body(&half),
+            body,
+            "the half-life inert while declineVol is 0"
+        );
+        let mut on = d;
+        on.decline_vol = 0.4;
+        on.decline_vol_half = 9.0;
+        on.drawdown_vol = 2.0;
+        let b = world_json_body(&on);
+        let at = |k: &str| {
+            b.iter()
+                .position(|l| l.contains(&format!("\"{k}\"")))
+                .expect(k)
+        };
+        assert_eq!(at("declineVol"), at("jumpResp") + 1);
+        assert_eq!(at("declineVolHalf"), at("declineVol") + 1);
+        assert_eq!(at("drawdownVol"), at("declineVolHalf") + 1);
+        assert_ne!(world_digest(&on), world_digest(&d));
+        let got = world_set_flags(&member_file(&b), "f.json", 0).expect("loads");
+        assert_eq!(pair(&got, "-declinevol").as_deref(), Some(ef(0.4).as_str()));
+        assert_eq!(
+            pair(&got, "-declinevolhalf").as_deref(),
+            Some(ef(9.0).as_str())
+        );
+        assert_eq!(
+            pair(&got, "-drawdownvol").as_deref(),
+            Some(ef(2.0).as_str())
+        );
+        assert_eq!(
+            got.len(),
+            (b.len() + absent_optional(&b)) * 2,
+            "nothing injected but the optional keys the body leaves out"
+        );
+    }
+
+    /// THE LINEAR VOL ANSWER'S ATTACK KEY (`declineVolAttack`): unwritten while both dials are
+    /// off, whatever its value, so an inert attack moves no body or digest; written after the
+    /// dials when one is on; a member without it loads it off and a member with it loads it as
+    /// written.
+    #[test]
+    fn the_attack_key_is_unwritten_while_inert_and_loads_either_way() {
+        let d = default_world();
+        let body = world_json_body(&d);
+        let pair = |f: &[String], k: &str| f.iter().position(|x| x == k).map(|i| f[i + 1].clone());
+        let off = world_set_flags(&member_file(&body), "f.json", 0).expect("loads");
+        assert_eq!(pair(&off, "-declinevolattack").as_deref(), Some("0"));
+        let mut inert = d;
+        inert.decline_vol_attack = 0.8;
+        assert_eq!(
+            world_json_body(&inert),
+            body,
+            "the attack inert while both dials are off"
+        );
+        let mut on = inert;
+        on.decline_vol = 0.4;
+        on.drawdown_vol = 2.0;
+        let b = world_json_body(&on);
+        let at = |k: &str| {
+            b.iter()
+                .position(|l| l.contains(&format!("\"{k}\"")))
+                .expect(k)
+        };
+        assert_eq!(at("declineVolAttack"), at("drawdownVol") + 1);
+        let got = world_set_flags(&member_file(&b), "f.json", 0).expect("loads");
+        assert_eq!(
+            pair(&got, "-declinevolattack").as_deref(),
+            Some(ef(0.8).as_str())
+        );
+        assert_eq!(
+            got.len(),
+            (b.len() + absent_optional(&b)) * 2,
+            "nothing injected but the optional keys the body leaves out"
+        );
+    }
+
+    /// the optional keys a body leaves out, each of which the loader injects at its off value
+    fn absent_optional(body: &[String]) -> usize {
+        OPTIONAL_WORLD_KEYS
+            .iter()
+            .filter(|(k, _)| !body.iter().any(|l| l.contains(&format!("\"{k}\""))))
+            .count()
     }
 
     fn member_file(body: &[String]) -> String {
@@ -44103,6 +44593,341 @@ mod crowd_adjust_tests {
         assert!(
             on > 0.9 && on > 3.0 * off,
             "at 2.8 a year the flow persists: lag-1 autocorrelation {on} against {off} at 0"
+        );
+    }
+}
+
+/// The linear vol answer to declines and to the drawdown (`World::decline_vol`,
+/// `World::drawdown_vol`, PLAN row 65, searched dials).
+#[cfg(test)]
+mod lin_vol_tests {
+    use super::*;
+
+    /// a path's `-emitvolparts` record at `years` on seed 5
+    fn parts(w: &World, years: usize) -> Vec<[f64; 36]> {
+        let mut tape = BondTape::new(years * DAYS_PER_YEAR + BURN_IN);
+        tape.vol = Some(Box::default());
+        let _ = simulate_at_taped(w, years, 5, world_level(w), Some(&mut tape));
+        tape.vol.expect("kept").rows
+    }
+
+    fn col(name: &str) -> usize {
+        VOL_PART_COLUMNS
+            .iter()
+            .position(|c| *c == name)
+            .expect("column")
+    }
+
+    /// `w` with the four dials at their off values: the baseline each test below reads a dial
+    /// against, whatever the recipe carries
+    fn dials_off(mut w: World) -> World {
+        w.decline_vol = 0.0;
+        w.drawdown_vol = 0.0;
+        w.decline_vol_attack = 0.0;
+        w.decline_vol_half = 5.0;
+        w
+    }
+
+    /// a searched dial set through `calibrate_ranges`, as the search sets it
+    fn set(w: &mut World, key: &str, x: f64) {
+        let r = calibrate_ranges()
+            .into_iter()
+            .find(|r| r.0 == key)
+            .expect("a searched dial");
+        (r.3)(w, x);
+    }
+
+    /// The four dials are searched, after `crowdAdjust`, and none is a probe; each is an optional
+    /// world key whose absent value is the default world's, so every frozen world and set file
+    /// reads unchanged.
+    #[test]
+    fn the_four_dials_are_searched_and_optional() {
+        let four = [
+            "declineVol",
+            "drawdownVol",
+            "declineVolAttack",
+            "declineVolHalf",
+        ];
+        let rs = calibrate_ranges();
+        let at = rs
+            .iter()
+            .position(|r| r.0 == "crowdAdjust")
+            .expect("searched");
+        let d = default_world();
+        for (i, k) in four.iter().enumerate() {
+            let r = &rs[at + 1 + i];
+            assert_eq!(r.0, *k);
+            assert!(!probe_dials().iter().any(|p| p.0 == *k), "{k} is a probe");
+            let off = OPTIONAL_WORLD_KEYS
+                .iter()
+                .find(|(o, _)| o == k)
+                .map(|(_, v)| v.parse::<f64>().expect("a number"))
+                .expect("optional");
+            assert!((r.4)(&d) == off, "{k} absent reads the default");
+        }
+    }
+
+    #[test]
+    fn the_dials_are_off_in_every_frozen_world() {
+        let off = |w: &World| {
+            w.decline_vol == 0.0
+                && w.decline_vol_half == 5.0
+                && w.drawdown_vol == 0.0
+                && w.decline_vol_attack == 0.0
+        };
+        assert!(off(&default_world()));
+        for (v, w) in releases() {
+            assert!(off(&w), "release {v}");
+        }
+        // the vol line's solve carries them (PLAN row 65): the 0.25.0 S&P recipe alone
+        for (n, w, _) in recipes() {
+            assert_eq!(off(&w), n != "0.25.0-sp500", "recipe {n}");
+        }
+    }
+
+    /// Both dials at 0 are the path before the dials existed, whatever the half-life and the
+    /// attack: either 0.25.0 recipe with the four off, set through `calibrate_ranges`, keeps its
+    /// path bit for bit, and either dial on moves it.
+    #[test]
+    fn both_dials_at_zero_are_bit_identical() {
+        for name in ["0.25.0-nasdaq", "0.25.0-sp500"] {
+            let w = dials_off(named_world(name).expect(name).0);
+            let a = simulate(&w, 3, 11);
+            let same = |p: &Path| {
+                a.price
+                    .iter()
+                    .zip(&p.price)
+                    .all(|(x, y)| x.to_bits() == y.to_bits())
+                    && a.bond
+                        .iter()
+                        .zip(&p.bond)
+                        .all(|(x, y)| x.to_bits() == y.to_bits())
+            };
+            let mut z = w;
+            set(&mut z, "declineVol", 0.0);
+            set(&mut z, "drawdownVol", 0.0);
+            set(&mut z, "declineVolHalf", 9.0);
+            set(&mut z, "declineVolAttack", 0.8);
+            assert!(same(&simulate(&z, 3, 11)), "{name}: off is the path");
+            let mut d = w;
+            set(&mut d, "declineVol", 0.4);
+            assert!(!same(&simulate(&d, 3, 11)), "{name}: declineVol moves it");
+            let mut g = w;
+            set(&mut g, "drawdownVol", 2.0);
+            assert!(!same(&simulate(&g, 3, 11)), "{name}: drawdownVol moves it");
+        }
+    }
+
+    /// The session sd over the five sessions after a 3-sd decline, as a multiple of the sd the
+    /// decline came in, over the same after a 3-sd rise (3 sd of the session's own `sdPre`).
+    fn decline_contrast(w: &World) -> f64 {
+        let r = parts(w, 100);
+        let (dl, sd) = (col("dLogPrice"), col("sdPre"));
+        let after = |sign: f64| {
+            let (mut s, mut n) = (0.0, 0usize);
+            for x in r.windows(6).skip(1) {
+                if sign * x[0][dl] > 3.0 * x[0][sd] {
+                    s += x[1..].iter().map(|y| y[sd]).sum::<f64>() / (5.0 * x[0][sd]);
+                    n += 1;
+                }
+            }
+            assert!(n >= 20, "{n} sessions past 3 sd");
+            s / n as f64
+        };
+        after(-1.0) / after(1.0)
+    }
+
+    /// At 0.4 the session sd after a 3-sd decline exceeds the sd after a 3-sd rise over the next
+    /// five sessions, by more than the same world's contrast at 0 (the leverage kick's own).
+    #[test]
+    fn a_decline_raises_the_sd_after_it_more_than_a_rise_does() {
+        let w = dials_off(named_world("0.25.0-sp500").expect("recipe").0);
+        let off = decline_contrast(&w);
+        let mut on = w;
+        on.decline_vol = 0.4;
+        let c = decline_contrast(&on);
+        assert!(
+            c > 1.0 && c > off,
+            "after a decline over after a rise {c} at 0.4, {off} at 0"
+        );
+    }
+
+    /// The mean session sd four sessions after a 3-sd decline over the mean sd one session after
+    /// it (3 sd of the session's own `sdPre`).
+    fn decline_rise(w: &World) -> f64 {
+        let r = parts(w, 100);
+        let (dl, sd) = (col("dLogPrice"), col("sdPre"));
+        let (mut one, mut four, mut n) = (0.0, 0.0, 0usize);
+        for x in r.windows(5).skip(1) {
+            if -x[0][dl] > 3.0 * x[0][sd] {
+                one += x[1][sd];
+                four += x[4][sd];
+                n += 1;
+            }
+        }
+        assert!(n >= 20, "{n} sessions past 3 sd");
+        four / one
+    }
+
+    /// The attack makes the answer build: at `declineVol` 0.4 the path at attack 0.8 differs from
+    /// the path at 0, and the sd four sessions after a 3-sd decline stands higher over the sd one
+    /// session after it than at attack 0, where the decline state's answer is largest at lag 1.
+    #[test]
+    fn the_attack_builds_the_answer_over_the_sessions_after_a_decline() {
+        let w = dials_off(named_world("0.25.0-sp500").expect("recipe").0);
+        let mut at0 = w;
+        at0.decline_vol = 0.4;
+        let mut at8 = at0;
+        at8.decline_vol_attack = 0.8;
+        assert!(simulate(&at8, 3, 11).price != simulate(&at0, 3, 11).price);
+        let (off, on) = (decline_rise(&at0), decline_rise(&at8));
+        assert!(
+            on > off,
+            "the sd at t+4 over at t+1 {on} at attack 0.8, {off} at 0"
+        );
+    }
+
+    /// The mean session sd while the printed price sits 20%+ under the high of the 250 closes
+    /// before it, over the mean sd at that high (the record's first 250 sessions skipped, so
+    /// every high reads a full window).
+    fn drawdown_ratio(w: &World) -> f64 {
+        let r = parts(w, 100);
+        let (lp, sd) = (col("logPrice"), col("sdPre"));
+        let deep = -ln_det(0.8);
+        let (mut sd_deep, mut n_deep, mut sd_top, mut n_top) = (0.0, 0usize, 0.0, 0usize);
+        for x in r.windows(DRAWDOWN_VOL_WINDOW + 1) {
+            let (prev, now) = x.split_at(DRAWDOWN_VOL_WINDOW);
+            let hi = prev.iter().map(|y| y[lp]).fold(f64::NEG_INFINITY, f64::max);
+            let gap = hi - prev[DRAWDOWN_VOL_WINDOW - 1][lp];
+            if gap >= deep {
+                sd_deep += now[0][sd];
+                n_deep += 1;
+            } else if gap <= 0.0 {
+                sd_top += now[0][sd];
+                n_top += 1;
+            }
+        }
+        assert!(
+            n_deep > 100 && n_top > 100,
+            "{n_deep} sessions 20%+ under, {n_top} at the high"
+        );
+        (sd_deep / n_deep as f64) / (sd_top / n_top as f64)
+    }
+
+    /// At 2 the mean session sd while the printed price sits 20%+ under its 250-session high
+    /// exceeds the sd at the high by more than 1.3x, and by more than the same world at 0.
+    #[test]
+    fn the_drawdown_raises_the_sd_under_the_high() {
+        let w = dials_off(named_world("0.25.0-sp500").expect("recipe").0);
+        let off = drawdown_ratio(&w);
+        let mut on = w;
+        on.drawdown_vol = 2.0;
+        let r = drawdown_ratio(&on);
+        assert!(
+            r > 1.3 && r > off,
+            "sd 20%+ under the high over at it {r} at 2, {off} at 0"
+        );
+    }
+
+    /// The vol-parts record carries the factor's two terms between `volResp` and `asym`: zero on
+    /// every session with the dials off; on, never negative, the decline's within its cap, each
+    /// nonzero somewhere.
+    #[test]
+    fn the_vol_parts_carry_the_two_terms() {
+        assert_eq!(col("declineVol"), col("volResp") + 1);
+        assert_eq!(col("drawdownVol"), col("declineVol") + 1);
+        assert_eq!(col("asym"), col("drawdownVol") + 1);
+        let (d, g) = (col("declineVol"), col("drawdownVol"));
+        let w = dials_off(named_world("0.25.0-sp500").expect("recipe").0);
+        assert!(parts(&w, 3).iter().all(|x| x[d] == 0.0 && x[g] == 0.0));
+        let mut on = w;
+        on.decline_vol = 0.4;
+        on.drawdown_vol = 2.0;
+        let r = parts(&on, 3);
+        assert!(
+            r.iter()
+                .all(|x| (0.0..=0.4 * 4.0).contains(&x[d]) && x[g] >= 0.0)
+        );
+        assert!(r.iter().any(|x| x[d] > 0.0) && r.iter().any(|x| x[g] > 0.0));
+    }
+}
+
+#[cfg(test)]
+mod nan_path_tests {
+    use super::*;
+
+    /// A LEVEL THAT IS NOT A NUMBER reaches the satellite's move as NaN, not the clamp's panic; a
+    /// level that is one moves it as before, to the bit.
+    #[test]
+    fn a_nan_level_carries_to_the_satellite_move() {
+        let mut w = default_world();
+        w.sat_tail_drop = SP500_SAT_TAIL_DROP;
+        let nan = ChannelLevel {
+            k: f64::NAN,
+            k_sat: f64::NAN,
+            k_div: 0.0,
+            k_vs: f64::NAN,
+            k_dr: f64::NAN,
+            k_iv: 0.0,
+        };
+        assert!(sat_primary_move(0.01, &w, nan).is_nan());
+        let level = ChannelLevel { k_dr: 0.16, ..nan };
+        let c = SAT_TAIL_SD * 0.16 / (DAYS_PER_YEAR as f64).sqrt();
+        for r in [0.001_f64, -0.05, 0.05] {
+            let want = r - w.sat_tail_drop * (r - r.clamp(-c, c));
+            assert_eq!(sat_primary_move(r, &w, level).to_bits(), want.to_bits());
+        }
+    }
+
+    /// `Path::nan_series` names the first series that is not a number -- the price, then the
+    /// channel level, then the derived series -- and none on a path every statistic reads.
+    #[test]
+    fn a_path_names_its_first_nan_series() {
+        let mut p = simulate(&default_world(), 2, 11);
+        assert_eq!(p.nan_series(), None);
+        p.sectors = vec![vec![0.0, f64::NAN]];
+        assert_eq!(p.nan_series(), Some("sectors"));
+        p.names = vec![vec![f64::NAN]];
+        assert_eq!(p.nan_series(), Some("basket"));
+        p.sat = vec![0.0, f64::NAN];
+        assert_eq!(p.nan_series(), Some("satellite"));
+        p.chan_k_dr = f64::NAN;
+        assert_eq!(p.nan_series(), Some("level"));
+        p.price[40] = f64::NAN;
+        assert_eq!(p.nan_series(), Some("price"));
+    }
+}
+
+#[cfg(test)]
+mod world_domain_tests {
+    use super::*;
+
+    /// THE WORLD DIALS' DOMAIN: every recipe inside it; the jump pair, a share past 1 and a NaN
+    /// refused with the CLI's text, the first failing check in the CLI's order.
+    #[test]
+    fn the_domain_admits_the_recipes_and_refuses_with_the_clis_text() {
+        assert_eq!(world_domain_refusal(&default_world()), None);
+        for (name, w, _) in recipes() {
+            assert_eq!(world_domain_refusal(&w), None, "{name}");
+        }
+        let mut pair = default_world();
+        pair.jump_var = 0.09;
+        pair.jump_rate = 0.0;
+        assert_eq!(
+            world_domain_refusal(&pair).as_deref(),
+            Some("-jumpvar 0.09 needs -jumprate above 0: the jump size is set by jumpVar/jumpRate")
+        );
+        let mut both = pair;
+        both.leverage = 1.5;
+        assert_eq!(
+            world_domain_refusal(&both).as_deref(),
+            Some("-leverage wants a share in 0..1, got 1.5")
+        );
+        let mut nan = default_world();
+        nan.decline_vol_half = f64::NAN;
+        assert_eq!(
+            world_domain_refusal(&nan).as_deref(),
+            Some("-declinevolhalf NaN must be above 0")
         );
     }
 }

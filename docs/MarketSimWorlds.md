@@ -300,8 +300,8 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 `worstRow` are that objective's readings. Every member of the three older sets starts at fair
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
-was searched under it. **The 0.25.0 sets** are the two to draw from now: `0.25.0-sp500.json` (128 members) and
-`0.25.0-nasdaq.json` (71), member 0 the recipe itself, every member one the set loop admitted under
+was searched under it. **The 0.25.0 sets** are the two to draw from now: `0.25.0-sp500.json` (60 members) and
+`0.25.0-nasdaq.json` (38), member 0 the recipe itself, every member one the set loop admitted under
 the membership rule on four fresh seeds at 200 × 100, and scored against the 0.24.6 sets under the
 release rule (the CHANGELOG has the numbers and the set misses). Both were judged before the
 satellite's tail beta and the long bond's cut of the beta state, which the files carry at the

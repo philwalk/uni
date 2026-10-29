@@ -311,18 +311,27 @@ fn proposal_factor(arc: &[Member], rs: &[Range], shrink: f64) -> Option<Vec<Vec<
 }
 
 /// A proposal with its news size pulled inside the search's share of the diffusion budget
-/// (`news_size_within_budget`), so the archive holds the dials of the world it scored.
-fn admissible(d: Vec<f64>) -> Vec<f64> {
+/// (`news_size_within_budget`), so the archive holds the dials of the world it scored; refused,
+/// with the CLI's text, when its world on `base` lies outside the CLI's domain
+/// (`ms::world_domain_refusal`), so the search's domain is the CLI's.
+fn admissible(base: &World, d: Vec<f64>) -> Result<Vec<f64>, String> {
     let rs = ranges();
     let dial = |n: &str| rs.iter().zip(&d).find(|(r, _)| r.0 == n).map(|(_, x)| *x);
     let rate = dial("newsRate").unwrap_or(0.0);
     let scale = dial("noiseScale").unwrap_or(1.0);
     let size = dial("newsSize").map_or(0.0, |x| ms::news_size_within_budget(rate, x, scale));
-    rs.iter()
+    let d: Vec<f64> = rs
+        .iter()
         .zip(d.iter())
         .map(|(r, &x)| if r.0 == "newsSize" { size } else { x })
-        .collect()
+        .collect();
+    ms::world_domain_refusal(&world_of(base, &d)).map_or(Ok(d), Err)
 }
+
+/// The proposals in a row outside the CLI's domain after which the search stops: from a parent
+/// inside it a child steps back in with a probability far from 0, so only a domain no step can
+/// reach (a fixed dial outside it) runs this long.
+const PROPOSAL_TRIES: usize = 10_000;
 
 /// The dead zone in the units `fitness` scores rows in. `wgt` makes one anchor sd worth
 /// `SD_REL_REF` there, so `-dead 1.0` means "inside the record's own sampling error, no gradient".
@@ -1310,6 +1319,32 @@ fn dead_sum(scored: &[(f64, &str)], dead: f64) -> f64 {
         .sum::<f64>()
 }
 
+/// The gate failure of a read whose paths are not a number (`ms::Path::nan_series`).
+const NAN_FAIL: &str = "nan";
+
+/// The read of paths that are not a number: infeasible, its failure naming the series, its score
+/// and worst term infinite so it ranks below every rejection the dead-zone sum ranks, and its
+/// descriptors NaN. No statistic is read off such paths.
+fn nan_read(series: &str) -> Read {
+    Read {
+        feasible: false,
+        score: f64::INFINITY,
+        raw: f64::INFINITY,
+        worst: NAN_FAIL.to_string(),
+        desc: vec![f64::NAN; DESC_NAMES.len()],
+        total: f64::NAN,
+        gate_fail: vec![format!("{NAN_FAIL}: {series}")],
+        spread: 0.0,
+        complete: true,
+        watch_miss: Vec::new(),
+        stage_fail: None,
+        held: f64::NAN,
+        ledger: Vec::new(),
+        ledger_vec: None,
+        due: None,
+    }
+}
+
 /// One seed's reading.  Every quantity the fidelity table grades is read at its record's horizon
 /// and the extreme rows at their anchors', cut from the main ensemble where the horizon is shorter,
 /// so when `-years` is the longest horizon nothing is simulated twice; a candidate that fails a
@@ -1386,6 +1421,11 @@ fn read_paths(
     s: u64,
     obj: &Objective,
 ) -> Read {
+    // A CANDIDATE WHOSE SIMULATION LEFT THE REALS is infeasible before any statistic is read, and
+    // the generation goes on (`nan_read`)
+    if let Some(series) = main.iter().find_map(ms::Path::nan_series) {
+        return nan_read(series);
+    }
     let dead = obj.dead;
     let paths = main.len();
     let (st, reads) = ms::measure_keeping(main, years);
@@ -2505,8 +2545,13 @@ fn read_archive(dir: &str) -> (Vec<Member>, Vec<Member>) {
                 })
             });
         if !shape {
+            // the first of this binary's dials the archive lacks (one added to the table since)
+            let lacks = names()
+                .into_iter()
+                .find(|n| !cols.contains(n))
+                .map_or(String::new(), |n| format!("; it lacks the dial [{n}]"));
             usage(&format!(
-                "{dir}/archive.tsv was written with different columns; it has [{head}]\n  this binary reads [{expect}] with or without the ledger columns"
+                "{dir}/archive.tsv was written with different columns{lacks}; it has [{head}]\n  this binary reads [{expect}] with or without the ledger columns"
             ));
         }
         Some((cols.len() - base - 2) / 3)
@@ -4895,35 +4940,53 @@ fn main() {
         let noise_slot = evals + (c.pop * c.reps) as u64;
         let mut noise_due = c.reps == 1;
         for _ in 0..c.pop {
-            let parent = arc[rng.next_bounded_u32(arc.len() as u32) as usize].clone();
-            let along = factor.as_ref().filter(|_| rng.next_f64() < c.cov);
-            let z: Vec<f64> = (0..rs.len()).map(|_| rng.randn()).collect();
-            let child = admissible(
-                (0..rs.len())
-                    .map(|i| {
-                        let zi = along.map_or(z[i], |l| {
-                            let mut s = 0.0;
-                            for (t, zt) in z.iter().enumerate().take(i + 1) {
-                                s += l[i][t] * zt;
+            // A PROPOSAL OUTSIDE THE CLI'S DOMAIN is drawn again, parent and step, from the
+            // generation's stream: the proposal restricted to the domain, no seed slot and no log
+            // line spent on it
+            let mut refused = 0usize;
+            let (parent, child) = loop {
+                let parent = arc[rng.next_bounded_u32(arc.len() as u32) as usize].clone();
+                let along = factor.as_ref().filter(|_| rng.next_f64() < c.cov);
+                let z: Vec<f64> = (0..rs.len()).map(|_| rng.randn()).collect();
+                let child = admissible(
+                    &world_for(&parent.name),
+                    (0..rs.len())
+                        .map(|i| {
+                            let zi = along.map_or(z[i], |l| {
+                                let mut s = 0.0;
+                                for (t, zt) in z.iter().enumerate().take(i + 1) {
+                                    s += l[i][t] * zt;
+                                }
+                                s
+                            });
+                            if fixed[i] {
+                                parent.dials[i]
+                            } else if let Some((_, _, target)) = project.filter(|p| p.0 == i) {
+                                // the parent's miss on the row, closed along the slope; the draw is
+                                // made as without it, so the other dials step alike
+                                held.get(&held_key(&parent.name, &parent.dials))
+                                    .filter(|h| h.is_finite())
+                                    .map_or(parent.dials[i], |h| {
+                                        clamped(&rs[i], parent.dials[i] + (target - h) / slope)
+                                    })
+                            } else {
+                                stepped(&rs[i], parent.dials[i], zi, c.sigma)
                             }
-                            s
-                        });
-                        if fixed[i] {
-                            parent.dials[i]
-                        } else if let Some((_, _, target)) = project.filter(|p| p.0 == i) {
-                            // the parent's miss on the row, closed along the slope; the draw is
-                            // made as without it, so the other dials step alike
-                            held.get(&held_key(&parent.name, &parent.dials))
-                                .filter(|h| h.is_finite())
-                                .map_or(parent.dials[i], |h| {
-                                    clamped(&rs[i], parent.dials[i] + (target - h) / slope)
-                                })
-                        } else {
-                            stepped(&rs[i], parent.dials[i], zi, c.sigma)
+                        })
+                        .collect(),
+                );
+                match child {
+                    Ok(child) => break (parent, child),
+                    Err(why) => {
+                        refused += 1;
+                        if refused == PROPOSAL_TRIES {
+                            usage(&format!(
+                                "{PROPOSAL_TRIES} proposals in a row fell outside the CLI's domain, the last: {why}"
+                            ));
                         }
-                    })
-                    .collect(),
-            );
+                    }
+                }
+            };
             let seeds: Vec<u64> = (0..c.reps)
                 .map(|j| candidate_seed(c.base, evals + j as u64))
                 .collect();
@@ -6033,5 +6096,66 @@ mod trace_tests {
         assert_eq!(trace.iter().map(|t| t.0).collect::<Vec<_>>(), [0, 2]);
         assert_eq!(trace[0].1.len(), DESC_NAMES.len());
         assert!((trace[0].1[1] - 1.5).abs() < 1e-12);
+    }
+}
+
+#[cfg(test)]
+mod nan_read_tests {
+    use super::*;
+
+    /// A READ OF PATHS THAT ARE NOT A NUMBER is infeasible, its failure naming the series, before
+    /// any statistic is read.
+    #[test]
+    fn a_nan_path_reads_infeasible_not_a_panic() {
+        let anchors = ms::anchors_named("sp500");
+        let w = ms::default_world();
+        let obj = Objective {
+            dead: dead_zone(0.5),
+            reference: None,
+            gap: Vec::new(),
+            classes: ms::parse_gate("realism,mechanism"),
+            watch: Vec::new(),
+            hold: Vec::new(),
+            stage: 0,
+            stage_check: false,
+            project_row: None,
+            yardstick: HashMap::new(),
+            place: true,
+            records: None,
+            kind: ObjectiveKind::Crps,
+            ledger: std::sync::Arc::new(Ledger::default()),
+        };
+        let (years, s) = (3, 20_261_029);
+        let mut main = ms::sim_paths(&w, 2, years, s);
+        main[1].price[40] = f64::NAN;
+        let r = read_paths(&w, anchors, &main, years, s, &obj);
+        assert!(!r.feasible);
+        assert_eq!(r.gate_fail, ["nan: price"]);
+        assert!(r.score == f64::INFINITY && r.desc.len() == DESC_NAMES.len());
+    }
+}
+
+#[cfg(test)]
+mod domain_tests {
+    use super::*;
+
+    /// THE SEARCH'S DOMAIN IS THE CLI'S: a recipe's dials are admissible as they are, and the jump
+    /// pair the CLI refuses is refused with the CLI's text.
+    #[test]
+    fn a_proposal_outside_the_clis_domain_is_inadmissible() {
+        let base = ms::named_world("0.25.0-sp500").expect("the S&P recipe").0;
+        let d = dials_of(&base);
+        let ok = admissible(&base, d.clone()).expect("the recipe is inside the domain");
+        assert!(ok.iter().zip(&d).all(|(a, b)| a.to_bits() == b.to_bits()));
+        let at = |n: &str| {
+            names()
+                .iter()
+                .position(|x| *x == n)
+                .expect("a searched dial")
+        };
+        let mut pair = d;
+        pair[at("jumpRate")] = 0.0;
+        let why = admissible(&base, pair).expect_err("the pair is refused");
+        assert!(why.contains("needs -jumprate above 0"), "{why}");
     }
 }
