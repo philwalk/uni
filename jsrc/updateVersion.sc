@@ -50,7 +50,7 @@ object UpdateVersion {
       // lines in the README because nothing here ever looked at it.
       val entries: Seq[Path] = Paths.get(".").paths
       val roots: Seq[Path] = entries.filter { dir =>
-        dir.isDirectory && ! ignoredDirs.contains(dir.last)
+        dir.isDirectory && !ignoredDirs.contains(dir.last) && !ignoredPrefix(dir.last) && !gitIgnored(dir)
       }
       entries.filter(fileFilter) ++ walkDirs(roots)
 
@@ -107,13 +107,26 @@ object UpdateVersion {
     // data and generated reports
     "data", "data_200_scala_01", "data_200_scala_12", "data_200_scala_15", "march2quadreports",
     "quad20240228", "artifacts", "tmp", "deduplication",
+    // this repo's directories with no version site: search output, benchmark logs, datasets,
+    // images, benchmark text, CI workflows and a stray output directory
+    "search", "bench-logs", "datasets", "images", "doc", ".github", "null",
     // corpus project directories
     "mortgage", "assessor", "roadtrip", "biz", "some", "drop-finstr", "drop-qual", "drop-mom",
     "drop-earnest", "drop-perf", "drop-bsdrank", "drop-rev", "drop-overall", "drop-value",
   )
-  def ignored(fname: String): Boolean = {
-    ignoredDirs.find(dir => fname.contains(s"/$dir/")).nonEmpty
-  }
+  /** Directory name prefixes never descended into: every `search-<run>` output directory. */
+  lazy val ignoredPrefixes = Seq("search-")
+  def ignoredPrefix(name: String): Boolean = ignoredPrefixes.exists(name.startsWith)
+  def ignored(fname: String): Boolean =
+    ignoredDirs.exists(dir => fname.contains(s"/$dir/")) ||
+      fname.split('/').exists(ignoredPrefix)
+
+  /** A directory git ignores holds nothing a release ships, so the sweep never enters it; outside
+   *  a git checkout (the working script corpus) nothing is ignored this way. */
+  def gitIgnored(dir: Path): Boolean =
+    scala.util.Try {
+      new ProcessBuilder("git", "check-ignore", "-q", dir.posx).redirectErrorStream(true).start().waitFor() == 0
+    }.getOrElse(false)
   lazy val targetedExtensions = Set(
     "sc", "scala", "sbt", "md", ""
   )
