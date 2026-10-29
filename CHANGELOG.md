@@ -1,4 +1,4 @@
-## v0.25.0 — unreleased
+## v0.25.0 — 2026-10-29
 
 **The calibrated membership rule.** A world is a member when the record is a typical single
 history of it, over every graded row at once. Each row is read on each of the verdict ensemble's
@@ -160,15 +160,7 @@ series) and the 23 fixtures are regenerated on it. CRSP 1954–2026 recorded / l
   readings are unchanged; the CPI news row's resampled band in `stockbond-2026-10-18.tsv` moves
   by at most 1.1e-3, because a resample's repeated block repeats its rates exactly. The search's
   objective digest hashes the record bands, so it moves with that band: an archive started on an
-  earlier build is refused on resume (`-force` overrides). The 0.25.0 sets' ledger reads move on
-  the two bond crash rows alone, where a history's declines included a pair seen less than
-  `CRASH_SEEN_RES` apart (29 of 50 Nasdaq and 81 of 128 S&P members, ledger totals by at most
-  0.04 on about 230, tier and worst row unchanged). Under the sets' admission rule (every member on
-  four seeds at 200 × 100, the pooled placement line), no member's membership or hard-failure list
-  changes: 56 of 71 Nasdaq and 120 of 128 S&P members admitted under both builds, the pooled
-  placement moved by at most 0.0013. The 23 that fail under both predate this change: they are
-  the installed sets judged before the crash rows' fit and the two dials, which the sampler
-  remakes (see "The sets", below). On the default world the bond crash rows, which read bands near
+  earlier build is refused on resume (`-force` overrides). On the default world the bond crash rows, which read bands near
   ±1e14, now read a fit wherever a history's declines are seen under rates at least
   `CRASH_SEEN_RES` apart. Both twins.
 
@@ -275,7 +267,7 @@ with the equity in the calm regime where inflation news moves them apart; and `-
 the ten-year yield a state on the market's own previous-session return, reverting with the term
 state and suppressed by inflation pressure, the breakeven carrying it whole so the real yield does not (the record's breakeven moves with the equity and its real yield against it), the policy-path repricing of ordinary months that the
 growth term cannot carry (the calm correlation sat near −0.10 at any setting of it), with the
-equity's discount reading the yield less that state, and `-yieldlag` spreads that response over the weeks after a move (an average of the observed return with this half-life in sessions), which is what carries the correlation from the month into the quarter; and `-expanchor` anchors the ten-year inflation expectation (the share of the regime estimates the breakeven carries, the nominal yield carrying them whole), so an inflation regime moves the real yield rather than the breakeven, as 2003–2026 did; and `-volfeedback` sells while volatility runs above its level, so a decline persists after a volatility spike, graded by `high-vol fifth return pts/yr`, the market's mean return over the sessions whose trailing 24-session volatility is in the span's top fifth (−3.2 points a year on QQQ 1999–2026 against +18 in the rest; +17.9 on the CRSP record, so the row is each set's own; fixture `volexit-2026-10-17.tsv`, a third row beside the volatility exit's two). The bond legs track their yields the session they move (the makers' pull from 0.7 to 1 of the gap a session): the DGS10 par bond's daily returns have a lag-1 autocorrelation of −0.01 and its daily-based volatility equals its monthly-based one, where a leg closing 70% a session carried +0.23 and read every daily-based bond volatility row 15–20% under what its yield implied, so the yields had been solved too volatile to compensate; every world's bond rows move with it. The judge now also requires every row family's joint depth, the record's Mahalanobis distance on normal scores among the world's own single histories, at 5% or better, and reports the all-rows joint depth beside the set score: rows pass one at a time where the record is an outlier jointly. The search prices it (`-depth 5`, in both search twins): a family under the threshold costs one dead zone plus the record's Mahalanobis distance past the family's own 5% contour, so an archive is pushed toward members the judge admits. The correlation is graded on its horizon
+equity's discount reading the yield less that state, and `-yieldlag` spreads that response over the weeks after a move (an average of the observed return with this half-life in sessions), which is what carries the correlation from the month into the quarter; and `-expanchor` anchors the ten-year inflation expectation (the share of the regime estimates the breakeven carries, the nominal yield carrying them whole), so an inflation regime moves the real yield rather than the breakeven, as 2003–2026 did; and `-volfeedback` sells while volatility runs above its level, so a decline persists after a volatility spike, graded by `high-vol fifth return pts/yr`, the market's mean return over the sessions whose trailing 24-session volatility is in the span's top fifth (−3.2 points a year on QQQ 1999–2026 against +18 in the rest; +17.9 on the CRSP record, so the row is each set's own; fixture `volexit-2026-10-17.tsv`, a third row beside the volatility exit's two). The bond legs track their yields the session they move (the makers' pull from 0.7 to 1 of the gap a session): the DGS10 par bond's daily returns have a lag-1 autocorrelation of −0.01 and its daily-based volatility equals its monthly-based one, where a leg closing 70% a session carried +0.23 and read every daily-based bond volatility row 15–20% under what its yield implied, so the yields had been solved too volatile to compensate; every world's bond rows move with it. The correlation is graded on its horizon
 too: the correlation of the two series' 3-month and 12-month returns less the monthly one
 (`stock-bond corr 3-month less monthly`, `stock-bond corr 12-month less monthly`: −0.02 and +0.03 on
 1962–2026, −0.13 and −0.15 on 1999–2026), since the record's comovement strengthens with the horizon
@@ -291,7 +283,7 @@ share %`: the stress recursion run on the DGS20 par bond over every session of 1
 both generators byte-identical), read on each history's last 64 years for both sets, a unit of its
 own; the gate `bond spiral engages, not always` is retired with both its bounds (a floor at 0.08%
 of sessions, the band's own floor, had rejected worlds in the record's direction by hand). The
-recipes read 0.13% (S&P) and 0.21% (Nasdaq): the record sits in the upper tail of both worlds'
+recipes read 0.15% (S&P) and 0.21% (Nasdaq): the record sits in the upper tail of both worlds'
 64-year histories on this row and the placement passes it; the S&P's bond makes its volatility in
 broad inflation regimes where the record made it in short sharp sell-off runs, a mechanism item
 the set-level row check will keep in view.
@@ -362,8 +354,19 @@ more from a running peak to the trough before the peak is regained. The record i
 profits after tax (CPATAX, quarterly, 1947–2026; `profits-2026-10-19.tsv`, `record_bands
 -profits` in both generators), one ruler for both sets, read on the world's histories of 79 years
 and graded like the bond crash rows, by where the record falls among them. Without them no search
-could hold the recession where the record is: the 0.25.0 worlds had one earnings recession a
-century (Nasdaq) and four (S&P) against the record's 14, every history under it.
+holds the recession rate: a world with one earnings recession a century passes every other row
+where the record has fourteen.
+
+**The crowd's adjustment and the diffusion's scale.** `-crowdadjust` moves the momentum crowd's exposure toward its
+target at a rate a session instead of jumping to it: a crowd that jumps trades the target's change, this session's
+return less the return the window drops, so it sells the old return and the model reverts at months where the
+record trends; a crowd adjusting over weeks carries the persistence. Its performance is on the exposure held; the
+other crowds are untouched; 0 is off and bit-identical. `-noisescale` multiplies the price's diffusive noise and the
+news budget that displaces it and nothing else: the calm-state vol floor was the one vol source no searched dial
+reached, and the Nasdaq record's floor sits above the S&P's while every Nasdaq-specific vol source acts only in a
+decline or an episode. Both are searched (`CALIBRATE_DIAL_ORDER` 99 → 101) and keyed in every set file; the S&P
+recipe carries 1.60 and 1.12, the Nasdaq's 0.99 and 1.56. The recession step probes (`recessStep`, `recessSteps`)
+are optional keys written only when on and off in every world.
 
 **The vol's answer to declines and to the drawdown.** The conditional vol carries a linear factor
 `1 + declineVol × d + drawdownVol × g` on the diffusion (the jump intensity untouched): `d` is the
@@ -377,7 +380,8 @@ decline's term reads 0.20, 0.33, 0.42, 0.47, 0.49 at k = 1..5 against a memory a
 10% and a 35% drawdown from the 250-session high (1.40 → 2.82 over the median) where the model's
 rose a quarter (1.15 → 1.57). The four are searched (`CALIBRATE_DIAL_ORDER` 101 → 105, the ranges
 0–0.6, 0–6, 0–0.95 and 2–20), each bit-identical at its off value (the half-life's 5), keyed in a
-world file only away from it; an archive or seed table written before them is refused by name. The
+world file only away from it; an archive or seed table written before them is refused by name; the
+vol-parts emit carries the factor's two terms as `declineVol` and `drawdownVol`. The
 0.25.0 S&P recipe carries 0.41, 0.85, 0.8 and 5, solved with the vol budget's carriers free around
 it (the spiral's `stress` 3.84 → 3.33, `jumpVar` 0.167 → 0.092, `volOfVol` 0.027 → 0.018, `levGain`
 9.0 → 4.6, `volFeedback` 0.21 → 0.30, `noiseScale` 1.21 → 1.12, `depth` 17.9 → 16.9): kurtosis

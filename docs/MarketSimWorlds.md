@@ -395,6 +395,13 @@ measured at the caller's `-years` rather than the calibration horizon. And the
 padding follows the highest index of that invocation, so chunks either side of 1000 differ in width:
 sort numerically, or emit the batch in one invocation.
 
+`-emitvolparts` writes beside each path's TSV a `<path>-vol.tsv` with one row a session: group A splits the session's
+log price change by source (recess, newsComp, newsJump, slow, regimeDrift, bust, cycle, boom, flipLift, pull, carry,
+crowd, noise, jump, jumpComp, downShock, overshoot, delev, flipReflect, volFeedback, haltClamp, markdown, rounding),
+group B the conditional vol state as log multipliers (logVol, levKick, volResp, declineVol, drawdownVol, asym, regime,
+slowState, amp) and the session sd before and after the amplification (sdPre, sdPost). The columns are fixed in
+`VOL_PART_COLUMNS`; a consumer reads them by name.
+
 ### Streaming thousands of paths
 
 `-emitf32 F` writes the paths `-emit` would write as ONE binary file plus one sidecar for the chunk,
@@ -1393,6 +1400,12 @@ with it.
 | `-volpull` | THE REBOUND WAITS FOR VOL TO SUBSIDE: the value pull's damp is divided by 1 + this x (the spiral's fast realized sd over its four-year level, less 1, floored at 0), so a gap opened in a high-volatility decline is bought back as volatility settles. What a volatility-timing rule's cash sessions inside a recovery leg return: +18 bp on the record, +27 in the worlds. 0 is off | 0 |
 | `-discountlag` | the rate the equity's markdown reads is an EWMA of the policy rate at this horizon in years. 0 is off, and the right setting: a lag removes the equity's fall WITH a rate rise, and with it the inflation-regime episodes the bond's inflation crash is read in | 0 |
 | `-discountref` | the level the markdown measures the rate from is an EWMA of the rate at this horizon in years instead of `-ratemean`. 0 is off; probed to no effect on the wings | 0 |
+| `-crowdadjust` | THE CROWD'S ADJUSTMENT: the momentum crowd's exposure moves toward its target at this rate a session instead of jumping to it, so the crowd trades toward the target over weeks and carries the persistence the record's months show; a crowd that jumps sells the old return and reverts. Its performance is on the exposure held. 0 is off and bit-identical. Searched | 0 |
+| `-noisescale` | THE DIFFUSION'S SCALE: multiplies the price's diffusive noise and the news budget that displaces it, nothing else (not the jumps' size, the slow leg's scale, the bond noise or the crowd flow). The calm-state vol floor, which the Nasdaq record sets above the S&P's. Searched, 1.0-1.6; 1 is bit-identical | 1 |
+| `-declinevol` | THE VOL'S ANSWER TO DECLINES: the conditional vol carries a linear factor `1 + declineVol × d + drawdownVol × g` on the diffusion (the jump intensity untouched), `d` the exponential memory (half-life `-declinevolhalf`) of the previous session's standardized decline, capped at 4. 0 is off and bit-identical; keyed in a world file only when on. Searched, 0-0.6 | 0 |
+| `-drawdownvol` | THE VOL'S ANSWER TO THE DRAWDOWN: `g` in the same factor, the log gap of the printed close below the previous 250 closes' high. 0 is off and bit-identical; keyed only when on. Searched, 0-6 | 0 |
+| `-declinevolattack` | THE ANSWER'S ATTACK: in [0, 1), shapes both terms into a rise that peaks about four sessions after the decline instead of the session after. Inert and unwritten while both terms are 0. Searched, 0-0.95 | 0 |
+| `-declinevolhalf` | the decline memory's half-life in sessions. Inert and unwritten while `-declinevol` is 0. Searched, 2-20 | 5 |
 
 `-easing` is a cap, not a speed. The flag it replaced, `-flight`, was a cut *rate* per year, so it
 is rejected rather than reinterpreted: no `-flight` value carries over. Together these two are what

@@ -774,20 +774,21 @@ class MarketSimContractSuite extends FunSuite:
     // world level (realized sd over the MEAN diffusion sd) has no denominator.  Such a world is
     // refused at the CLI, not clamped into a NaN bar -- and a search pulls its proposals inside.
     val dw = MarketSim.Defaults
-    assert(MarketSim.newsBudgetRefusal(dw.newsRate, dw.newsSize).isEmpty)
-    assert(MarketSim.newsBudgetRefusal(0.0, 1.0).isEmpty, "rate 0 is the channel off")
-    assert(MarketSim.newsBudgetRefusal(1.3, 0.097).isEmpty, "just inside the budget")
-    assert(MarketSim.newsDampAt(1.3, 0.10) <= 0.0, "past it the damp clamps to nothing")
-    val why = MarketSim.newsBudgetRefusal(1.3, 0.10).getOrElse(fail("past the budget is refused"))
+    assert(MarketSim.newsBudgetRefusal(dw.newsRate, dw.newsSize, 1.0).isEmpty)
+    assert(MarketSim.newsBudgetRefusal(0.0, 1.0, 1.0).isEmpty, "rate 0 is the channel off")
+    assert(MarketSim.newsBudgetRefusal(1.3, 0.097, 1.0).isEmpty, "just inside the budget")
+    assert(MarketSim.newsDampAt(1.3, 0.10, 1.0) <= 0.0, "past it the damp clamps to nothing")
+    assert(MarketSim.newsDampAt(1.3, 0.10, 1.25) > 0.0, "a scaled diffusion has budget left for it")
+    val why = MarketSim.newsBudgetRefusal(1.3, 0.10, 1.0).getOrElse(fail("past the budget is refused"))
     assert(why.contains("0.0975"), why)
     def hi(name: String): Double =
       MarketSim.CalibrateRanges.find(_._1 == name).map(_._3).getOrElse(fail(s"no range for $name"))
     // the ranges' corner is past the budget; a search pulls its size back inside
-    val corner = MarketSim.newsSizeWithinBudget(hi("newsRate"), hi("newsSize"))
+    val corner = MarketSim.newsSizeWithinBudget(hi("newsRate"), hi("newsSize"), 1.0)
     assert(corner < hi("newsSize"))
-    assert(MarketSim.newsBudgetRefusal(hi("newsRate"), corner).isEmpty)
-    assertEquals(MarketSim.newsSizeWithinBudget(1.3, 0.05), 0.05, "inside it is untouched")
-    assertEquals(MarketSim.newsSizeWithinBudget(0.0, 1.0), 1.0, "and so is the channel off")
+    assert(MarketSim.newsBudgetRefusal(hi("newsRate"), corner, 1.0).isEmpty)
+    assertEquals(MarketSim.newsSizeWithinBudget(1.3, 0.05, 1.0), 0.05, "inside it is untouched")
+    assertEquals(MarketSim.newsSizeWithinBudget(0.0, 1.0, 1.0), 1.0, "and so is the channel off")
   }
 
   // `-worldset` refuses through `usage`, which exits; swap the exit for a throw so a refusal is
@@ -824,8 +825,12 @@ class MarketSimContractSuite extends FunSuite:
     val body = MarketSim.worldJsonBody(MarketSim.Defaults)
     val keys = body.map(_.trim.drop(1).takeWhile(_ != '"'))
     val got = MarketSim.worldSetArgs(memberFile(body), 0)
-    assertEquals(got.length, body.length * 2, "a flag and a value for every dial")
-    assertEquals(got.grouped(2).map(_.head).toVector, keys.map("-" + _.toLowerCase))
+    // the optional keys the body leaves out (their dials off) load at their off value, after the
+    // body's own
+    val absent = MarketSim.OptionalWorldKeys.count((k, _) => !keys.contains(k))
+    assertEquals(got.length, (body.length + absent) * 2,
+      "a flag and a value for every dial, the absent optional keys at their off value")
+    assertEquals(got.grouped(2).map(_.head).toVector.take(body.length), keys.map("-" + _.toLowerCase))
     val vals = got.grouped(2).map(_.last).toVector
     assertEquals(vals(keys.indexOf("depth")), MarketSim.ef(MarketSim.Defaults.depth))
     assert(!vals(keys.indexOf("crowd")).startsWith("\""), "a mode name loses its quotes")
@@ -841,6 +846,91 @@ class MarketSimContractSuite extends FunSuite:
     assert(extra.contains("unknown [noSuchDial]"), extra)
     val absent = refusal(MarketSim.worldSetArgs(memberFile(full), 7))
     assert(absent.contains("-worldindex 7 is not in"), absent)
+  }
+
+  /** the value after flag `k` in a loader's flags */
+  private def pair(f: Seq[String], k: String): Option[String] =
+    f.indexOf(k) match
+      case -1 => None
+      case i  => f.lift(i + 1)
+
+  /** the line of `body` that writes key `k` */
+  private def at(body: Seq[String], k: String): Int =
+    body.indexWhere(_.contains(s"\"$k\"")) match
+      case -1 => fail(s"$k not written")
+      case i  => i
+
+  /** the optional keys a body leaves out, each of which the loader injects at its off value */
+  private def absentOptional(body: Seq[String]): Int =
+    MarketSim.OptionalWorldKeys.count((k, _) => !body.exists(_.contains(s"\"$k\"")))
+
+  test("the row 65 probes are absent until on and load either way") {
+    // THE ROW 65 PROBES' KEYS (`recessStep`, `recessSteps`): absent from every frozen world's
+    // body, so no digest moves; written beside their mechanisms when on; a member without them
+    // loads them off and a member with them loads them as written.
+    val d = MarketSim.Defaults
+    val body = MarketSim.worldJsonBody(d)
+    assert(body.forall(l => !l.contains("\"recessStep\"") && !l.contains("\"recessSteps\"")))
+    val off = MarketSim.worldSetArgs(memberFile(body), 0)
+    assertEquals(pair(off, "-recessstep"), Some("0"))
+    assertEquals(pair(off, "-recesssteps"), Some("0"))
+    val on = d.copy(ext = d.ext.copy(recessStep = 0.5, recessSteps = 3.0))
+    val b = MarketSim.worldJsonBody(on)
+    assertEquals(at(b, "recessStep"), at(b, "recessTransient") + 1)
+    assertEquals(at(b, "recessSteps"), at(b, "recessStep") + 1)
+    assertNotEquals(MarketSim.worldDigest(on), MarketSim.worldDigest(d))
+    val got = MarketSim.worldSetArgs(memberFile(b), 0)
+    assertEquals(pair(got, "-recessstep"), Some(MarketSim.ef(0.5)))
+    assertEquals(pair(got, "-recesssteps"), Some(MarketSim.ef(3.0)))
+    assertEquals(got.length, (b.length + absentOptional(b)) * 2,
+      "nothing injected but the optional keys the body leaves out")
+  }
+
+  test("the linear vol keys are absent until on and load either way") {
+    // THE LINEAR VOL ANSWER'S KEYS (`declineVol`, `declineVolHalf`, `drawdownVol`): absent from
+    // every frozen world's body, so no digest moves; written beside the vol response when on, the
+    // half-life only away from 5 while `declineVol` is on; a member without them loads them off and
+    // a member with them loads them as written.
+    val d = MarketSim.Defaults
+    val body = MarketSim.worldJsonBody(d)
+    assert(body.forall(l => !l.contains("\"declineVol") && !l.contains("\"drawdownVol\"")))
+    val off = MarketSim.worldSetArgs(memberFile(body), 0)
+    assertEquals(pair(off, "-declinevol"), Some("0"))
+    assertEquals(pair(off, "-declinevolhalf"), Some("5"))
+    assertEquals(pair(off, "-drawdownvol"), Some("0"))
+    val half = d.copy(ext = d.ext.copy(declineVolHalf = 9.0))
+    assertEquals(MarketSim.worldJsonBody(half), body, "the half-life inert while declineVol is 0")
+    val on = d.copy(ext = d.ext.copy(declineVol = 0.4, declineVolHalf = 9.0, drawdownVol = 2.0))
+    val b = MarketSim.worldJsonBody(on)
+    assertEquals(at(b, "declineVol"), at(b, "jumpResp") + 1)
+    assertEquals(at(b, "declineVolHalf"), at(b, "declineVol") + 1)
+    assertEquals(at(b, "drawdownVol"), at(b, "declineVolHalf") + 1)
+    assertNotEquals(MarketSim.worldDigest(on), MarketSim.worldDigest(d))
+    val got = MarketSim.worldSetArgs(memberFile(b), 0)
+    assertEquals(pair(got, "-declinevol"), Some(MarketSim.ef(0.4)))
+    assertEquals(pair(got, "-declinevolhalf"), Some(MarketSim.ef(9.0)))
+    assertEquals(pair(got, "-drawdownvol"), Some(MarketSim.ef(2.0)))
+    assertEquals(got.length, (b.length + absentOptional(b)) * 2,
+      "nothing injected but the optional keys the body leaves out")
+  }
+
+  test("the attack key is unwritten while inert and loads either way") {
+    // THE LINEAR VOL ANSWER'S ATTACK KEY (`declineVolAttack`): unwritten while both dials are off,
+    // whatever its value, so an inert attack moves no body or digest; written after the dials when
+    // one is on; a member without it loads it off and a member with it loads it as written.
+    val d = MarketSim.Defaults
+    val body = MarketSim.worldJsonBody(d)
+    val off = MarketSim.worldSetArgs(memberFile(body), 0)
+    assertEquals(pair(off, "-declinevolattack"), Some("0"))
+    val inert = d.copy(ext = d.ext.copy(declineVolAttack = 0.8))
+    assertEquals(MarketSim.worldJsonBody(inert), body, "the attack inert while both dials are off")
+    val on = inert.copy(ext = inert.ext.copy(declineVol = 0.4, drawdownVol = 2.0))
+    val b = MarketSim.worldJsonBody(on)
+    assertEquals(at(b, "declineVolAttack"), at(b, "drawdownVol") + 1)
+    val got = MarketSim.worldSetArgs(memberFile(b), 0)
+    assertEquals(pair(got, "-declinevolattack"), Some(MarketSim.ef(0.8)))
+    assertEquals(got.length, (b.length + absentOptional(b)) * 2,
+      "nothing injected but the optional keys the body leaves out")
   }
 
   test("no realism band edge sits inside a fidelity target's own noise for the same statistic") {

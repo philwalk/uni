@@ -158,6 +158,23 @@ build rather than showing up as a diff nobody runs. The rule generalises: **when
 consumed positionally — by an RNG stream, by a file's column order, by an index — its order
 needs a contract, and a set-equality check on its names is not one.**
 
+The world block's optional keys are a second such table (`OPTIONAL_WORLD_KEYS` /
+`OptionalWorldKeys`): the keys a set member may omit, each with the value an absent key reads
+-- `volPullStep` 0, the row 65 probes `recessStep` and `recessSteps` 0, the linear vol answer's
+`declineVol` 0, `declineVolHalf` 5, `drawdownVol` 0 and `declineVolAttack` 0. A key is written
+only away from its off value (`declineVolHalf` only while `declineVol` is on, `declineVolAttack`
+only while either dial is), so adding a dial moves no frozen world's body or digest, and the
+loader appends each absent key after the body's own in the table's order, so both twins hand
+the CLI the same arguments. The probe dials (`probe_dials` / `ProbeDials`) are optional keys
+outside the searched table: a search sets them and never steps them. A searched dial an
+archive or seed table lacks is refused by name, never defaulted.
+
+The world dials' domain is one table in each twin (`WORLD_DOMAIN` / `WorldDomain`), check for
+check in the CLI's order, each check the CLI's refusal text. The CLI reads it once the world is
+built and the search re-draws any proposal it refuses, so no searched world is one the CLI
+would refuse. The first failing check is the refusal, so the order is under contract too; a
+check on which flags were given stays in the parser.
+
 `-emit`'s own columns are levels rather than differences, so that trap is remote there —
 but `rate` is floored at zero and `inflPress` starts there, and a column that can be
 *identically* zero is exactly the case. They are folded through `(-0.0) + 0.0 = +0.0`,

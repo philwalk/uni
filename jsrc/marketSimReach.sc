@@ -91,10 +91,12 @@ object MarketSimReach:
   /** A world with its searched dials set, the news size pulled inside the search's share of the
     * diffusion budget as the search's `admissible` pulls it. */
   def withDials(base: World, rs: Vector[Range], d: Vector[Double]): World =
-    val rate = rs.zip(d).find(_._1._1 == "newsRate").fold(0.0)(_._2)
+    def dial(n: String): Option[Double] = rs.zip(d).find(_._1._1 == n).map(_._2)
+    val rate  = dial("newsRate").getOrElse(0.0)
+    val scale = dial("noiseScale").getOrElse(1.0)
     rs.zip(d).foldLeft(base): (w, rx) =>
       val (r, x) = rx
-      r._4(w, if r._1 == "newsSize" then MarketSim.newsSizeWithinBudget(rate, x) else x)
+      r._4(w, if r._1 == "newsSize" then MarketSim.newsSizeWithinBudget(rate, x, scale) else x)
 
   // ---- the readings -----------------------------------------------------------------------
 

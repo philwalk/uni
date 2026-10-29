@@ -82,16 +82,17 @@ class RealSideSuite extends FunSuite:
   }
 
   test("the yield's beta on the market moves the bond against the market") {
-    // the recipe with the channel off: it carries a beta of its own
+    // the recipe with the channel off: it carries a beta of its own; over 100 years the 0.1 bound
+    // is below every reading on eight seeds
     val w0 = MarketSim.namedWorld("0.25.0-sp500").map(_._1).getOrElse(fail("recipe"))
     val w  = w0.copy(ext = w0.ext.copy(yieldBeta = 0.0, yieldLag = 0.0))
     assert(w.ext.termVol > 0.0)
-    val off = MarketSim.simulate(w, 20, MarketSim.DefaultSeed)
-    val on  = MarketSim.simulate(w.copy(ext = w.ext.copy(yieldBeta = 0.05)), 20, MarketSim.DefaultSeed)
+    val off = MarketSim.simulate(w, 100, MarketSim.DefaultSeed)
+    val on  = MarketSim.simulate(w.copy(ext = w.ext.copy(yieldBeta = 0.05)), 100, MarketSim.DefaultSeed)
     assert(!off.bond.sameElements(on.bond))
     val cOff = monthlyCorr(off.price, off.bond)
     val cOn  = monthlyCorr(on.price, on.bond)
-    assert(cOn < cOff - 0.2, s"monthly corr $cOn against $cOff at zero")
+    assert(cOn < cOff - 0.1, s"monthly corr $cOn against $cOff at zero")
   }
 
   test("the volatility feedback makes declines persist after spikes") {

@@ -83,9 +83,15 @@ object RecordBands {
     "              it supplies, `*` or names joined by `;`, then its arguments, tab-separated; `#` a",
     "              comment) run as this tool at its own blocks, at -block 252 and at -block 756",
     "              (-resamples N in place of its own), each printed row's (p95 - p5) / 3.29 read at each;",
-    "              one line a world and row of LEDGER.tsv's first column: world, row, scale252,",
-    "              scale756, scaleNative and scale, the largest of the three, `none` where no run",
-    "              reaches the row, those listed on stderr by world",
+    "              one line a world and row of LEDGER.tsv's `row` column: world, row, scale252,",
+    "              scale756, scaleNative, scale (the largest of the three), resolution and knee, the",
+    "              last two from the resamples the scale came from -- the resolution the record's own",
+    "              vote on its sign against the table's `null` column (the share of resamples strictly",
+    "              on the record's side less the share strictly on the other, floored at 0), the knee",
+    "              the CRPS an indistinguishable world earns (the mean over the resamples of each one's",
+    "              CRPS under the others, in the row's scale); `none` where no run reaches the row",
+    "              (those listed on stderr by world), the resolution also without a null or with the",
+    "              record at it",
     "",
     "-rateafter    THE CONDITIONAL RATE ROWS (`RateAfterRows`): the -fred rate on the equity window's",
     "              session dates, the two years after each 20% decline's trough; the record by",
@@ -220,7 +226,7 @@ object RecordBands {
     * THE RESAMPLING BLOCK (`-block 252|756`), one or three years of the series' own observations
     * (sessions, months, quarters), the record-scale readings `-scales` takes; `None`, each mode's
     * own blocks (a year of sessions, five years of months), the fixtures'. */
-  final case class Run(lag: Lag, block: Option[Int])
+  final case class Run(lag: Lag, block: Option[Int], raw: Boolean = false)
 
   def blockOf(args: Seq[String]): Option[Int] =
     args.indexOf("-block") match
@@ -987,13 +993,21 @@ object RecordBands {
      countOf(args, "-seed", 20260918L, "-seed wants a non-negative integer"),
      numberOf(args, "-joint", 0.05, "-joint wants a share in (0, 1)"))
 
+  /** A band row's resample quantiles as the band line prints them (`%.6f`), and under `-raw` the
+    * resamples themselves on the line before it -- `raw`, the record, each resample at full
+    * precision -- for `-scales` to read the record's own vote on its sign and its knee
+    * (`readScaleLines`).  Without `-raw` the output is as it was. */
+  def bandQuantiles(record: Double, col: Vector[Double])(using run: Run): Vector[String] =
+    if run.raw then println(("raw" +: MarketSim.rustDebug(record) +: col.map(MarketSim.rustDebug)).mkString("\t"))
+    MarketSim.recordBandQuantiles(col).map(v => f"$v%.6f")
+
   /** A record-only mode's rows under `-block`, in the band modes' columns: each row's record, its
     * resamples' quantiles and a joint band over the rows at `joint`. */
   def printResampledRows(set: String, series: String, window: String, n: Int, names: Vector[String],
-                         record: Vector[Double], reads: Vector[Vector[Double]], joint: Double): Unit =
+                         record: Vector[Double], reads: Vector[Vector[Double]], joint: Double)(using run: Run): Unit =
     val (c, edges) = MarketSim.recordBandJoint(reads, names.indices.toVector, joint)
     for (k, (lo, hi)) <- names.indices.zip(edges) do
-      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      val qs = bandQuantiles(record(k), reads.map(_(k)))
       println(f"$set%s\t${names(k)}%s\t$series%s\t$window%s\t$n%d\t${reads.length}%d\t${record(k)}%.6f\t" +
               qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
 
@@ -1046,7 +1060,7 @@ object RecordBands {
     val ks = Vector(0, 1, 2)
     val (c, edges) = MarketSim.recordBandJoint(reads, ks, joint * 3.0 / of)
     for (k, (lo, hi)) <- ks.zip(edges) do
-      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      val qs = bandQuantiles(record(k), reads.map(_(k)))
       println(f"$set%s\t${MarketSim.VolExitRows(k)}%s\t$series%s\t$window%s\t${days.length}%d\t$resamples%d\t${record(k)}%.6f\t" +
               qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
 
@@ -1135,7 +1149,7 @@ object RecordBands {
       val ks = Vector(0, 1, 2, 3, 4)
       val (c, edges) = MarketSim.recordBandJoint(reads, ks, alpha)
       for (k, (lo, hi)) <- ks.zip(edges) do
-        val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+        val qs = bandQuantiles(record(k), reads.map(_(k)))
         println(f"$set%s\t${names(k)}%s\t$label%s\t$window%s\t${days.length}%d\t$resamples%d\t${record(k)}%.6f\t" +
                 qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
     printFamily(MarketSim.VolStateRows, series, inWindow)
@@ -1175,7 +1189,7 @@ object RecordBands {
       val ks = fam.toVector
       val (c, edges) = MarketSim.recordBandJoint(reads, ks, joint)
       for (k, (lo, hi)) <- ks.zip(edges) do
-        val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+        val qs = bandQuantiles(record(k), reads.map(_(k)))
         println(f"$set%s\t${MarketSim.LedgerRows(k)}%s\t$series%s\t$window%s\t${days.length}%d\t$resamples%d\t${record(k)}%.6f\t" +
                 qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
     printLag1Row(set, series, inWindow, resamples, seed, joint)
@@ -1191,7 +1205,7 @@ object RecordBands {
     val lagWindow = s"${after.head.date}..${after.last.date}"
     val reads = MarketSim.ledgerLag1Resamples(r, resamples, seed, run.block)
     val (c, edges) = MarketSim.recordBandJoint(reads, Vector(0), joint)
-    val qs = MarketSim.recordBandQuantiles(reads.map(_(0))).map(v => f"$v%.6f")
+    val qs = bandQuantiles(MarketSim.ledgerLag1Of(r), reads.map(_(0)))
     val (lo, hi) = edges(0)
     println(f"$set%s\t${MarketSim.LedgerRows(MarketSim.LedgerStateRows)}%s\t$series%s\t$lagWindow%s\t${r.length}%d\t$resamples%d\t" +
             f"${MarketSim.ledgerLag1Of(r)}%.6f\t" + qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
@@ -1213,14 +1227,35 @@ object RecordBands {
       (pick, keep(f.drop(1).toList, Vector.empty))
     }
 
-  /** The band rows one run of this tool prints, each with its spread in normal sd: the band
-    * columns (`printBandHeader`), p5 and p95 at `RecordBandPcts`' third and twenty-first places;
-    * a record-only line is not a band row.  The run is this tool again, a process of its own. */
-  def scalesOfRun(args: Vector[String]): Vector[(String, String, Double)] =
+  /** One band row as a `-scales` run prints it under `-raw`: its world and name, (p95 - p5) / 3.29,
+    * the record and the resamples the quantiles were read from. */
+  final case class ScaleRead(world: String, row: String, scale: Double, record: Double, resamples: Vector[Double])
+
+  /** A world and row's reading at one block: its scale, the record's vote on its sign and its knee
+    * (`voteAndKnee`), and the run it came from. */
+  final case class ScaleSlot(scale: Double, resolution: Option[Double], knee: Option[Double], run: Int)
+
+  /** The ledger table's rows and nulls, by its `row` and `null` columns: a null `none`, or absent,
+    * is no null. */
+  def readScaleRows(ledger: String, text: String): Vector[(String, Option[Double])] =
+    val ls = linesOf(text)
+    val head = ls.headOption.getOrElse("").split("\t", -1).map(_.trim).toVector
+    def col(name: String): Int = head.indexOf(name) match
+      case -1 => usage(s"-scales: $ledger has no [$name] column")
+      case i  => i
+    val (rowAt, nullAt) = (col("row"), col("null"))
+    ls.drop(1).filter(_.trim.nonEmpty).map { l =>
+      val f = l.split("\t", -1)
+      (f.lift(rowAt).fold("")(_.trim), f.lift(nullAt).flatMap(_.trim.toDoubleOption))
+    }.filter(_._1.nonEmpty)
+
+  /** The band rows one run of this tool prints, run under `-raw` so each carries its resamples
+    * (`readScaleLines`).  The run is this tool again, a process of its own. */
+  def scalesOfRun(args: Vector[String]): Vector[ScaleRead] =
     val javaExe = ProcessHandle.current().info().command().orElse("java")
     val main = Option(System.getProperty("sun.java.command")).flatMap(_.split(" ").headOption)
       .getOrElse(usage("-scales: this tool's main class is not known"))
-    val p = new ProcessBuilder((Vector(javaExe, "-cp", System.getProperty("java.class.path"), main) ++ args)*).start()
+    val p = new ProcessBuilder((Vector(javaExe, "-cp", System.getProperty("java.class.path"), main) ++ args :+ "-raw")*).start()
     p.getOutputStream.close()
     val err = new java.io.ByteArrayOutputStream
     val drain = new Thread(() => { val _ = p.getErrorStream.transferTo(err) })
@@ -1229,57 +1264,122 @@ object RecordBands {
     drain.join()
     if p.waitFor() != 0 then
       usage(s"-scales: the run [${args.mkString(" ")}] failed:\n${err.toString(java.nio.charset.StandardCharsets.UTF_8)}")
+    readScaleLines(out)
+
+  /** A run's band rows from its output, each with its spread in normal sd: the band columns
+    * (`printBandHeader`), p5 and p95 at `RecordBandPcts`' third and twenty-first places; a
+    * record-only line is not a band row.  A `raw` line (`bandQuantiles`) carries the record and the
+    * resamples of the band line after it; a band row without one has neither. */
+  def readScaleLines(text: String): Vector[ScaleRead] =
     val cols = 7 + MarketSim.RecordBandPcts.length + 3
-    linesOf(out).map(_.split("\t", -1)).filter(f => f.length == cols && f(0) != "set").map { f =>
-      def q(i: Int): Double = f(7 + i).toDoubleOption.getOrElse(Double.NaN)
-      (f(0), f(1), (q(20) - q(2)) / 3.29)
+    def num(v: String): Double = v.toDoubleOption.getOrElse(Double.NaN)
+    linesOf(text).map(_.split("\t", -1)).foldLeft((Option.empty[(Double, Vector[Double])], Vector.empty[ScaleRead])) {
+      case ((_, out), f) if f.headOption.contains("raw") =>
+        (Some((f.lift(1).fold(Double.NaN)(num), f.drop(2).toVector.map(num))), out)
+      case ((raw, out), f) if f.length == cols && f(0) != "set" =>
+        def q(i: Int): Double = num(f(7 + i))
+        val (record, resamples) = raw.getOrElse((Double.NaN, Vector.empty[Double]))
+        (None, out :+ ScaleRead(f(0), f(1), (q(20) - q(2)) / 3.29, record, resamples))
+      case (acc, _) => acc
+    }._2
+
+  /** THE RECORD'S OWN VOTE ON ITS SIGN, AND ITS KNEE, from one band row's finite resamples at the
+    * row's scale: the resolution is the share of resamples strictly on the record's side of the
+    * row's null less the share strictly on the other side, floored at 0 (a resample at the null
+    * votes for neither); the knee is the CRPS an indistinguishable world earns, the mean over the
+    * resamples of each one's CRPS under the others (`leaveOneOutCrps`), in the row's scale.  The
+    * resolution is `None` without a null, with the record at the null, or without a scale; the knee
+    * `None` without a scale or under three resamples. */
+  def voteAndKnee(resamples: Vector[Double], nul: Option[Double], record: Double,
+                  scale: Double): (Option[Double], Option[Double]) =
+    val xs = resamples.filter(_.isFinite)
+    if !(scale.isFinite && scale > 0.0) || xs.isEmpty then (None, None)
+    else
+      val n = xs.length.toDouble
+      val resolution = nul.filter(nl => record.isFinite && record != nl).map { nl =>
+        val up = record > nl
+        val pRec = xs.count(x => if up then x > nl else x < nl).toDouble / n
+        val pOther = xs.count(x => if up then x < nl else x > nl).toDouble / n
+        math.max(pRec - pOther, 0.0)
+      }
+      (resolution, leaveOneOutCrps(xs).map(_ / scale))
+
+  /** The mean over a sample of each value's `MarketSim.crps` under the others: from the sorted
+    * prefix sums, each value's summed distance to the others and the others' pairwise sum (the whole
+    * sample's less those distances), in `crps`'s form, so the sum is the one the leave-one-out calls
+    * would make, in one pass.  `None` under three values. */
+  def leaveOneOutCrps(sample: Vector[Double]): Option[Double] =
+    val n = sample.length
+    Option.when(n >= 3) {
+      val xs = sample.toArray
+      java.util.Arrays.sort(xs)
+      val total = xs.foldLeft(0.0)(_ + _)
+      // the whole sample's pairwise sum, over j < k of x_k - x_j
+      val pairs = xs.indices.foldLeft(0.0)((s, i) => s + ((2 * (i + 1)).toDouble - (n + 1).toDouble) * xs(i))
+      val m = (n - 1).toDouble
+      val (acc, _) = xs.indices.foldLeft((0.0, 0.0)) { case ((acc, before), p) =>
+        val x = xs(p)
+        val after = total - before - x
+        val dist = x * p.toDouble - before + after - x * (n - 1 - p).toDouble
+        (acc + (dist / m - (pairs - dist) / (m * m)), before + x)
+      }
+      acc / n.toDouble
     }
 
   /** `-scales`' table: a line a world and row, its scales at 252, at 756 and at its run's own
-    * blocks, and the largest; `none` where no run reaches the row, those listed on stderr by world. */
-  def printScales(rows: Vector[String], got: Map[(String, String), Vector[Option[(Double, Int)]]]): Unit =
+    * blocks, the largest, and that reading's resolution and knee; `none` where no run reaches the
+    * row, those listed on stderr by world. */
+  def printScales(rows: Vector[String], got: Map[(String, String), Vector[Option[ScaleSlot]]]): Unit =
     def cell(v: Option[Double]): String = v.fold("none")(x => f"$x%.6f")
-    println("world\trow\tscale252\tscale756\tscaleNative\tscale")
+    println("world\trow\tscale252\tscale756\tscaleNative\tscale\tresolution\tknee")
     for world <- Vector("sp500", "nasdaq") do
-      // each row's scales at its own blocks, at 252 and at 756, and the largest
+      // each row's readings at its own blocks, at 252 and at 756, and the largest scale's, the
+      // first of equals
       val table = rows.map { row =>
         val s = got.getOrElse((world, row), Vector.fill(3)(None))
-        def v(j: Int): Option[Double] = s(j).map(_._1).filter(x => x.isFinite && x > 0.0)
+        def v(j: Int): Option[ScaleSlot] = s(j).filter(x => x.scale.isFinite && x.scale > 0.0)
         val (native, b252, b756) = (v(0), v(1), v(2))
-        (row, Vector(b252, b756, native, Vector(native, b252, b756).flatten.maxOption))
+        val best = Vector(native, b252, b756).flatten.foldLeft(Option.empty[ScaleSlot]) { (m, x) =>
+          Some(m.filter(_.scale >= x.scale).getOrElse(x))
+        }
+        (row, Vector(b252.map(_.scale), b756.map(_.scale), native.map(_.scale), best.map(_.scale),
+                     best.flatMap(_.resolution), best.flatMap(_.knee)))
       }
       table.foreach((row, cells) => println(s"$world\t$row\t${cells.map(cell).mkString("\t")}"))
       val missing = table.filter(_._2(3).isEmpty).map(_._1)
       eprintln(s"$world: ${missing.length} rows no run reaches")
       missing.foreach(r => eprintln(s"  $r"))
 
-  /** `-scales LEDGER -runs RUNS`: the record scales of the ledger's rows (the usage's `-scales`). */
+  /** `-scales LEDGER -runs RUNS`: the record scales of the ledger's rows, each with the record's vote
+    * on its sign and its knee (the usage's `-scales`). */
   def scalesMode(args: Vector[String]): Unit =
     val ledger = args.lift(args.indexOf("-scales") + 1).getOrElse(usage("-scales wants the ledger's row table"))
     val runsFile = opt(args, "-runs").getOrElse(usage("-scales wants -runs RUNS.tsv"))
     val resamples = opt(args, "-resamples")
-    val rows = linesOf(readText(ledger)).drop(1).map(_.split("\t", -1)(0).trim).filter(_.nonEmpty)
+    val rows = readScaleRows(ledger, readText(ledger))
+    def nullOf(row: String): Option[Double] = rows.find(_._1 == row).flatMap(_._2)
     val runs = readScaleRuns(readText(runsFile))
-    // (world, row) -> the scale at each block, and the run that gave it
+    // (world, row) -> the reading at each block
     val blocks = Vector(None, Some("252"), Some("756"))
-    val got = runs.zipWithIndex.foldLeft(Map.empty[(String, String), Vector[Option[(Double, Int)]]]) {
+    val got = runs.zipWithIndex.foldLeft(Map.empty[(String, String), Vector[Option[ScaleSlot]]]) {
       case (acc0, ((pick, a0), k)) =>
         blocks.zipWithIndex.foldLeft(acc0) { case (acc1, (block, j)) =>
           val a = a0 ++ resamples.toVector.flatMap(n => Vector("-resamples", n)) ++
                   block.toVector.flatMap(b => Vector("-block", b))
           eprintln(s"run ${k + 1} of ${runs.length} at ${block.getOrElse("its own blocks")}")
-          scalesOfRun(a).filter((_, row, _) => pick.isEmpty || pick.contains(row)).foldLeft(acc1) {
-            case (acc, (world, row, s)) =>
-              val slots = acc.getOrElse((world, row), Vector.fill(3)(None))
-              slots(j).foreach { (_, other) =>
-                if other != k then
-                  usage(s"-scales: [$row] in $world comes from runs ${other + 1} and ${k + 1}; name it in one run's rows")
-              }
-              acc.updated((world, row), slots.updated(j, Some((s, k))))
+          scalesOfRun(a).filter(rd => pick.isEmpty || pick.contains(rd.row)).foldLeft(acc1) { (acc, rd) =>
+            val slots = acc.getOrElse((rd.world, rd.row), Vector.fill(3)(None))
+            slots(j).foreach { other =>
+              if other.run != k then
+                usage(s"-scales: [${rd.row}] in ${rd.world} comes from runs ${other.run + 1} and ${k + 1}; " +
+                      "name it in one run's rows")
+            }
+            val (resolution, knee) = voteAndKnee(rd.resamples, nullOf(rd.row), rd.record, rd.scale)
+            acc.updated((rd.world, rd.row), slots.updated(j, Some(ScaleSlot(rd.scale, resolution, knee, k))))
           }
         }
     }
-    printScales(rows, got)
+    printScales(rows.map(_._1), got)
 
   /** THE LAG-FREE SOURCE (`-unlagged OUT`): one source written lag-free in its own layout, for a
     * ruler outside this tool, the whole file its taken range: `-french FILE` with each corrected
@@ -1447,11 +1547,11 @@ object RecordBands {
 
   /** One row group of `-tips`: the record, its resamples' quantiles and the group's own joint band. */
   def printTipsGroup(set: String, names: Vector[String], series: String, window: String, n: Int,
-                     record: Vector[Double], reads: Vector[Vector[Double]], alpha: Double): Unit =
+                     record: Vector[Double], reads: Vector[Vector[Double]], alpha: Double)(using run: Run): Unit =
     val ks = names.indices.toVector
     val (c, edges) = MarketSim.recordBandJoint(reads, ks, alpha)
     for (name, k) <- names.zipWithIndex do
-      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      val qs = bandQuantiles(record(k), reads.map(_(k)))
       val (lo, hi) = edges(k)
       println(f"$set%s\t$name%s\t$series%s\t$window%s\t$n%d\t${reads.length}%d\t${record(k)}%.6f\t" +
               qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
@@ -1731,7 +1831,7 @@ object RecordBands {
   /** `-sectors DIR -block N`: THE GRADED SECTOR ROWS (`SectorRows`, `sectorRowsOfPanel`) on the ten
     * industries' whole monthly panel, as a history is read, and their resamples in blocks of years
     * of months, every column taking the same months, in the band columns, for -set (sp500). */
-  def printSectorScaleRows(args: Vector[String], dir: String, years: Int): Unit =
+  def printSectorScaleRows(args: Vector[String], dir: String, years: Int)(using Run): Unit =
     val set = opt(args, "-set").getOrElse("sp500")
     val (months, p) = sectorPanel(dir, "10_Industry_Portfolios.CSV")
     val n = p.market.length
@@ -1771,7 +1871,7 @@ object RecordBands {
 
   def main(args: Array[String]): Unit =
     val a = args.toVector
-    given Run = Run(lagOf(a), blockOf(a))
+    given Run = Run(lagOf(a), blockOf(a), a.contains("-raw"))
     OwnModes.find(a.contains) match
       case Some(flag) => ownMode(flag, a)
       case None       => bandMode(a)
@@ -1832,6 +1932,8 @@ object RecordBands {
       case "-rateafter"  => rateafter = true
       // the lag-free record's switches, read by `lagOf`, and the block, read by `blockOf`
       case "-recorded"   => ()
+      // the resamples behind each band row, for `-scales` (`bandQuantiles`)
+      case "-raw"        => ()
       case "-index" | "-fund" | "-block" => val _ = consumeNext
       case a             => usage(s"unrecognized arg [$a]")
     }
@@ -1922,7 +2024,7 @@ object RecordBands {
     eprintln(f"each row's own p5..p95 held the resamples on all ${ks.length}%d rows at once ${held * 100.0 / reads.length}%.1f%% of the time")
     for (k, (lo, hi)) <- ks.zip(edges) do
       val name = MarketSim.RecordBandRows(k)
-      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      val qs = bandQuantiles(record(k), reads.map(_(k)))
       println(f"${o.set}%s\t$name%s\t${o.series}%s\t$window%s\t${r.length}%d\t${o.resamples}%d\t${record(k)}%.6f\t" +
               qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
 
@@ -1977,7 +2079,7 @@ object RecordBands {
     val (c, edges) = MarketSim.recordBandJoint(reads, ks, alpha)
     for (k, (lo, hi)) <- ks.zip(edges) do
       val name = MarketSim.RateBandRows(k)
-      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      val qs = bandQuantiles(record(k), reads.map(_(k)))
       println(f"${o.set}%s\t$name%s\t${o.series}%s\t$window%s\t${rate.length}%d\t${o.resamples}%d\t${record(k)}%.6f\t" +
               qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
 
@@ -2115,7 +2217,7 @@ object RecordBands {
     val alpha = o.joint * 3.0 / (if o.of == 0 then 3 else o.of)
     val (c, edges) = MarketSim.recordBandJoint(reads, Vector(0, 1, 2), alpha)
     for (name, k) <- MarketSim.Bond10BandRows.zipWithIndex do
-      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      val qs = bandQuantiles(record(k), reads.map(_(k)))
       val (lo, hi) = edges(k)
       println(f"${o.set}%s\t$name%s\t${o.series}%s\t$window%s\t${r.length}%d\t${o.resamples}%d\t${record(k)}%.6f\t" +
               qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
@@ -2131,7 +2233,7 @@ object RecordBands {
     if o.header then printBandHeader(Vector("-header"))
     val alpha = o.joint / (if o.of == 0 then 1 else o.of)
     val (c, edges) = MarketSim.recordBandJoint(reads, Vector(0), alpha)
-    val qs = MarketSim.recordBandQuantiles(reads.map(_(0))).map(v => f"$v%.6f")
+    val qs = bandQuantiles(record(0), reads.map(_(0)))
     val (lo, hi) = edges(0)
     println(f"${o.set}%s\t${MarketSim.BondBandRows(0)}%s\t${o.series}%s\t$window%s\t${r.length}%d\t${o.resamples}%d\t${record(0)}%.6f\t" +
             qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
@@ -2161,7 +2263,7 @@ object RecordBands {
     val alpha = o.joint * ks.length / (if o.of == 0 then ks.length else o.of)
     val (c, edges) = MarketSim.recordBandJoint(reads, ks, alpha)
     for (k, (lo, hi)) <- ks.zip(edges) do
-      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      val qs = bandQuantiles(record(k), reads.map(_(k)))
       println(f"${o.set}%s\t${MarketSim.RateAfterRows(k)}%s\t${o.series}%s\t$window%s\t${r.length}%d\t${o.resamples}%d\t${record(k)}%.6f\t" +
               qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
 }

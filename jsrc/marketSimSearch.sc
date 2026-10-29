@@ -97,7 +97,9 @@ object MarketSimSearch:
     "              ;   arm to be feasible, D in the units a set is judged in -- percentile points from",
     "              ;   the band's middle on a row with a record band, the record's percentile points",
     "              ;   from 50 among the read's histories on a single-history row (the multi-year and",
-    "              ;   timing rows), |ln(model/target)| on any other.",
+    "              ;   timing rows), |ln(model/target)| on any other. A ledger row (e.g. 'declines 10%+",
+    "              ;   a century<=0.40') is held at |ln(model/record)|, the model the read's median",
+    "              ;   history as the ledger objective reads it.",
     "              ;   What -gap is to a band's edges, for a distance: a priced row is traded away, and",
     "              ;   an archive ends where the loss pulls it whatever it was seeded from.  The seed",
     "              ;   worlds are exempt",
@@ -114,9 +116,11 @@ object MarketSimSearch:
     "              ;   ledger tool computes it on the same read -- over every graded row the row's",
     "              ;   weight times the record's CRPS under the read's single histories in the",
     "              ;   record's own scale (each reading clipped to the record +- 50 scales) plus 3",
-    "              ;   times the model's share of the separation from the record when the two sit",
-    "              ;   on opposite sides of the row's null -- or crps, the record's CRPS in the",
-    "              ;   -noregress yardstick. Feasibility (the placement, the gates) and -noregress",
+    "              ;   x the sign share on opposite sides of the null, scaled by the record's own",
+    "              ;   vote on its sign (resolution, from its resamples); each row's CRPS through a",
+    "              ;   dead zone at the CRPS an indistinguishable world earns (knee, from the same",
+    "              ;   resamples), quadratic inside, linear beyond -- or crps, the record's CRPS in",
+    "              ;   the -noregress yardstick. Feasibility (the placement, the gates) and -noregress",
     "              ;   are the same under either; the log's `ledger` column carries each read's",
     "              ;   score as seed:score for the tool to check",
     "-ledger F     ; the ledger's row table, row<TAB>units<TAB>weight<TAB>null<TAB>scale sp500<TAB>",
@@ -227,27 +231,53 @@ object MarketSimSearch:
 
   /** A ledger row's units class, weight, null (`None` for a level or a share, which can never sit
     * on the wrong side of anything) and record scale in each world (`LedgerWorlds`), `None` where
-    * the record cannot be resampled to give one. */
+    * the record cannot be resampled to give one; THE RECORD'S OWN VOTE ON ITS SIGN in each world
+    * (ruled 2026-10-27: the share of the record's resamples strictly on its side of the null less
+    * the share strictly on the other, floored at 0, as `record_bands -scales` measures it), which
+    * scales the sign share (`ledgerVector`), `None` without a null, with the record at it, or
+    * without a scale; and THE KNEE in each world, the CRPS an indistinguishable world earns (the
+    * mean over the record's resamples of each one's CRPS under the others, in the row's scale),
+    * where the row's CRPS passes through a dead zone (`soft`), `None` without a scale. */
   final case class LedgerSpec(name: String, units: String, weight: Double, nullValue: Option[Double],
-                              scales: Vector[Option[Double]])
+                              scales: Vector[Option[Double]], resolutions: Vector[Option[Double]],
+                              knees: Vector[Option[Double]])
 
   /** THE LEDGER'S ROW TABLE (`-ledger FILE`), in the file's order: the archive's column order and
-    * the order the score is summed in. */
-  final case class Ledger(rows: Vector[LedgerSpec]):
+    * the order the score is summed in; `world` the run's world as the table's column
+    * (`ledgerWorld`), fixed when the table is read, so the score's sums (`ledgerRowScores`,
+    * `ledgerFamilies`) read its knees without the anchors in hand -- `None` for a world the table
+    * has no column for. */
+  final case class Ledger(rows: Vector[LedgerSpec], world: Option[Int] = None):
     val index: Map[String, Int] = rows.map(_.name).zipWithIndex.toMap
     def isEmpty: Boolean = rows.isEmpty
     def get(name: String): Option[LedgerSpec] = index.get(name).map(rows)
     /** Row `k`'s record scale in the anchor set's world; `None` for a world the table has no column
       * for, or a row it gives none in that world. */
     def scale(k: Int, anchors: MarketSim.Anchors): Option[Double] =
-      LedgerWorlds.indexWhere(w => MarketSim.anchorsNamed(w).name == anchors.name) match
-        case -1 => None
-        case i  => rows(k).scales(i)
+      ledgerWorld(anchors).flatMap(i => rows(k).scales(i))
+    /** Row `k`'s resolution (`LedgerSpec.resolutions`) in the anchor set's world, as `scale`. */
+    def resolution(k: Int, anchors: MarketSim.Anchors): Option[Double] =
+      ledgerWorld(anchors).flatMap(i => rows(k).resolutions(i))
+    /** Row `k`'s knee (`LedgerSpec.knees`) in the anchor set's world, as `scale`. */
+    def knee(k: Int, anchors: MarketSim.Anchors): Option[Double] =
+      ledgerWorld(anchors).flatMap(i => rows(k).knees(i))
+    /** Row `k`'s knee in the run's world (`world`) for the score's sums: 0, no dead zone, where the
+      * table gives none -- which `ledgerVector` refuses by name for a graded row before any vector
+      * reaches a sum, and the objective digest carries the knees, so a resumed archive's vectors
+      * were scored under this table. */
+    def kneeAt(k: Int): Double = world.flatMap(i => rows(k).knees(i)).getOrElse(0.0)
     /** the table's text digest, its sign rule and the score's form, in the reference cache's key */
     def digest: String = fnv(rows.map(r => ledgerLine(r) + "\n").mkString + s"sign|$LedgerSignRule\n$ledgerForm\n")
 
   object Ledger:
     val empty: Ledger = Ledger(Vector.empty)
+
+  /** The anchor set's world as the table's column (`LedgerWorlds`); `None` for a world the table has
+    * no column for. */
+  def ledgerWorld(anchors: MarketSim.Anchors): Option[Int] =
+    LedgerWorlds.indexWhere(w => MarketSim.anchorsNamed(w).name == anchors.name) match
+      case -1 => None
+      case i  => Some(i)
 
   /** The worlds a table carries a scale column for, in the table's column order. */
   val LedgerWorlds: Vector[String] = Vector("sp500", "nasdaq")
@@ -255,13 +285,17 @@ object MarketSimSearch:
   /** The units classes, in the order the family aggregates are laid out (`ledgerFamilies`). */
   val LedgerUnits: Vector[String] = Vector("return", "loss", "vol", "shape")
 
-  /** A table row as the digests write it: name, units, weight, null and its scale in each world. */
+  /** A table row as the digests write it: name, units, weight, null, then its scale, resolution and
+    * knee in each world. */
   def ledgerLine(r: LedgerSpec): String =
-    s"${r.name}|${r.units}|${g8(r.weight)}|${r.nullValue.fold("none")(g8)}|" +
-      s"${r.scales(0).fold("none")(g8)}|${r.scales(1).fold("none")(g8)}"
+    def cell(v: Option[Double]) = v.fold("none")(g8)
+    s"${r.name}|${r.units}|${g8(r.weight)}|${cell(r.nullValue)}|" +
+      s"${cell(r.scales(0))}|${cell(r.scales(1))}|${cell(r.resolutions(0))}|${cell(r.resolutions(1))}|" +
+      s"${cell(r.knees(0))}|${cell(r.knees(1))}"
 
-  /** The score's form, in the digests: the CRPS in record scales, clipped, and the sign's weight. */
-  def ledgerForm: String = s"crps|clip ${g8(LedgerClip)}|sign ${g8(LedgerSignK)}"
+  /** The score's form, in the digests: the CRPS in record scales, clipped, through the knee's dead
+    * zone, and the sign's weight. */
+  def ledgerForm: String = s"crps|clip ${g8(LedgerClip)}|soft knee|sign ${g8(LedgerSignK)}"
 
   /** The sign penalty (ruled 2026-10-23): a row whose model and record sit on opposite sides of its
     * null costs up to this many record scales, in proportion to the model's share of the separation
@@ -273,8 +307,9 @@ object MarketSimSearch:
     * share of the histories rather than making the row infinite. */
   val LedgerClip: Double = 50.0
   /** The sign share's rule, in the digests, so an archive or reference scored under another is
-    * refused: a banded row's sign counts only outside the record's band (`ledgerVector`). */
-  val LedgerSignRule: String = "band"
+    * refused: the share is scaled by the record's own vote on its sign, the table's resolution
+    * (`ledgerVector`). */
+  val LedgerSignRule: String = "vote"
   /** THE RESIDUAL TERMS UNDER THE LEDGER OBJECTIVE: a fidelity gate the placement does not cover
     * costs one tier, as a full sign crossing does, in place of the CRPS dead zone. */
   val LedgerDead: Double = LedgerSignK
@@ -286,15 +321,19 @@ object MarketSimSearch:
   val LedgerArchiveCap: Int = 400
 
   /** The row table as the gap ledger tool writes it (`gapledger.py -units`): a header
-    * `row<TAB>units<TAB>weight<TAB>null<TAB>scale sp500<TAB>scale nasdaq`, then one row a line, the
-    * null a number or `none`, each scale a positive number or `none`. */
-  def readLedger(path: String): Ledger =
+    * `row<TAB>units<TAB>weight<TAB>null<TAB>scale sp500<TAB>scale nasdaq<TAB>resolution sp500<TAB>
+    * resolution nasdaq<TAB>knee sp500<TAB>knee nasdaq`, then one row a line, the null a number or
+    * `none`, each scale a positive number or `none`, each resolution a share in [0, 1] or `none`,
+    * each knee a non-negative number or `none`.  The run's world (`anchors`) fixes the column the
+    * score's sums read (`Ledger.world`). */
+  def readLedger(path: String, anchors: MarketSim.Anchors): Ledger =
     if path.isEmpty then
       usage("-objective ledger needs -ledger FILE, the row table the gap ledger tool writes (-units)")
     val text = scala.util.Try(path.asPath.contentAsString).getOrElse(usage(s"-ledger: cannot read $path"))
     val lines = text.linesIterator.filter(_.trim.nonEmpty).toVector
     val head = lines.headOption.getOrElse("").split("\t", -1).toVector
-    val want = Vector("row", "units", "weight", "null", "scale sp500", "scale nasdaq")
+    val want = Vector("row", "units", "weight", "null", "scale sp500", "scale nasdaq", "resolution sp500",
+                      "resolution nasdaq", "knee sp500", "knee nasdaq")
     if head != want then
       usage(s"-ledger $path: the header is [${head.mkString("|")}], not ${want.mkString("/")}: the ledger scores " +
             "each row's CRPS in its record's scale")
@@ -306,16 +345,25 @@ object MarketSimSearch:
       val nul = f(3).trim match
         case "none" => None
         case v      => Some(v.toDoubleOption.getOrElse(usage(s"-ledger $path: null [$v] on [${f(0)}]")))
-      def scale(v: String): Option[Double] = v.trim match
-        case "none" => None
-        case s      =>
-          Some(s.toDoubleOption.filter(x => x > 0.0 && x.isFinite).getOrElse(usage(s"-ledger $path: scale [$s] on [${f(0)}]")))
+      def cell(what: String, v: String, ok: Double => Boolean) = ledgerCell(path, f(0), what, v, ok)
       val name = f(0).trim
       if acc.exists(_.name == name) then usage(s"-ledger $path: [$name] is listed twice")
-      acc :+ LedgerSpec(name, units, weight, nul, Vector(scale(f(4)), scale(f(5))))
+      acc :+ LedgerSpec(name, units, weight, nul,
+                        Vector(cell("scale", f(4), _ > 0.0), cell("scale", f(5), _ > 0.0)),
+                        Vector(cell("resolution", f(6), x => x >= 0.0 && x <= 1.0),
+                               cell("resolution", f(7), x => x >= 0.0 && x <= 1.0)),
+                        Vector(cell("knee", f(8), _ >= 0.0), cell("knee", f(9), _ >= 0.0)))
     }
     if rows.isEmpty then usage(s"-ledger $path: no rows")
-    Ledger(rows)
+    Ledger(rows, ledgerWorld(anchors))
+
+  /** One of a table row's world cells (`readLedger`): `none`, or a finite number `ok` admits,
+    * refused by the row's name and the cell's kind otherwise. */
+  def ledgerCell(path: String, row: String, what: String, v: String, ok: Double => Boolean): Option[Double] =
+    v.trim match
+      case "none" => None
+      case x      =>
+        Some(x.toDoubleOption.filter(y => y.isFinite && ok(y)).getOrElse(usage(s"-ledger $path: $what [$x] on [$row]")))
 
   /** A graded row as the verdict prints it: its name, the percentile the verdict prints for it
     * (`model@` for a banded row, the model's median in the record's band; `record@` for a history
@@ -351,18 +399,18 @@ object MarketSimSearch:
 
   /** ONE READ'S LEDGER VECTOR, in table order: `(crps, sign share, model)` a row -- the crps the
     * record's CRPS under the read's single histories of the row in the record's own scale
-    * (`ledgerCrps`), the sign share the model's part of the separation from the record when the two
-    * sit on opposite sides of the row's null, |model - null| / (|model - null| + |record - null|),
-    * else 0, at eight digits as the archive writes it -- and NaN on a row the read did not grade.  A
-    * banded row's sign counts only where the record establishes it: 0 when its null lies strictly
-    * inside the record's band on the printed figures (an edge printed at the null is outside), the
-    * band alone grading the row.  A row whose printed model or record is not a number, or without
-    * two readable histories (`hist`, each with its record), is not graded; a graded row the table
-    * does not name, or gives no scale in this world, is an error, by name. */
+    * (`ledgerCrps`, raw: the knee's dead zone is applied where the vector is summed, `soft`), the
+    * sign share the model's part of the separation from the record when the two sit on opposite
+    * sides of the row's null, |model - null| / (|model - null| + |record - null|), scaled by the
+    * record's own vote on its sign (the table's resolution in this world), else 0, at eight digits
+    * as the archive writes it -- and NaN on a row the read did not grade.  A row whose printed model
+    * or record is not a number, or without two readable histories (`hist`, each with its record),
+    * is not graded; a graded row the table does not name, or gives no scale or no knee in this
+    * world, or no resolution for its null, is an error, by name. */
   def ledgerVector(graded: Vector[LedgerRow], hist: Vector[MarketSim.HistoryRow], anchors: MarketSim.Anchors,
                    table: Ledger): Either[String, LedgerVec] =
     val none = Vector.fill(table.rows.length)((Double.NaN, Double.NaN, Double.NaN))
-    graded.foldLeft[Either[String, LedgerVec]](Right(none)) { case (acc, (name, _, model, record, band)) =>
+    graded.foldLeft[Either[String, LedgerVec]](Right(none)) { case (acc, (name, _, model, record, _)) =>
       acc.flatMap { v =>
         val (m, r) = (printed(model), printed(record))
         if !m.isFinite || !r.isFinite then Right(v)
@@ -375,15 +423,20 @@ object MarketSimSearch:
                 val crps = hist.find(_.name == name).flatMap(h => h.record.map(rec => ledgerCrps(h.reads, rec, scale)))
                   .getOrElse(Double.NaN)
                 if crps.isNaN then Right(v)
+                else if table.knee(k, anchors).isEmpty then
+                  Left(s"the ledger table has no knee for [$name] in ${anchors.name}")
                 else
-                  val share = table.rows(k).nullValue.fold(0.0) { n =>
-                    if band.exists((lo, hi) => printed(lo) < n && n < printed(hi)) then 0.0
-                    else
-                      val (a, b) = (m - n, r - n)
-                      if (a < 0.0 && 0.0 < b) || (b < 0.0 && 0.0 < a) then math.abs(a) / (math.abs(a) + math.abs(b))
-                      else 0.0
-                  }
-                  Right(v.updated(k, (crps, g8(share).toDoubleOption.getOrElse(share), model)))
+                  val share: Either[String, Double] = table.rows(k).nullValue match
+                    case None    => Right(0.0)
+                    case Some(n) =>
+                      table.resolution(k, anchors) match
+                        case None      => Left(s"the ledger table has no resolution for [$name] in ${anchors.name}")
+                        case Some(res) =>
+                          val (a, b) = (m - n, r - n)
+                          Right(if (a < 0.0 && 0.0 < b) || (b < 0.0 && 0.0 < a) then
+                                  (math.abs(a) / (math.abs(a) + math.abs(b))) * res
+                                else 0.0)
+                  share.map(sh => v.updated(k, (crps, g8(sh).toDoubleOption.getOrElse(sh), model)))
       }
     }
 
@@ -394,11 +447,20 @@ object MarketSimSearch:
     val (lo, hi) = (record - LedgerClip * scale, record + LedgerClip * scale)
     MarketSim.crps(reads.map(x => if x.isNaN then x else math.max(lo, math.min(hi, x))), record) / scale
 
-  /** Each graded row's ledger score, its weight times (crps + `LedgerSignK` x sign share), in table
-    * order over the rows the read graded. */
+  /** THE DEAD ZONE (ruled 2026-10-27): a row's CRPS through a knee at `k`, the CRPS an
+    * indistinguishable world earns on the row (`LedgerSpec.knees`) -- quadratic inside it, c^2 / 2k,
+    * linear past it, c - k / 2, the two meeting at the knee with one slope; no knee (0 or less) is
+    * the CRPS itself. */
+  def soft(c: Double, k: Double): Double =
+    if k <= 0.0 then c
+    else if c <= k then c * c / (2.0 * k)
+    else c - k / 2.0
+
+  /** Each graded row's ledger score, its weight times (the crps through its knee, `soft`, +
+    * `LedgerSignK` x sign share), in table order over the rows the read graded. */
   def ledgerRowScores(v: LedgerVec, table: Ledger): Vector[(String, Double)] =
-    v.zip(table.rows).collect { case ((crps, sign, _), r) if crps.isFinite =>
-      (r.name, r.weight * (crps + LedgerSignK * sign))
+    v.zip(table.rows).zipWithIndex.collect { case (((crps, sign, _), r), k) if crps.isFinite =>
+      (r.name, r.weight * (soft(crps, table.kneeAt(k)) + LedgerSignK * sign))
     }
 
   /** THE LEDGER SCORE of one read (the gap ledger tool's number on the same read, and the re-pick
@@ -413,16 +475,18 @@ object MarketSimSearch:
     if c != 0.0 && !c.isNaN && !c.isInfinite then s + c else s
 
   /** THE EIGHT FAMILY AGGREGATES the Pareto reserve is pruned on: for each units class in
-    * `LedgerUnits` order, the sum of its rows' scaled CRPS, then of its rows' sign shares x
-    * `LedgerSignK`, over the rows the read graded, every row at its full weight of one. */
+    * `LedgerUnits` order, the sum of its rows' scaled CRPS through their knees (`soft`), then of its
+    * rows' sign shares x `LedgerSignK`, over the rows the read graded, every row at its full weight
+    * of one. */
   def ledgerFamilies(v: LedgerVec, table: Ledger): Vector[Double] =
-    v.zip(table.rows).foldLeft(Vector.fill(2 * LedgerUnits.length)(0.0)) { case (out, ((crps, sign, _), r)) =>
-      if !crps.isFinite then out
-      else
-        val k = LedgerUnits.indexOf(r.units) match
-          case -1 => LedgerUnits.length - 1
-          case i  => i
-        out.updated(2 * k, out(2 * k) + crps).updated(2 * k + 1, out(2 * k + 1) + LedgerSignK * sign)
+    v.zip(table.rows).zipWithIndex.foldLeft(Vector.fill(2 * LedgerUnits.length)(0.0)) {
+      case (out, (((crps, sign, _), r), i)) =>
+        if !crps.isFinite then out
+        else
+          val k = LedgerUnits.indexOf(r.units) match
+            case -1 => LedgerUnits.length - 1
+            case j  => j
+          out.updated(2 * k, out(2 * k) + soft(crps, table.kneeAt(i))).updated(2 * k + 1, out(2 * k + 1) + LedgerSignK * sign)
     }
 
   /** EPSILON-DOMINANCE on the family aggregates (lower is better): `b` dominates `a` when it is at
@@ -883,12 +947,21 @@ object MarketSimSearch:
     else clamped(i, y)
 
   /** A proposal with its news size pulled inside the search's share of the diffusion budget
-    * (`newsSizeWithinBudget`), so the archive holds the dials of the world it scored. */
-  def admissible(d: Vector[Double]): Vector[Double] =
+    * (`newsSizeWithinBudget`), so the archive holds the dials of the world it scored; refused, with
+    * the CLI's text, when its world on `base` lies outside the CLI's domain
+    * (`MarketSim.worldDomainRefusal`), so the search's domain is the CLI's. */
+  def admissible(base: World, d: Vector[Double]): Either[String, Vector[Double]] =
     def dial(n: String): Option[Double] = ranges.zip(d).find(_._1._1 == n).map(_._2)
-    val rate = dial("newsRate").getOrElse(0.0)
-    val size = dial("newsSize").fold(0.0)(x => MarketSim.newsSizeWithinBudget(rate, x))
-    ranges.zip(d).map((r, x) => if r._1 == "newsSize" then size else x)
+    val rate  = dial("newsRate").getOrElse(0.0)
+    val scale = dial("noiseScale").getOrElse(1.0)
+    val size  = dial("newsSize").fold(0.0)(x => MarketSim.newsSizeWithinBudget(rate, x, scale))
+    val pulled = ranges.zip(d).map((r, x) => if r._1 == "newsSize" then size else x)
+    MarketSim.worldDomainRefusal(worldOf(base, pulled)).toLeft(pulled)
+
+  /** The proposals in a row outside the CLI's domain after which the search stops: from a parent
+    * inside it a child steps back in with a probability far from 0, so only a domain no step can
+    * reach (a fixed dial outside it) runs this long. */
+  val ProposalTries: Int = 10000
 
   /** WHAT A WORLD DOES, beside what it is set to.  Never graded, never optimised: the archive keeps
     * worlds apart by dial distance, a proxy for behavioural difference; these measure it.  `retAc1`
@@ -1011,11 +1084,13 @@ object MarketSimSearch:
 
   /** A held row's distance on one read, in the judge's units (`-hold`): a single-history row's (the
     * multi-year and timing rows) is the record's percentile points from 50 among the read's own
-    * histories, where the verdict places it, infinite under `ExtremeMinHistories` of them; any other
-    * row's is `judgeDistance`'s. */
+    * histories, where the verdict places it, infinite under `ExtremeMinHistories` of them; a ledger
+    * row's is `ledgerHoldDistance`'s on the read's ledger histories `lh`; any other row's is
+    * `judgeDistance`'s. */
   def holdDistance(anchors: MarketSim.Anchors, nm: String, hr: MarketSim.HorizonReadings,
-                   st: MarketSim.WorldStats): Option[Double] =
-    if MarketSim.isMultiYear(nm) then
+                   st: MarketSim.WorldStats, lh: Option[Vector[MarketSim.HistoryRow]]): Option[Double] =
+    if MarketSim.LedgerRows.contains(nm) then lh.flatMap(l => ledgerHoldDistance(anchors, nm, l))
+    else if MarketSim.isMultiYear(nm) then
       MarketSim.fitTargets(anchors).find(_._1 == nm).map(_._3).map { record =>
         hr.extreme.get(nm) match
           case Some(xs) if xs.length >= MarketSim.ExtremeMinHistories =>
@@ -1023,6 +1098,17 @@ object MarketSimSearch:
           case _ => Double.PositiveInfinity
       }
     else MarketSim.judgeDistance(anchors, nm, st, hr.banded)
+
+  /** A held LEDGER row's distance on one read: `|ln(model / record)|`, the fit-target form, the model
+    * the row's figure as the ledger objective reads it (`MarketSim.ledgerFidelityRows`: the median
+    * over the read's histories) and the record the set's (`MarketSim.ledgerRecords`); infinite where
+    * the ratio is not a positive number.  `None` for a set without ledger records, or a name that is
+    * no ledger row. */
+  def ledgerHoldDistance(anchors: MarketSim.Anchors, nm: String, lh: Vector[MarketSim.HistoryRow]): Option[Double] =
+    MarketSim.ledgerFidelityRows(anchors, lh).find(_.name == nm).map { r =>
+      val ratio = r.model / r.real
+      if ratio.isFinite && ratio > 0.0 then math.abs(MarketSim.lnDet(ratio)) else Double.PositiveInfinity
+    }
 
   /** Does this read MISS the named gap row's band?  A row with a record band is judged by it; an
     * extreme row by where the record falls among the read's single histories of its own length
@@ -1078,10 +1164,26 @@ object MarketSimSearch:
         val main = head ++ MarketSim.simPathRange(vw, obj.stage, paths - obj.stage, years, s)
         readPaths(w, anchors, main, years, s, obj).copy(stageFail = Some(stageFail))
 
+  /** The gate failure of a read whose paths are not a number (`MarketSim.Path.nanSeries`). */
+  val NanFail: String = "nan"
+
+  /** The read of paths that are not a number: infeasible, its failure naming the series, its score
+    * and worst term infinite so it ranks below every rejection the dead-zone sum ranks, and its
+    * descriptors NaN.  No statistic is read off such paths. */
+  def nanRead(series: String): Read =
+    Read(false, Double.PositiveInfinity, Double.PositiveInfinity, NanFail, Vector.fill(descNames.length)(Double.NaN),
+         Double.NaN, gateFail = Vector(s"$NanFail: $series"))
+
   /** One seed's reading of an ensemble already simulated (`oneRead`): every path in `main`, path k
-    * read at seed `s + k * PathStride`. */
+    * read at seed `s + k * PathStride`.  A CANDIDATE WHOSE SIMULATION LEFT THE REALS is infeasible
+    * before any statistic is read, and the generation goes on (`nanRead`). */
   def readPaths(w: World, anchors: MarketSim.Anchors, main: Vector[MarketSim.Path], years: Int,
                 s: Long, obj: Objective): Read =
+    main.iterator.flatMap(_.nanSeries).nextOption().fold(readNumbers(w, anchors, main, years, s, obj))(nanRead)
+
+  /** `readPaths` on paths every statistic can read. */
+  private def readNumbers(w: World, anchors: MarketSim.Anchors, main: Vector[MarketSim.Path], years: Int,
+                          s: Long, obj: Objective): Read =
     val dead  = obj.dead
     val paths = main.length
     val st    = MarketSim.measure(main, years)
@@ -1124,10 +1226,15 @@ object MarketSimSearch:
     val watchMiss =
       if early then Vector.empty[String]
       else obj.watch.filter(nm => gapMisses(anchors, nm, hr, st))
+    // the ledger rows' histories, read here only where a held row is one of theirs and reused by the
+    // ledger objective's read (`ledgerOf`), so a read holding no ledger row is the read before them
+    // bit for bit
+    val lh = Option.when(gated && obj.hold.exists((nm, _) => MarketSim.LedgerRows.contains(nm)))(
+      MarketSim.ledgerHistories(anchors, main))
     // the held rows' distances on this read, in the judge's units: past a bar is a failed gate
     val holdMiss =
       if gated then obj.hold.collect {
-        case (nm, bar) if holdDistance(anchors, nm, hr, st).forall(_ > bar) => nm
+        case (nm, bar) if holdDistance(anchors, nm, hr, st, lh).forall(_ > bar) => nm
       }
       else Vector.empty[String]
     // THE MEMBERSHIP RULE is not one read's to decide: the record is placed once among every read's
@@ -1150,7 +1257,7 @@ object MarketSimSearch:
     val (total, allRows) = MarketSim.fitness(anchors, st, ex)
     // THE LEDGER OBJECTIVE: a feasible read's graded rows as the verdict grades them, scored as the
     // gap ledger tool scores the same read (`ledgerOf`); the CRPS sum otherwise
-    val ledger = hrows.flatMap(h => ledgerOf(obj, anchors, st, hr, h, main))
+    val ledger = hrows.flatMap(h => ledgerOf(obj, anchors, st, hr, h, main, lh))
     // AGAINST THE OUTGOING RECIPE (`-noregress`): each graded row's CRPS over the recipe's, under the
     // ledger objective its ledger score; and the uncovered fidelity gates at one tier each there
     // (`LedgerDead`)
@@ -1176,20 +1283,22 @@ object MarketSimSearch:
 
   /** A feasible read's ledger under that objective: its vector (`ledgerVector`), its score
     * (`ledgerSum`) and its row scores (`ledgerRowScores`, what `-noregress` prices), over the graded
-    * rows and the ledger rows read on the read's own ensemble `main` (`MarketSim.LedgerRows`); `None`
-    * under the CRPS objective.  A row the table does not name stops the search by name. */
+    * rows and the ledger rows read on the read's own ensemble `main` (`MarketSim.LedgerRows`, `lh`
+    * where the read already has them, for a held ledger row); `None` under the CRPS objective.  A row
+    * the table does not name stops the search by name. */
   def ledgerOf(obj: Objective, anchors: MarketSim.Anchors, st: MarketSim.WorldStats, hr: MarketSim.HorizonReadings,
-               hrows: Vector[MarketSim.HistoryRow],
-               main: Vector[MarketSim.Path]): Option[(LedgerVec, Double, Vector[(String, Double)])] =
+               hrows: Vector[MarketSim.HistoryRow], main: Vector[MarketSim.Path],
+               lh: Option[Vector[MarketSim.HistoryRow]]): Option[(LedgerVec, Double, Vector[(String, Double)])] =
     Option.when(obj.kind == ObjectiveKind.Ledger):
-      val v = ledgerVectorOf(anchors, st, hr, hrows, main, obj.ledger)
+      val v = ledgerVectorOf(anchors, st, hr, hrows, main, obj.ledger, lh)
       (v, ledgerSum(v, obj.ledger), ledgerRowScores(v, obj.ledger))
 
   /** One read's ledger vector: the fidelity rows from its readings and its ledger rows' histories on
     * its own ensemble, graded as the verdict grades them; a row the table lacks stops the search. */
   def ledgerVectorOf(anchors: MarketSim.Anchors, st: MarketSim.WorldStats, hr: MarketSim.HorizonReadings,
-                     hrows: Vector[MarketSim.HistoryRow], main: Vector[MarketSim.Path], table: Ledger): LedgerVec =
-    val lh = MarketSim.ledgerHistories(anchors, main)
+                     hrows: Vector[MarketSim.HistoryRow], main: Vector[MarketSim.Path], table: Ledger,
+                     held: Option[Vector[MarketSim.HistoryRow]] = None): LedgerVec =
+    val lh = held.getOrElse(MarketSim.ledgerHistories(anchors, main))
     val rows = MarketSim.rowsFromReadings(anchors, st, hr) ++ MarketSim.ledgerFidelityRows(anchors, lh)
     val graded = ledgerRows(anchors, st, rows, hrows)
     ledgerVector(graded, withLedgerHistories(anchors, hrows, lh), anchors, table).fold(e => usage(e), identity)
@@ -1425,6 +1534,11 @@ object MarketSimSearch:
     }
     f"$h%016x"
 
+  /** THE SEARCHED DIALS' RANGES, digested into the archive's settings (`ranges`): every dial's name
+    * and bounds in table order, in the archive's own width, so an archive resumed after a range
+    * moved is refused without `-force`. */
+  def rangesDigest: String = fnv(ranges.map(r => s"${r._1}\t${g8(r._2)}\t${g8(r._3)}\n").mkString)
+
   /** THE SEED WORLDS' OWN VALUES, digested into the archive's settings (`seedWorlds`).  A member
     * is its searched dials on top of the world it was seeded from, by NAME, and an unreleased
     * recipe may be re-solved under its name: an archive resumed or exported after that would
@@ -1552,7 +1666,9 @@ object MarketSimSearch:
               }
             }
           if !shape then
-            usage(s"$dir/archive.tsv was written with different columns; it has [$head]\n" +
+            // the first of this binary's dials the archive lacks (one added to the table since)
+            val lacks = names.find(n => !cols.contains(n)).fold("")(n => s"; it lacks the dial [$n]")
+            usage(s"$dir/archive.tsv was written with different columns$lacks; it has [$head]\n" +
                   s"  this binary reads [$expect] with or without the ledger columns")
           Some((cols.length - base - 2) / 3)
       val want = base + ledgerRows.fold(0)(n => 2 + 3 * n)
@@ -1871,9 +1987,12 @@ object MarketSimSearch:
               (k.trim, x)
             case _ => usage(s"-seedset wants DIAL=VALUE, got [$kv]")
         }
-        for (k, _) <- moves if !ranges.exists(_._1 == k) do
-          usage(s"-seedset names [$k], which is not a searched dial")
-        pool.map((n, w) => (n, moves.foldLeft(w)((acc, m) => ranges.find(_._1 == m._1).get._4(acc, m._2))))
+        // a searched dial, or one of the probe dials no child moves (`MarketSim.ProbeDials`)
+        def setter(k: String): Option[(World, Double) => World] =
+          ranges.find(_._1 == k).map(_._4).orElse(MarketSim.ProbeDials.find(_._1 == k).map(_._2))
+        for (k, _) <- moves if setter(k).isEmpty do
+          usage(s"-seedset names [$k], which is not a searched dial or a probe dial")
+        pool.map((n, w) => (n, moves.foldLeft(w)((acc, m) => setter(m._1).get(acc, m._2))))
     // THE SEED ROWS (`-seedworlds`): worlds of the first seed's lineage given by their searched dials,
     // e.g. a calibration set's members moved by hand, so a search starts from all of them at once.
     // The rows ARE the seed worlds: the -seeds world only carries their other dials, so the first row
@@ -1913,7 +2032,8 @@ object MarketSimSearch:
     // incomplete at the first read that names a row it lacks; `-export` and `-prune` score nothing
     val kind = ObjectiveKind.parse(objectiveForm)
     val ledger =
-      if kind == ObjectiveKind.Ledger && !(prune || exportTo.nonEmpty) then readLedger(ledgerFile) else Ledger.empty
+      if kind == ObjectiveKind.Ledger && !(prune || exportTo.nonEmpty) then readLedger(ledgerFile, anchors)
+      else Ledger.empty
     // the -fidelity ranking reads other ensembles, which a reference taken at this one does not fit
     val plain = Objective(deadZone(dead), None, kind = kind, ledger = ledger)
     if fidelity.nonEmpty then
@@ -2009,14 +2129,16 @@ object MarketSimSearch:
       else usage(s"-gap names [$g], which is not a graded row of [$anchorSpec]")
     }
     // THE HELD ROWS (`-hold ROW<=D,...`): each a graded row of this anchor set, single-history rows
-    // included, the other extreme rows not, and a finite distance at or above 0 in the judge's units
+    // included, the other extreme rows not, or a ledger row where the set carries ledger records
+    // (`ledgerHoldDistance`), and a finite distance at or above 0 in the judge's units
+    val ledgerHeld = if MarketSim.ledgerRecords(anchors).isDefined then MarketSim.LedgerRows else Vector.empty[String]
     val holdRows = hold.split(",").toVector.map(_.trim).filter(_.nonEmpty).map { h =>
       val at = h.indexOf("<=")
       if at < 0 then usage(s"-hold wants ROW<=D, got [$h]")
       val (row, bar) = (h.take(at).trim, h.drop(at + 2).trim)
-      val names = anchors.recordBands.map(_.name) ++ MarketSim.fitTargets(anchors).map(_._1)
+      val names = anchors.recordBands.map(_.name) ++ MarketSim.fitTargets(anchors).map(_._1) ++ ledgerHeld
       if !names.exists(n => n == row && (MarketSim.isMultiYear(n) || !MarketSim.extremeTargetNames.contains(n))) then
-        usage(s"-hold names [$row], which is not a graded row of [$anchorSpec]")
+        usage(s"-hold names [$row], which is not a graded or ledger row of [$anchorSpec]")
       val d = bar.toDoubleOption.filter(x => x.isFinite && x >= 0.0)
         .getOrElse(usage(s"-hold $row: [$bar] is not a distance"))
       (row, d)
@@ -2071,6 +2193,10 @@ object MarketSimSearch:
                           "seeds" -> (if seedSpec.isEmpty then "(all)" else seedSpec),
                           // the seed worlds' own values, not only their names: see `seedWorldsDigest`
                           "seedWorlds" -> seedWorldsDigest(pool2),
+                          // the searched dials' ranges, which the steps, the separation and the
+                          // spread-keeping trim are all measured in: a resume under wider or narrower
+                          // ones steps a different space and keeps a different archive (`rangesDigest`)
+                          "ranges" -> rangesDigest,
                           "seedSet" -> (if seedSet.isEmpty then "(none)" else seedSet),
                           // how a candidate's reads are seeded: see `candidateSeed`
                           "candidateSeeds" -> candidateSeeds,
@@ -2383,22 +2509,33 @@ object MarketSimSearch:
       val factor = if cov > 0.0 then proposalFactor(arc, covShrink) else None
       val (next, slots, log, nsum, nn, trace, _, cands, stageLog, heldNext, reserveNext) =
         (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn, tr, noiseDue, cl, sl, hm, res), _) =>
-        val parent = acc(rng.nextBoundedInt(acc.length))
-        val along = factor.filter(_ => rng.nextDouble() < cov)
-        val z = parent.dials.indices.toVector.map(_ => rng.randn())
-        val child = admissible(parent.dials.indices.toVector.map { i =>
-          val zi = along match
-            case Some(l) => (0 to i).foldLeft(0.0)((s, t) => s + l(i)(t) * z(t))
-            case None    => z(i)
-          if fixed(i) then parent.dials(i)
-          else projection.filter(_._1 == i) match
-            // the parent's miss on the row, closed along the slope; the draw is made as without it,
-            // so the other dials step alike
-            case Some((_, _, target)) =>
-              hm.get(heldKey(parent.name, parent.dials)).filter(_.isFinite)
-                .fold(parent.dials(i))(h => clamped(i, parent.dials(i) + (target - h) / slope))
-            case None => stepped(i, parent.dials(i), zi, sigma)
-        })
+        // A PROPOSAL OUTSIDE THE CLI'S DOMAIN is drawn again, parent and step, from the
+        // generation's stream: the proposal restricted to the domain, no seed slot and no log line
+        // spent on it
+        @annotation.tailrec
+        def propose(refused: Int): (Member, Vector[Double]) =
+          val parent = acc(rng.nextBoundedInt(acc.length))
+          val along = factor.filter(_ => rng.nextDouble() < cov)
+          val z = parent.dials.indices.toVector.map(_ => rng.randn())
+          admissible(worldFor(parent.name), parent.dials.indices.toVector.map { i =>
+            val zi = along match
+              case Some(l) => (0 to i).foldLeft(0.0)((s, t) => s + l(i)(t) * z(t))
+              case None    => z(i)
+            if fixed(i) then parent.dials(i)
+            else projection.filter(_._1 == i) match
+              // the parent's miss on the row, closed along the slope; the draw is made as without it,
+              // so the other dials step alike
+              case Some((_, _, target)) =>
+                hm.get(heldKey(parent.name, parent.dials)).filter(_.isFinite)
+                  .fold(parent.dials(i))(h => clamped(i, parent.dials(i) + (target - h) / slope))
+              case None => stepped(i, parent.dials(i), zi, sigma)
+          }) match
+            case Right(child) => (parent, child)
+            case Left(why) =>
+              if refused + 1 == ProposalTries then
+                usage(s"$ProposalTries proposals in a row fell outside the CLI's domain, the last: $why")
+              propose(refused + 1)
+        val (parent, child) = propose(0)
         val t0 = System.nanoTime()
         // the lineage's bar, so an evaluation stops as soon as it is over it
         val r = judge(worldFor(parent.name), child, anchors, transport, paths, years,

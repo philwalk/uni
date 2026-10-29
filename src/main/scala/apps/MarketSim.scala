@@ -1706,7 +1706,54 @@ object MarketSim:
                             // as published. The key is written only when on, so their bodies and
                             // digests are unchanged, and a set file without it loads as off
                             // (`worldSetArgs`).
-                            volPullStep: Boolean = false)
+                            volPullStep: Boolean = false,
+                            // THE DIFFUSION'S SCALE (PLAN row 65): multiplies the price's diffusive
+                            // noise `SigmaN` and the news budget that displaces it (`newsDampAt`),
+                            // nothing else -- not the jumps' size, the slow leg's scale, the bond
+                            // noise or the crowd flow's normalisation. Searched (1.0-1.6). 1 is
+                            // bit-identical.
+                            noiseScale: Double = 1.0,
+                            // THE MOMENTUM CROWD'S GRADUAL EXPOSURE ADJUSTMENT (PLAN row 65): the
+                            // exposure the crowd holds moves toward its target (`trendPos`) each
+                            // session by the share 1 - exp(-crowdAdjust / 252) of the gap, a per-year
+                            // rate, its flow the exposure traded and its performance on the exposure
+                            // held. The other crowds are untouched. 0 is the target itself and
+                            // bit-identical.
+                            crowdAdjust: Double = 0.0,
+                            // THE RECESSION'S MARKDOWN AT NEWS TIME (PLAN row 65, probe; the
+                            // `recessStep` key): the share of the episode's markdown that lands as ONE
+                            // STEP at the phase's first session -- the onset for the decline, the
+                            // trough for the regain -- the rest gliding as before; the price takes
+                            // the step's `recessReprice` share, the fundamental the whole, and the
+                            // overshoot reads it as a deleveraging order. 0 is the glide and
+                            // bit-identical; 1 the whole markdown at the step.
+                            recessStep: Double = 0.0,
+                            // THE STEP AS LUMPS INSIDE THE DECLINE (PLAN row 65, probe; a whole
+                            // number): with `recessStep` on, the decline's step split into this many
+                            // equal lumps, each at the start of its own session drawn without
+                            // replacement from the slide's sessions on the lumps' own stream; the
+                            // regain keeps its one step at the trough. 0 is the onset lump and
+                            // bit-identical.
+                            recessSteps: Double = 0.0,
+                            // THE LINEAR VOL ANSWER TO DECLINES (PLAN row 65, searched): the
+                            // conditional-vol multiplier the diffusion carries gains
+                            // 1 + declineVol x D + drawdownVol x G, D an EWMA (half-life
+                            // `declineVolHalf` sessions) of the previous sessions' standardized
+                            // declines, saturated at four, G the last printed close's log gap under
+                            // the high of the 250 printed closes before it. 0 is off and bit-identical.
+                            declineVol: Double = 0.0,
+                            // the decline state's half-life in sessions (see `declineVol`); inert and
+                            // unwritten while `declineVol` is 0
+                            declineVolHalf: Double = 5.0,
+                            // THE LINEAR VOL ANSWER TO THE DRAWDOWN (PLAN row 65, searched): the
+                            // factor's `G` term (see `declineVol`). 0 is off and bit-identical.
+                            drawdownVol: Double = 0.0,
+                            // the linear answer's ATTACK, 0 = none (see `declineVol`): each session's
+                            // decline passes through a fast EWMA with this weight before the decline
+                            // state, and the gap through one before the factor, so the answer builds
+                            // over three or four sessions and then holds. Inert while `declineVol`
+                            // and `drawdownVol` are 0.
+                            declineVolAttack: Double = 0.0)
 
   final case class Path(price: Array[Double], rate: Array[Double], fundamental: Array[Double],
                         liq: Array[Double],      // per-session slippage multiplier (equity market)
@@ -1831,6 +1878,19 @@ object MarketSim:
 
     /** The path's last `years`: `tailSessions` at the year's sessions. */
     def tail(years: Int): Path = tailSessions(years * DaysPerYear)
+
+    /** THE FIRST SERIES OF THE PATH THAT IS NOT A NUMBER: its printed price, then the channel level
+      * its world's derived series were sampled at (`worldLevel`, solved on an ensemble of its own,
+      * so one NaN session there reaches every path), then each series `-emit` writes; `None` for a
+      * path every statistic can read.  The search scores a candidate with such a path infeasible
+      * (`nan`). */
+    def nanSeries: Option[String] =
+      val level = Array(chanK, chanKSat, chanKDiv, chanKVs, chanKIv, chanKDr)
+      Vector(("price", price), ("level", level), ("satellite", sat), ("high", logHi), ("low", logLo),
+             ("volume", logVolume), ("dividend yield", divYield), ("traded", traded), ("open", logOpen))
+        .collectFirst { case (name, xs) if xs.exists(_.isNaN) => name }
+        .orElse(Option.when(names.exists(_.exists(_.isNaN)))("basket"))
+        .orElse(Option.when(sectors.exists(_.exists(_.isNaN)))("sectors"))
 
     /** The share of the path's sessions with the bond stress index above 0.5, the spiral's share;
       * a tail's is the tail's own. */
@@ -2436,25 +2496,23 @@ object MarketSim:
            ("0.24.6-nasdaq-basket", base("0.24.5-nasdaq-basket").copy(drift = nq.drift, inflSize = nq.inflSize, ext = tp), "nasdaq"),
            ("0.24.6-sp500", base("0.24.5-sp500").copy(drift = 0.14747457, ext = tp), "sp500"))
 
-  /** THE 0.25.0 RECIPES: each is member 0 of its 0.25.0 set, the world the set loop under the
-    * calibrated membership rule put first, judged on four fresh seeds at 200 x 100 with every class
-    * passing on all four.
+  /** THE 0.25.0 RECIPES: each is member 0 of its 0.25.0 set.
     *
-    * `0.25.0-sp500`: the set loop's best-scoring clean member (the loop's seed world, the item-61
-    * recipe with the term state's innovation and the expectation anchor moved by hand, fails the
-    * bond spiral's floor on one read of four and is not a member): the item-61 lineage with every
-    * searched dial at the member's -- the seven record dials and the breakeven premium (`brkVol`
-    * 0.0055, `brkNominal` 0.68) held at the record's values throughout, the term state's innovation
-    * 0.0027, the expectation anchor 0.52, the yield's lag 20.4 and beta 0.0087, the vol feedback
-    * 0.069, the CPI noise exponent 0.92, the policy rule's growth term 0.048 -- and the equity's
-    * discount on the ten-year yield.  The placement's conformal p 0.41, 0.32, 0.54 and 0.22 over 51
-    * units.
+    * `0.25.0-sp500`: the PLAN row 65 vol line's point (2026-10-29): the second milestone re-solved
+    * locally around the vol's answer to declines (`declineVol` 0.41 at an attack of 0.8, the
+    * half-life 5) and to the drawdown (`drawdownVol` 0.85), the vol budget's carriers free and seven
+    * of them read back to the milestone's values, under the lag-free record's ledger (the CRPS form,
+    * every row at weight 1.0) with the record's pins held and `discountLag` at 0; the equity's
+    * discount on the ten-year yield.  Kurtosis 27.8 to 20.8 and the downside vol excess 3.88 to 2.67
+    * (the record's 20.5 and 2.07), the ledger 39.6 against the milestone's 40.25, membership p 0.78;
+    * the monthly vol coupling rows unreached.
     *
-    * `0.25.0-nasdaq`: the set loop's seed world, the item-60 re-solve's lineage with every searched
-    * dial at the loop's seed row (the term state's innovation 0.0035, the expectation anchor 0.23,
-    * the yield's lag 14.7 and beta 0.029, the vol feedback 0.11, the CPI noise exponent 0.83, the
-    * policy rule's growth term 0.13), the equity's discount on the ten-year yield and the volume
-    * channel at QQQ's.  The placement's conformal p 0.73, 0.55, 0.77 and 0.39 over 42 units. */
+    * `0.25.0-nasdaq`: the PLAN row 65 milestone on the Nasdaq's era: the lag-free record's ledger
+    * (every row at weight 1.0) solved with every searched dial free except the disaster family's
+    * five and `spreadDd` 1.0, held at the record's readings, and `discountLag` at 0, the breakeven
+    * premium and its nominal share free on the Nasdaq's own era; the equity's discount on the
+    * ten-year yield and the volume channel at QQQ's.  Judged on four fresh seeds at 200 x 100: every
+    * class passes on all four, the placement p 0.68 over the pooled histories. */
   /** THE SATELLITE'S TAIL DROP per set (`WorldExt.satTailDrop`, item 62 B): the value that places
     * the record's kurtosis ratio (0.67) at each set's own primary tail, read at 200 x 100y, seed 1
     * (S&P 0.57 at 0.4 and the Nasdaq 0.69; at the S&P's own kurtosis fewer sessions pass the
@@ -2476,57 +2534,61 @@ object MarketSim:
       Recipes0246.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
     // in the Rust list's order, which the build identity hashes
     Vector(("0.25.0-sp500",
-            base("0.24.6-sp500").copy(trendShare = 0.060792292, depth = 16.773506, stress = 3.9869773, drift = 0.14403558,
-                 fundVol = 0.040430787, rateMean = 0.06828174, volOfVol = 0.026288779, leverage = 0.10754839,
-                 downShock = 0.01465351, jumpSkew = 0.85630166, jumpVar = 0.1635034, jumpRate = 0.0037710325,
-                 newsRate = 1.5640158, newsSize = 0.025298095, newsRevert = 0.40694174, newsScale = 0.28277557,
-                 newsBond = 0.030838546, creditRegime = 0.0, creditRegimeRate = 0.79410362,
-                 slowBondInfl = 0.21568583, noiseSkew = 0.8962539, newsFlip = 0.3112212, valuePull = 0.057121521,
-                 recoveryDrag = 5.2009841, boomRate = 1.5691618, boomSize = 0.98637696, boomLen = 11.971072,
-                 recessRate = 0.13218917, recessSize = 0.35473167, recessLen = 1.3582839, recessRecover = 0.66241236,
-                 recessNews = 2.670498, recessVol = 0.083734985, recessReprice = 0.62330515, recessShape = 1.1633915,
-                 overshoot = 0.78418372, overshootRate = 0.14892127, recessRecMult = 0.88467729,
-                 recessCredit = 7.6278974, regimeDrift = 0.00084328835, driftSd = 0.0081061303, boomFade = 1.5594635,
-                 delevRate = 0.063068615, delevFrom = 2.5152052, delevSize = 0.14113277, delevLen = 0.10800567,
-                 volPull = 0.92862313, beliefShare = 0.95937062, beliefYears = 2.3551805, beliefLeak = 0.16574779,
-                 capYears = 1.5683099, cycleSd = 0.084766125, cycleYears = 19.911873, crowdImpact = 0.048807162,
-                 easing = 0.11792698, floorhold = 0.056012963, refuge = 0.11637317, refugeDays = 1.3211441,
-                 levGain = 8.7673411, bustAmp = 0.063390082, slowShare = 0.18037162, slowVol = 1.0662239,
-                 slowPerm = 0.23128589, slowBeta = 0.49814907, inflSize = 0.059685675, discount = 6.1257818,
-                 discountRef = 1.1338466, margin = 0.0070622432,
-                 ext = WorldExt(termPremium = 0.075871165, cpiNoise = 0.0053563279, deflProb = 0.2103465, deflSize = 0.03846504,
-                                spikeRate = 0.35260174, spikeSize = 0.021113355, termVol = 0.0026837914, brkVol = 0.0055,
-                                brkNominal = 0.68, discountYield = 1.0, cpiNoiseLevel = 0.92227783, policyGrowth = 0.047605603,
-                                yieldBeta = 0.0087052271, yieldLag = 20.422977, expAnchor = 0.51707668, volFeedback = 0.069035176,
+            base("0.24.6-sp500").copy(trendShare = 0.16832922, depth = 16.92481, stress = 3.327473, drift = 0.13684795,
+                 fundVol = 0.047353994, rateMean = 0.067199103, volOfVol = 0.017640799, leverage = 0.090605276,
+                 downShock = 0.017130954, jumpSkew = 0.64922989, jumpVar = 0.091499568, jumpRate = 0.0033018076,
+                 newsRate = 0.86185635, newsSize = 0.029284706, newsRevert = 0.453812, newsScale = 0.42905239,
+                 newsBond = 0.44190504, creditRegime = 0.36283376, creditRegimeRate = 0.80695129,
+                 slowBondInfl = 0.15338595, noiseSkew = 0.94190034, newsFlip = 0.46973512, valuePull = 0.10644725,
+                 recoveryDrag = 0.0, boomRate = 2.3125451, boomSize = 0.78899023, boomLen = 14.360127,
+                 recessRate = 0.43474804, recessSize = 0.30674178, recessLen = 1.3942248, recessRecover = 0.78450701,
+                 recessNews = 1.1675715, recessVol = 0.0, recessReprice = 1.0, recessShape = 2.6453902,
+                 overshoot = 0.52499669, overshootRate = 0.1890408, recessRecMult = 1.77081,
+                 recessCredit = 11.116227, regimeDrift = 0.00087949283, driftSd = 0.010815081, boomFade = 6.5358076,
+                 delevRate = 0.61444478, delevFrom = 1.7105632, delevSize = 0.15130287, delevLen = 0.12133245,
+                 volPull = 2.0754116, beliefShare = 0.97, beliefYears = 3.1084737, beliefLeak = 0.27940654,
+                 capYears = 0.43818263, cycleSd = 0.18902832, cycleYears = 17.736852, crowdImpact = 0.03601852,
+                 easing = 0.14012794, floorhold = 0.04968713, refuge = 0.10096404, refugeDays = 1.3746734,
+                 levGain = 4.5653917, bustAmp = 0.058265447, slowShare = 0.35604766, slowVol = 1.2526227,
+                 slowPerm = 0.21465557, slowBeta = 0.81476229, inflSize = 0.058732693, discount = 6.1719315,
+                 discountRef = 2.6125276, margin = 0.0079948416,
+                 newsLev = 7.0559706, newsBondSkip = 0.04164304, recessBase = 0.20589701, recessInfl = 0.13664004,
+                 ext = WorldExt(termPremium = 0.07403865, cpiNoise = 0.005033732, deflProb = 0.18270386, deflSize = 0.032022171,
+                                spikeRate = 0.49815479, spikeSize = 0.014520376, termVol = 0.0031154592, brkVol = 0.0055,
+                                brkNominal = 0.68, discountYield = 1.0, cpiNoiseLevel = 0.62238551, policyGrowth = 0.017061144,
+                                yieldBeta = 0.0, yieldLag = 28.615231, expAnchor = 0.37483225, volFeedback = 0.29804094,
                                 // item 62 A/B, as the Nasdaq's
                                 satTailDrop = Sp500SatTailDrop, bondBetaCut = BondBetaCut0250,
                                 // the vol pull in the step, as every 0.25.0 world carries it
-                                volPullStep = true),
+                                volPullStep = true,
+                                crowdAdjust = 1.5957984, valueCap = 0.021681704, valueCapFall = 0.0092329487,
+                                recessTransient = 0.088421989, noiseScale = 1.1204038, declineVol = 0.40683655,
+                                drawdownVol = 0.85020807, declineVolAttack = 0.8),
                  satBeta = SatBeta0250),
             "sp500"),
            ("0.25.0-nasdaq",
-            base("0.24.6-nasdaq").copy(trendShare = 0.23183589, depth = 11.450121, stress = 3.1593101, drift = 0.13292321,
-                 fundVol = 0.03450753, rateMean = 0.031061953, volOfVol = 0.018628623, leverage = 0.052489722,
-                 downShock = 0.0093531916, jumpSkew = 0.28116924, jumpVar = 0.073129533, jumpRate = 0.0049906149,
-                 newsRate = 29.437252, newsSize = 0.0056868289, newsLev = 60.0, newsRevert = 0.30357545,
-                 newsScale = 0.14876058, newsBond = 0.31295581, newsBondSkip = 0.31657758, creditRegime = 0.5807385,
-                 creditRegimeRate = 6.6292032, slowBondInfl = 0.61723408, noiseSkew = 0.25032415,
-                 newsFlip = 0.38784764, valuePull = 0.090116112, recoveryDrag = 2.7653297,
-                 recoveryFloor = 0.12148979, disasterRate = 0.75999208, disasterSize = 1.3111582,
-                 disasterRecover = 0.48955279, boomRate = 2.4954619, boomSize = 1.9960653, boomLen = 2.6661261,
-                 recessRate = 0.013311618, recessSize = 0.22999318, recessLen = 1.8616783, recessRecover = 0.7007869,
-                 recessNews = 1.7400102, recessVol = 0.85647095, recessReprice = 0.57602135, recessShape = 1.0463852,
-                 overshoot = 0.56998244, overshootRate = 0.21072458, recessRecMult = 1.0967058,
-                 recessCredit = 2.4681712, recessInfl = 0.21667511, regimeDrift = 0.000584651, driftSd = 0.03347847,
-                 boomFade = 1.0968268, delevRate = 1.1163501, delevFrom = 5.2278195, delevSize = 0.23686479,
-                 delevLen = 0.02276236, spreadDd = 0.15600533, disasterAnticipate = 0.019654535,
-                 disasterOvershoot = 0.078482824, volPull = 0.40504607, beliefShare = 0.62546561,
-                 beliefYears = 0.6943394, beliefLeak = 0.30148008, capYears = 4.8269529, cycleSd = 0.075952632,
-                 cycleYears = 9.6331015, crowdImpact = 0.048120951, easing = 0.066333206, floorhold = 0.10055246,
-                 refuge = 0.089236004, refugeDays = 0.82592821, levGain = 2.8285203, bustAmp = 0.21338562,
-                 slowShare = 0.45833298, slowVol = 1.26875, slowPerm = 0.084424657, slowBeta = 0.5784534,
-                 inflSize = 0.062443738, discount = 5.2461914, discountRef = 3.6606125, margin = 0.0061523804,
-                 recessBase = 0.0, discountLag = 0.0,
+            base("0.24.6-nasdaq").copy(trendShare = 0.05, depth = 13.466691, stress = 3.330189, drift = 0.13610476,
+                 fundVol = 0.048775299, rateMean = 0.032355704, volOfVol = 0.022740627, leverage = 0.076725205,
+                 downShock = 0.0071087374, jumpSkew = 0.094076273, jumpVar = 0.083195188, jumpRate = 0.0043261463,
+                 newsRate = 22.403226, newsSize = 0.010662247, newsLev = 51.210173, newsRevert = 0.23898662,
+                 newsScale = 0.18013529, newsBond = 0.24905648, newsBondSkip = 0.26802551, creditRegime = 0.4168703,
+                 creditRegimeRate = 2.1976138, slowBondInfl = 0.48413856, noiseSkew = 0.0,
+                 newsFlip = 0.58058463, valuePull = 0.068937143, recoveryDrag = 0.79451818,
+                 recoveryFloor = 0.05295801, disasterRate = 0.6, disasterSize = 1.5,
+                 disasterRecover = 0.5, boomRate = 1.7101648, boomSize = 1.8630846, boomLen = 1.2366512,
+                 recessRate = 0.14035603, recessSize = 0.22281525, recessLen = 1.4963064, recessRecover = 0.77526836,
+                 recessNews = 1.1005392, recessVol = 0.12710285, recessReprice = 0.96652509, recessShape = 1.4128394,
+                 overshoot = 0.67851232, overshootRate = 0.26033244, recessRecMult = 1.6478872,
+                 recessCredit = 0.15314324, recessInfl = 0.33819567, regimeDrift = 5.5542181e-5, driftSd = 0.0375946,
+                 boomFade = 2.2459735, delevRate = 1.2257547, delevFrom = 5.2627886, delevSize = 0.052086259,
+                 delevLen = 0.02, spreadDd = 1.0, disasterAnticipate = 1.0,
+                 disasterOvershoot = 0.31, volPull = 0.14188769, beliefShare = 0.61203588,
+                 beliefYears = 1.6558633, beliefLeak = 0.29141528, capYears = 3.6201472, cycleSd = 0.10350026,
+                 cycleYears = 8.8941102, crowdImpact = 0.14825881, easing = 0.08117222, floorhold = 0.076867444,
+                 refuge = 0.11191281, refugeDays = 0.41558574, levGain = 7.7059167, bustAmp = 0.20667548,
+                 slowShare = 0.25976325, slowVol = 0.99740072, slowPerm = 0.25357009, slowBeta = 0.68041444,
+                 inflSize = 0.040625138, discount = 7.5769784, discountRef = 6.8062828, margin = 0.0046249107,
+                 recessBase = 1.5, discountLag = 0.0,
                  // THE VOLUME CHANNEL AT QQQ'S: the idiosyncratic sd that puts QQQ's record (volume sd
                  // 0.417, volume vs range 0.56; bars-2026-09-01.tsv, 1999-2026) at the least summed
                  // CRPS of the two rows over the set's members (the S&P's 0.34 read 3.84 against
@@ -2538,15 +2600,17 @@ object MarketSim:
                  // sessions, the tail drop placing the record's kurtosis ratio) and the long bond's
                  // cut of the yield's beta state (item 62 A, `BondBetaCut0250`)
                  satBeta = SatBeta0250,
-                 ext = WorldExt(termPremium = 0.047451711, cpiNoise = 0.0096055783, deflProb = 0.29465125,
-                                deflSize = 0.020940564, spikeRate = 0.36650125, spikeSize = 0.0041978899,
-                                termVol = 0.0034576998, brkVol = 0.0044545744, brkNominal = 0.024950044,
-                                discountYield = 1.0, cpiNoiseLevel = 0.8307283, policyGrowth = 0.12533479,
-                                yieldBeta = 0.029007258, yieldLag = 14.716494, expAnchor = 0.22533506,
-                                volFeedback = 0.10855577,
+                 ext = WorldExt(termPremium = 0.090792417, cpiNoise = 0.0063925864, deflProb = 0.2072542,
+                                deflSize = 0.034976964, spikeRate = 0.14320601, spikeSize = 0.029977103,
+                                termVol = 0.0030333366, brkVol = 0.004067237, brkNominal = 0.0,
+                                discountYield = 1.0, cpiNoiseLevel = 0.97497197, policyGrowth = 0.0,
+                                yieldBeta = 0.033094318, yieldLag = 24.417578, expAnchor = 0.30395589,
+                                volFeedback = 0.47281556,
                                 satTailDrop = NasdaqSatTailDrop, bondBetaCut = BondBetaCut0250,
                                 // the vol pull in the step, as every 0.25.0 world carries it
-                                volPullStep = true)),
+                                volPullStep = true,
+                                crowdAdjust = 0.98862035, valueCap = 0.26524827, valueCapFall = 0.057704003,
+                                recessSpread = 0.21311599, recessTransient = 0.15331538, noiseScale = 1.5578075)),
             "nasdaq"))
 
   val Recipes: Vector[(String, World, String)] =
@@ -2803,22 +2867,222 @@ object MarketSim:
     * variance has consumed the whole budget -- a price running on jumps alone, whose bar channels
     * have no diffusion sd to level on (`worldLevel` divides by the MEAN diffusion sd);
     * `newsBudgetRefusal` turns that world away at the CLI rather than letting it reach a NaN bar. */
-  def newsDampAt(newsRate: Double, newsSize: Double): Double =
+  def newsDampAt(newsRate: Double, newsSize: Double, noiseScale: Double): Double =
     if newsRate > 0.0 then
-      math.sqrt(math.max(1.0 - (newsRate / DaysPerYear) * newsSize * newsSize / (SigmaN * SigmaN), 0.0))
+      val sigma = SigmaN * noiseScale
+      math.sqrt(math.max(1.0 - (newsRate / DaysPerYear) * newsSize * newsSize / (sigma * sigma), 0.0))
     else 1.0
 
   /** The CLI's refusal text for a news channel past the diffusion budget -- `newsRate * newsSize^2`
     * must stay below `252 * SigmaN^2` -- stated at the caller's rate as the largest admissible
     * size; `None` inside the budget or with the channel off. */
-  def newsBudgetRefusal(newsRate: Double, newsSize: Double): Option[String] =
-    if newsRate > 0.0 && newsDampAt(newsRate, newsSize) <= 0.0 then
-      val budget  = DaysPerYear * SigmaN * SigmaN
+  def newsBudgetRefusal(newsRate: Double, newsSize: Double, noiseScale: Double): Option[String] =
+    if newsRate > 0.0 && newsDampAt(newsRate, newsSize, noiseScale) <= 0.0 then
+      val sigma   = SigmaN * noiseScale
+      val budget  = DaysPerYear * sigma * sigma
       val maxSize = math.sqrt(budget / newsRate)
       Some(f"-newsrate $newsRate -newssize $newsSize leave no diffusion to displace: " +
         f"newsRate*newsSize^2 must stay below 252*SigmaN^2 = $budget%.5f " +
         f"(at -newsrate $newsRate, -newssize below $maxSize%.4f)")
     else None
+
+  /** A share's refusal (the CLI's text): `x` outside 0..1, NaN included. */
+  private def shareRefusal(flag: String, x: Double): Option[String] =
+    Option.when(!(x >= 0.0 && x <= 1.0))(s"$flag wants a share in 0..1, got $x")
+  /** A refusal of `x` outside [0, 1), NaN included. */
+  private def belowOneRefusal(flag: String, x: Double): Option[String] =
+    Option.when(!(x >= 0.0 && x < 1.0))(s"$flag wants at least 0 and below 1, got $x")
+  /** A refusal of a negative or NaN `x`. */
+  private[apps] def nonNegRefusal(flag: String, x: Double): Option[String] =
+    Option.when(!(x >= 0.0))(s"$flag wants a non-negative number, got $x")
+  /** A refusal of an `x` at or below 0, or NaN. */
+  private def positiveRefusal(flag: String, x: Double): Option[String] =
+    Option.when(!(x > 0.0))(s"$flag wants a positive number, got $x")
+  /** `why` when `bad`. */
+  private def refused(bad: Boolean, why: String): Option[String] = Option.when(bad)(why)
+  /** `x` less its integer part toward zero, Rust's `f64::fract`. */
+  private def fract(x: Double): Double = x - (if x < 0.0 then Math.ceil(x) else Math.floor(x))
+
+  /** THE WORLD DIALS' DOMAIN, in the order the CLI refuses: each check the CLI's text when the
+    * world fails it, the Rust twin's `WORLD_DOMAIN` check for check.  Out of domain the dials do
+    * not fail on their own: `-jumprate 0` with a positive `-jumpvar` divides by zero in
+    * `jumpScale` and emitted a file of NaN at exit 0, and `-recoveryfloor 3` inverts asymmetric
+    * recovery -- arbitrage STRONGER in a deep drawdown, the documented mechanism run backwards --
+    * into a world that then PASSES the acceptance gate.
+    *
+    * Reject what the mechanism cannot express, never what merely looks unusual -- an over-tight
+    * bound breaks a sweep script for no defect.  Every value recorded anywhere in this repo is
+    * admitted, `-jumpvar 0` and `-haltlimit 0` (the documented disable values) included, as is
+    * every range `calibrate` sweeps.  Written as NEGATED comparisons so a NaN -- `toDouble`
+    * accepts "nan" -- is refused rather than reaching the model.  Value-level checks only: a
+    * check on which flags were given stays in the parser. */
+  val WorldDomain: Vector[World => Option[String]] = Vector(
+    w => shareRefusal("-trendshare", w.trendShare),
+    w => shareRefusal("-leverage", w.leverage),
+    w => shareRefusal("-downshock", w.downShock),
+    w => shareRefusal("-jumpvar", w.jumpVar),
+    w => shareRefusal("-jumprate", w.jumpRate),
+    w => shareRefusal("-recoveryfloor", w.recoveryFloor),
+    w => shareRefusal("-disasterrecover", w.disasterRecover),
+    w => shareRefusal("-inflprob", w.inflProb),
+    w => shareRefusal("-inflspeed", w.inflSpeed),
+    w => belowOneRefusal("-volpersist", w.volPersist),
+    w => belowOneRefusal("-haltlimit", w.haltLimit),
+    w => positiveRefusal("-depth", w.depth),
+    w => positiveRefusal("-duration", w.duration),
+    w => nonNegRefusal("-bond10", w.bond10),
+    w => nonNegRefusal("-tips", w.ext.tips),
+    w => nonNegRefusal("-termpremium", w.ext.termPremium),
+    w => nonNegRefusal("-cpinoise", w.ext.cpiNoise),
+    w => shareRefusal("-deflprob", w.ext.deflProb),
+    w => nonNegRefusal("-deflsize", w.ext.deflSize),
+    w => nonNegRefusal("-spikerate", w.ext.spikeRate),
+    w => nonNegRefusal("-spikesize", w.ext.spikeSize),
+    w => nonNegRefusal("-termvol", w.ext.termVol),
+    w => nonNegRefusal("-brkvol", w.ext.brkVol),
+    w => refused(!(w.ext.brkNominal >= 0.0 && w.ext.brkNominal <= 1.0), "-brknominal is a share in [0, 1]"),
+    w => refused(w.ext.discountYield != 0.0 && w.ext.discountYield != 1.0, "-discountyield is 0 (the policy rate) or 1 (the ten-year yield)"),
+    w => nonNegRefusal("-cpinoiselevel", w.ext.cpiNoiseLevel),
+    w => nonNegRefusal("-policygrowth", w.ext.policyGrowth),
+    w => nonNegRefusal("-yieldbeta", w.ext.yieldBeta),
+    w => nonNegRefusal("-bondbetacut", w.ext.bondBetaCut),
+    w => nonNegRefusal("-valuecap", w.ext.valueCap),
+    w => nonNegRefusal("-valuecapfall", w.ext.valueCapFall),
+    w => nonNegRefusal("-recessspread", w.ext.recessSpread),
+    w => nonNegRefusal("-recesstransient", w.ext.recessTransient),
+    w => Option.when(w.ext.noiseScale.isNaN || w.ext.noiseScale <= 0.0)(s"-noisescale ${w.ext.noiseScale} must be above 0"),
+    w => nonNegRefusal("-crowdadjust", w.ext.crowdAdjust),
+    w => Option.when(!(w.ext.recessStep >= 0.0 && w.ext.recessStep <= 1.0))(s"-recessstep ${w.ext.recessStep} must be in [0, 1]"),
+    w => Option.when(!(w.ext.recessSteps >= 0.0 && fract(w.ext.recessSteps) == 0.0))(s"-recesssteps ${w.ext.recessSteps} must be a whole number, 0 or more"),
+    w => nonNegRefusal("-declinevol", w.ext.declineVol),
+    w => Option.when(w.ext.declineVolHalf.isNaN || w.ext.declineVolHalf <= 0.0)(s"-declinevolhalf ${w.ext.declineVolHalf} must be above 0"),
+    w => nonNegRefusal("-drawdownvol", w.ext.drawdownVol),
+    w => refused(!(w.ext.declineVolAttack >= 0.0 && w.ext.declineVolAttack < 1.0), "-declinevolattack is a persistence in [0, 1)"),
+    w => nonNegRefusal("-yieldlag", w.ext.yieldLag),
+    w => refused(!(w.ext.expAnchor >= 0.0 && w.ext.expAnchor <= 1.0), "-expanchor is a share from 0 to 1"),
+    w => nonNegRefusal("-volfeedback", w.ext.volFeedback),
+    w => refused(w.ext.yieldBeta > 0.0 && w.ext.termVol <= 0.0, "-yieldbeta needs the ten-year yield: -termvol above 0"),
+    w => nonNegRefusal("-stress", w.stress),
+    w => nonNegRefusal("-beta", w.beta),
+    w => nonNegRefusal("-volofvol", w.volOfVol),
+    w => nonNegRefusal("-value", w.valuePull),
+    w => nonNegRefusal("-newsrate", w.newsRate),
+    w => nonNegRefusal("-newssize", w.newsSize),
+    w => nonNegRefusal("-newslev", w.newsLev),
+    w => newsBudgetRefusal(w.newsRate, w.newsSize, w.ext.noiseScale),
+    w => nonNegRefusal("-newsbond", w.newsBond),
+    w => refused(!(w.newsBondSkip >= 0.0 && w.newsBondSkip < 1.0), "-newsbondskip is a share in [0, 1)"),
+    w => nonNegRefusal("-creditregime", w.creditRegime),
+    w => nonNegRefusal("-creditregimerate", w.creditRegimeRate),
+    w => refused(!(w.slowBondInfl >= 0.0 && w.slowBondInfl <= 1.0), "-slowbondinfl is a share in [0, 1]"),
+    w => nonNegRefusal("-refugedays", w.refugeDays),
+    w => nonNegRefusal("-satbeta", w.satBeta),
+    w => nonNegRefusal("-satidio", w.satIdio),
+    w => nonNegRefusal("-sattaildrop", w.ext.satTailDrop),
+    w => nonNegRefusal("-satcyclesd", w.satCycleSd),
+    w => refused(w.satCycleSd > 0.0 && (w.satDriftHalf <= 0.0 || w.satLevelHalf <= 0.0), "-satcyclesd needs -satdrifthalf and -satlevelhalf above 0"),
+    w => nonNegRefusal("-rangescale", w.rangeScale),
+    w => nonNegRefusal("-rangedown", w.rangeDown),
+    w => refused(w.rangeDown > 0.0 && w.rangeScale <= 0.0, "-rangedown requires -rangescale > 0: it shapes the sampled bar"),
+    w => nonNegRefusal("-volidio", w.volIdio),
+    w => nonNegRefusal("-divyield", w.divYield),
+    w => nonNegRefusal("-overnight", w.overnight),
+    w => nonNegRefusal("-basketbeta", w.basketBeta),
+    w => nonNegRefusal("-basketsector", w.basketSector),
+    w => nonNegRefusal("-levgain", w.levGain),
+    w => nonNegRefusal("-stressscale", w.stressScale),
+    w => nonNegRefusal("-noiseasym", w.noiseAsym),
+    w => nonNegRefusal("-noiseasymcap", w.noiseAsymCap),
+    w => nonNegRefusal("-volresp", w.volResp),
+    w => nonNegRefusal("-bustamp", w.bustAmp),
+    w => nonNegRefusal("-cyclesd", w.cycleSd),
+    w => nonNegRefusal("-beliefleak", w.beliefLeak),
+    w => Option.when(w.cycleSd > 0.0 && w.cycleYears <= 0.0)(s"-cyclesd ${w.cycleSd} needs -cycleyears above 0"),
+    w => nonNegRefusal("-volrespcap", w.volRespCap),
+    w => nonNegRefusal("-jumpresp", w.jumpResp),
+    w => refused(!(w.levPersist >= 0.0 && w.levPersist < 1.0), "-levpersist is a persistence in [0, 1)"),
+    w => refused(!(w.noiseAsymPhi >= 0.0 && w.noiseAsymPhi < 1.0), "-noiseasymphi is a persistence in [0, 1)"),
+    w => refused(!(w.volRespPhi >= 0.0 && w.volRespPhi < 1.0), "-volrespphi is a persistence in [0, 1)"),
+    w => refused(!(w.volRespAttack >= 0.0 && w.volRespAttack < 1.0), "-volrespattack is a persistence in [0, 1)"),
+    w => refused(!(w.stressAdapt >= 0.0 && w.stressAdapt < 1.0) || w.stressAdapt <= 0.0, "-stressadapt is an EWMA weight in (0, 1)"),
+    w => nonNegRefusal("-slowvol", w.slowVol),
+    w => nonNegRefusal("-slowlev", w.slowLev),
+    w => nonNegRefusal("-slowbeta", w.slowBeta),
+    w => refused(!(w.slowShare >= 0.0 && w.slowShare < 1.0), "-slowshare is a share in [0, 1)"),
+    w => refused(!(w.slowPhi >= 0.0 && w.slowPhi < 1.0), "-slowphi is a persistence in [0, 1)"),
+    w => refused(!(w.slowPerm >= 0.0 && w.slowPerm <= 1.0), "-slowperm is a share in [0, 1]"),
+    w => refused(!(w.newsRevert >= 0.0 && w.newsRevert <= 1.0), "-newsrevert is a share in [0, 1]"),
+    w => refused(!(w.newsScale >= 0.0 && w.newsScale <= 1.0), "-newsscale is a share in [0, 1]"),
+    w => refused(!(w.noiseSkew >= 0.0 && w.noiseSkew < 1.0), "-noiseskew is a skew in [0, 1)"),
+    w => refused(!(w.newsFlip >= 0.0 && w.newsFlip <= 1.0), "-newsflip is a share in [0, 1]"),
+    w => nonNegRefusal("-basketidio", w.basketIdio),
+    w => nonNegRefusal("-basketgaps", w.basketGaps),
+    w => nonNegRefusal("-basketdrift", w.basketDrift),
+    w => nonNegRefusal("-sectoridio", w.sectorIdio),
+    w => nonNegRefusal("-sectordriftsd", w.sectorDriftSd),
+    w => refused(w.sectors > 0 && w.sectorDriftHalf <= 0.0, "-sectors requires -sectordrifthalf > 0: the legs' drift state needs a half-life"),
+    w => Option.when(w.macroPanel > 1)(s"-macro ${w.macroPanel}: 0 (off) or 1 (the panel)"),
+    w => Option.when(w.macroNull > 2)(s"-macronull ${w.macroNull}: 0 (the path's own panel), 1 (a sibling's) or 2 (both)"),
+    w => refused(w.macroNull > 0 && w.macroPanel == 0, "-macronull needs -macro 1: it is the panel's null, not a panel"),
+    w => refused(w.basket > 0 && w.basketBeta <= 0.0, "-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything"),
+    w => Option.when(w.overnight >= 1.0)(s"-overnight ${w.overnight} leaves the intraday session no variance to run the bridge on; it must be below 1"),
+    w => refused(w.volIdio > 0.0 && w.rangeScale <= 0.0, "-volidio requires -rangescale > 0: volume rides the range"),
+    w => nonNegRefusal("-disasterrate", w.disasterRate),
+    w => nonNegRefusal("-disastersize", w.disasterSize),
+    w => nonNegRefusal("-recessrate", w.recessRate),
+    w => Option.when(w.recessRate > 0.0 && (w.recessSize <= 0.0 || w.recessLen <= 0.0))(s"-recessrate ${w.recessRate} needs -recesssize and -recesslen above 0"),
+    w => Option.when(!(w.recessRecover >= 0.0 && w.recessRecover <= 1.0))(s"-recessrecover ${w.recessRecover} must be in [0, 1]"),
+    w => Option.when(w.recessNews < 1.0)(s"-recessnews ${w.recessNews} must be at least 1"),
+    w => Option.when(!(w.recessReprice >= 0.0 && w.recessReprice <= 1.0))(s"-recessreprice ${w.recessReprice} must be in [0, 1]"),
+    w => nonNegRefusal("-recessbase", w.recessBase),
+    w => nonNegRefusal("-recessshape", w.recessShape),
+    w => Option.when(!(w.overshoot >= 0.0 && w.overshoot <= 1.0))(s"-overshoot ${w.overshoot} must be in [0, 1]"),
+    w => Option.when(!(w.overshootRate > 0.0 && w.overshootRate <= 1.0))(s"-overshootrate ${w.overshootRate} must be in (0, 1]"),
+    w => nonNegRefusal("-recesscredit", w.recessCredit),
+    w => nonNegRefusal("-recessinfl", w.recessInfl),
+    w => Option.when(w.recessRecMult <= 0.0)(s"-recessrecmult ${w.recessRecMult} must be above 0"),
+    w => Option.when(w.recessVol < 0.0)(s"-recessvol ${w.recessVol} must be at least 0"),
+    w => Option.when(w.regimeDrift < 0.0)(s"-regimedrift ${w.regimeDrift} must be at least 0"),
+    w => nonNegRefusal("-driftsd", w.driftSd),
+    w => nonNegRefusal("-delevrate", w.delevRate),
+    w => nonNegRefusal("-delevfrom", w.delevFrom),
+    w => Option.when(w.delevRate > 0.0 && (w.delevSize <= 0.0 || w.delevLen <= 0.0))(s"-delevrate ${w.delevRate} needs -delevsize and -delevlen above 0"),
+    w => Option.when(w.boomFade <= 0.0)(s"-boomfade ${w.boomFade} must be above 0"),
+    w => Option.when(w.spreadDd < 0.0)(s"-spreaddd ${w.spreadDd} must be at least 0"),
+    w => Option.when(!(w.disasterOvershoot >= 0.0 && w.disasterOvershoot <= 1.0))(s"-disasterovershoot ${w.disasterOvershoot} must be in 0..1"),
+    w => Option.when(!(w.disasterAnticipate >= 0.0 && w.disasterAnticipate <= 1.0))(s"-disasteranticipate ${w.disasterAnticipate} must be in 0..1"),
+    w => nonNegRefusal("-volpull", w.volPull),
+    w => nonNegRefusal("-boomrate", w.boomRate),
+    w => Option.when(w.boomRate > 0.0 && (w.boomSize <= 0.0 || w.boomLen <= 0.0))(s"-boomrate ${w.boomRate} needs -boomsize and -boomlen above 0"),
+    w => Option.when(w.disasterRate > 0.0 && (w.disasterSize <= 0.0 || w.disasterLen <= 0.0))(s"-disasterrate ${w.disasterRate} needs -disastersize and -disasterlen above 0"),
+    w => Option.when(w.disasterRecover > 0.0 && w.disasterRecLen <= 0.0)(s"-disasterrecover ${w.disasterRecover} needs -disasterreclen above 0"),
+    w => Option.when(!(w.jumpSkew >= 0.0 && w.jumpSkew <= 2.0))(s"-jumpskew ${w.jumpSkew} out of range; needs 0 <= skew <= 2"),
+    w => Option.when(!(w.beliefShare >= 0.0 && w.beliefShare < 1.0))(s"-beliefshare ${w.beliefShare} out of range; needs 0 <= share < 1"),
+    w => Option.when(w.beliefShare > 0.0 && w.beliefYears <= 0.0)(s"-beliefshare ${w.beliefShare} needs -beliefyears above 0"),
+    w => nonNegRefusal("-capyears", w.capYears),
+    w => Option.when(w.capYears > 0.0 && w.capWindow <= 0.0)(s"-capyears ${w.capYears} needs -capwindow above 0"),
+    w => nonNegRefusal("-recoverydrag", w.recoveryDrag),
+    w => nonNegRefusal("-crowdimpact", w.crowdImpact),
+    w => nonNegRefusal("-panic", w.panic),
+    w => nonNegRefusal("-fundvol", w.fundVol),
+    w => nonNegRefusal("-ratemean", w.rateMean),
+    w => nonNegRefusal("-easing", w.easing),
+    w => nonNegRefusal("-unwind", w.unwind),
+    w => nonNegRefusal("-floorhold", w.floorhold),
+    w => nonNegRefusal("-refuge", w.refuge),
+    w => nonNegRefusal("-inflsize", w.inflSize),
+    w => nonNegRefusal("-ratespeed", w.rateSpeed),
+    w => nonNegRefusal("-discount", w.discount),
+    w => nonNegRefusal("-discountlag", w.discountLag),
+    w => nonNegRefusal("-discountref", w.discountRef),
+    w => nonNegRefusal("-margin", w.margin),
+    w => Option.when(w.jumpVar > 0.0 && w.jumpRate <= 0.0)(s"-jumpvar ${w.jumpVar} needs -jumprate above 0: the jump size is set by jumpVar/jumpRate")
+  )
+
+  /** The first check of `WorldDomain` the world fails, as the CLI's refusal text; `None` inside
+    * the domain.  The CLI refuses such a world and the search proposes none. */
+  def worldDomainRefusal(w: World): Option[String] =
+    WorldDomain.iterator.map(_(w)).collectFirst { case Some(why) => why }
 
   /** The share of the diffusion budget a searched news channel may take.  The ranges' corner
     * (`newsRate` 30, `newsSize` 0.05) is six times past the budget, so the size is pulled back
@@ -2830,8 +3094,9 @@ object MarketSim:
   /** A proposed news size, pulled back to `NewsBudgetSearch` of the diffusion budget at the
     * proposed rate; unchanged inside it or with the channel off.  Every search path applies it to
     * its proposal, so no search scores a world the CLI would refuse. */
-  def newsSizeWithinBudget(newsRate: Double, newsSize: Double): Double =
-    val cap = NewsBudgetSearch * DaysPerYear * SigmaN * SigmaN
+  def newsSizeWithinBudget(newsRate: Double, newsSize: Double, noiseScale: Double): Double =
+    val sigma = SigmaN * noiseScale
+    val cap = NewsBudgetSearch * DaysPerYear * sigma * sigma
     if newsRate > 0.0 && newsRate * newsSize * newsSize > cap then math.sqrt(cap / newsRate)
     else newsSize
 
@@ -2875,13 +3140,19 @@ object MarketSim:
     (a * z - d * (math.abs(u) - HalfNormalMean)) / b
 
   /** The conditional-vol multiplier the diffusion's noise carries, read from the states as they
-    * stood before the session: the log-vol state's level-preserving factor, the leverage kick and
-    * the vol response, each only when its dial is on.  `newsScale` sizes news by it. */
+    * stood before the session: the log-vol state's level-preserving factor, the leverage kick, the
+    * vol response and the linear answer's factor `linM` (`WorldExt.declineVol`), each only when its
+    * dial is on.  `newsScale` sizes news by it. */
   def newsVolMultiplier(w: World, logVol: Double, volNorm: Double, kickS: Double,
-                        volRespS: Double): Double =
+                        volRespS: Double, linM: Double): Double =
     val m0 = expDet(logVol - volNorm)
     val m1 = if w.leverage > 0.0 then m0 * expDet(w.leverage * kickS) else m0
-    if w.volResp > 0.0 then m1 * expDet(w.volResp * volRespS) else m1
+    val m2 = if w.volResp > 0.0 then m1 * expDet(w.volResp * volRespS) else m1
+    if w.ext.declineVol > 0.0 || w.ext.drawdownVol > 0.0 then m2 * linM else m2
+
+  /** The printed closes the drawdown's high is read over (`WorldExt.drawdownVol`): a trading year,
+    * the window the record's drawdown is read on. */
+  val DrawdownVolWindow = 250
 
   /** ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
     * external flow and noise, amplified when THIS market's liquidity has withdrawn after one-sided
@@ -4149,7 +4420,7 @@ object MarketSim:
     simulateAtTaped(w, years, seed, level, BondTape.Off)
 
   /** `simulateAt`, recording the bonds' inputs on `tape` when it records (`simulateTaped`). */
-  private def simulateAtTaped(w: World, years: Int, seed: Long, level: ChannelLevel, tape: BondTape): Path =
+  private[apps] def simulateAtTaped(w: World, years: Int, seed: Long, level: ChannelLevel, tape: BondTape): Path =
     val pr   = priceLoop(w, years, seed, tape)
     val chan = deriveChannels(w, pr.inputs, level, seed)
     val div  = deriveDividends(w, pr.path.price, pr.path.fundamental, level.kDiv)
@@ -4262,12 +4533,13 @@ object MarketSim:
     * into every write to the equity's log price, in the order they happen, the step's return split
     * by its own pull, carry, input terms (each times the step's amplified liquidity) and halt/clamp;
     * `rounding` closes the sum (the step's distribution over its terms is not exact in floating
-    * point).  Group B is the conditional vol state as log multipliers. */
+    * point).  Group B is the conditional vol state as log multipliers; `declineVol` and
+    * `drawdownVol` are the linear answer's two terms, the shares its factor adds. */
   val VolPartColumns: Vector[String] = Vector(
     "logPrice", "dLogPrice", "recess", "newsComp", "newsJump", "slow", "regimeDrift", "bust", "cycle",
     "boom", "flipLift", "pull", "carry", "crowd", "noise", "jump", "jumpComp", "downShock", "overshoot",
     "delev", "flipReflect", "volFeedback", "haltClamp", "markdown", "rounding", "logVol", "levKick",
-    "volResp", "asym", "regime", "slowState", "amp", "sdPre", "sdPost")
+    "volResp", "declineVol", "drawdownVol", "asym", "regime", "slowState", "amp", "sdPre", "sdPost")
   /** `VolPartColumns`' first and last price part, and the rounding column that closes them */
   private val VolPartFirst    = 2
   private val VolPartLast     = 23
@@ -4280,12 +4552,14 @@ object MarketSim:
     var flipLift = 0.0; var noise = 0.0; var jump = 0.0; var jumpComp = 0.0; var downShock = 0.0
     var overshoot = 0.0; var delev = 0.0; var flipReflect = 0.0; var volFeedback = 0.0
     var levKick = 0.0; var volResp = 0.0; var asym = 0.0; var regime = 0.0; var slowState = 0.0
+    var declineVol = 0.0; var drawdownVol = 0.0
     var sdPre = 0.0
     def clear(): Unit =
       recess = 0.0; newsComp = 0.0; newsJump = 0.0; slow = 0.0; regimeDrift = 0.0
       flipLift = 0.0; noise = 0.0; jump = 0.0; jumpComp = 0.0; downShock = 0.0
       overshoot = 0.0; delev = 0.0; flipReflect = 0.0; volFeedback = 0.0
       levKick = 0.0; volResp = 0.0; asym = 0.0; regime = 0.0; slowState = 0.0
+      declineVol = 0.0; drawdownVol = 0.0
       sdPre = 0.0
 
   /** `-emitvolparts`' rows over the recorded sessions (`VolPartColumns`, the rounding column left
@@ -4591,8 +4865,12 @@ object MarketSim:
         vs.overshoot = -c
         x - c
       else x
-    def record(stepIn: Double, m: Market): Unit =
-      if w.overshoot > 0.0 then owed += w.overshoot * stepIn * (m.lastLiq - m.baseImpact)
+    def record(stepIn: Double, recessOver: Double, m: Market): Unit =
+      if w.overshoot > 0.0 then
+        owed += w.overshoot * stepIn * (m.lastLiq - m.baseImpact)
+        // the recession's step (`WorldExt.recessStep`) as the order sized in return that would
+        // have made it, so its transient share is the deleveraging's
+        if recessOver != 0.0 then owed += w.overshoot * (recessOver / m.lastLiq) * (m.lastLiq - m.baseImpact)
 
   /** THE BUST SWING's state (item 25, see `bustAmp`): the gap's slow mean, the level at the
     * running peak, the armed state, the episode's low and the sessions since it, the swing and
@@ -5113,8 +5391,10 @@ object MarketSim:
     private val slowNorm = w.slowLev * w.slowLev
     private val slowScale = SigmaN * w.slowVol * (12.0 / w.depth)
     private val mix = Math.sqrt(1.0 - w.slowShare)
+    // the diffusion's scale (`WorldExt.noiseScale`): exactly `SigmaN` at 1
+    private val sigmaN = SigmaN * w.ext.noiseScale
     // News variance DISPLACES diffusive noise (see `newsDampAt`); 1.0 when the channel is off.
-    private val newsDamp = newsDampAt(w.newsRate, w.newsSize)
+    private val newsDamp = newsDampAt(w.newsRate, w.newsSize, w.ext.noiseScale)
     // the bond leg of news (`newsBond`): its state, and the stream that picks the news it answers
     // (`newsBondSkip`)
     private var newsB       = 0.0
@@ -5134,6 +5414,9 @@ object MarketSim:
       case Crowd.Momentum => 0.0
       case _              => 1.0
     private var crowdE = crowdInit; private var crowdPrev = crowdInit; private var maSum = 0.0
+    // the momentum crowd's gradual adjustment (see `WorldExt.crowdAdjust`): the share of the gap to
+    // its target the held exposure closes each session; 0 is the target itself
+    private val crowdAdjK = if w.ext.crowdAdjust > 0.0 then 1.0 - expDet(-w.ext.crowdAdjust / DaysPerYear) else 0.0
     // BELIEF state for the slow valuation cycle: the EWMA of the price/fair gap that perceived
     // fair value has absorbed.  Updated from information strictly before this session.
     private var belief = 0.0
@@ -5174,6 +5457,16 @@ object MarketSim:
     private var recessSizeNow = w.recessSize
     private var recessDown = 0.0; private var recessBack = 0.0
     private var recessCount = 0
+    // the size the slide glides (`WorldExt.recessStep`): the episode's less the step's lump; the
+    // episode's size with the step off
+    private var recessSlideSize = w.recessSize
+    // the price move the step made this session, which the overshoot reads after the market's step
+    private var recessOver = 0.0
+    // the step's lumps inside the decline (`WorldExt.recessSteps`): their own stream, the slide
+    // sessions that carry one (by offset from the slide's first) and each lump's size
+    private val recessLumpRng = new NumPyRNG(seed ^ 0x2ece55105e55L)
+    private var recessLumpAt  = Array.emptyBooleanArray
+    private var recessLump    = 0.0
     // THE BOOM REGIME's state (see `boomRate`): its own stream, read only while the dial is on
     private val boomRng = new NumPyRNG(seed ^ 0xb000b00L)
     private val boomProb = w.boomRate / (100.0 * DaysPerYear)
@@ -5209,6 +5502,23 @@ object MarketSim:
     private var volRespM = 0.0
     private var regimeM = 0.0
     private var sessSigma = 0.0
+    // THE LINEAR VOL ANSWER's states (see `WorldExt.declineVol`, `WorldExt.drawdownVol`): the
+    // decline EWMA and its weight; the printed closes' running high over `DrawdownVolWindow` as a
+    // monotone deque of (session, log close) in two arrays, filled only while the dial is on; the
+    // attack's fast EWMAs of the decline and of the gap (`declineVolAttack`); the session's factor
+    // and the gap it read.  Draw-free.
+    private var declineS   = 0.0
+    private var declineAtt = 0.0
+    private var gapAtt     = 0.0
+    private val declineA   = if w.ext.declineVol > 0.0 then expDet(-lnDet(2.0) / w.ext.declineVolHalf) else 0.0
+    private val linOn      = w.ext.declineVol > 0.0 || w.ext.drawdownVol > 0.0
+    private val ddAt       = if w.ext.drawdownVol > 0.0 then new Array[Int](tot) else Array.emptyIntArray
+    private val ddVal      = if w.ext.drawdownVol > 0.0 then new Array[Double](tot) else Array.emptyDoubleArray
+    private var ddHead     = 0
+    private var ddTail     = 0
+    private var lastClose  = 0.0
+    private var linM       = 1.0
+    private var gapIn      = 0.0
     private var eqShockA = 0.0
     private var cycMove = 0.0
     private var boomMove = 0.0
@@ -5277,10 +5587,13 @@ object MarketSim:
       // the gate never shifts another stream.
       if recessProb > 0.0 then
         if recessLeft > 0 then
+          // a lump of the step inside the decline (see `WorldExt.recessSteps`), at the session's
+          // start, delivered as the onset's lump is
+          if recessLumpAt.nonEmpty && recessLumpAt(recessTotal - recessLeft) then recessLumpDown(recessLump)
           // the price falls with the earnings: repriced the same session, as news is, so the
           // recession opens no gap for the value pull to buy back and the wings (the price's
           // time off its fundamental) are untouched
-          val step = recessionStep(w, recessSizeNow, recessTotal, recessLeft, recessStep)
+          val step = recessionStep(w, recessSlideSize, recessTotal, recessLeft, recessStep)
           // the price takes the reprice share of what the market sees as permanent
           // (`WorldExt.recessTransient`); the fundamental the full step
           logVbase -= step
@@ -5290,12 +5603,14 @@ object MarketSim:
           vs.recess -= slide
           recessLeft -= 1
           if w.ext.recessTransient > 0.0 then recessDown += step
+          if recessLeft == 0 then recessLumpAt = Array.emptyBooleanArray
           if recessLeft == 0 && w.recessRecover > 0.0 then
             // regained over twice the decline's length: a recovery leg that outruns the price
             // puts the price under its fundamental for years (the lower wing)
             rrecLeft = max(1, (w.recessRecMult * w.recessLen * DaysPerYear).toInt)
             rrecStep = w.recessRecover * recessSizeNow / rrecLeft
             if w.ext.recessTransient > 0.0 then recessBack = w.recessRecover * recessSizeNow
+            if w.ext.recessStep > 0.0 then recessRegainStep()
         else
           if rrecLeft > 0 then
             logVbase += rrecStep
@@ -5322,8 +5637,65 @@ object MarketSim:
               else w.recessSize
             recessStep = recessSizeNow / recessLeft
             recessDown = 0.0
+            recessSlideSize = recessSizeNow
+            if w.ext.recessStep > 0.0 then recessOnsetStep()
             if i >= BurnIn then recessCount += 1
       logVbase += driftNow * dt + w.fundVol * sqdt * rng.randn()
+      // THE LINEAR VOL ANSWER (see `WorldExt.declineVol`): the session's factor, read from the
+      // states as they stood before it -- the decline EWMA, and the last printed close's gap under
+      // the high of the printed closes before it; above 0 the attack stage (`declineVolAttack`)
+      // reads a fast EWMA of the gap
+      val gapS = if ddTail > ddHead then math.max(ddVal(ddHead) - lastClose, 0.0) else 0.0
+      if w.ext.drawdownVol > 0.0 && w.ext.declineVolAttack > 0.0 then
+        gapAtt = w.ext.declineVolAttack * gapAtt + (1.0 - w.ext.declineVolAttack) * gapS
+      gapIn = if w.ext.declineVolAttack > 0.0 then gapAtt else gapS
+      linM = 1.0 + w.ext.declineVol * declineS + w.ext.drawdownVol * gapIn
+
+    /** A lump of the recession's markdown landing at once (see `WorldExt.recessStep`): the
+      * fundamental the whole, the price its repriced share, the overshoot reading it. */
+    private def recessLumpDown(lump: Double): Unit =
+      logVbase -= lump
+      val slide = lump * w.recessReprice * (1.0 - w.ext.recessTransient)
+      eqM.logP -= slide
+      vs.recess -= slide
+      recessOver -= slide
+      recessDown += lump
+
+    /** The markdown's step at the onset (see `WorldExt.recessStep`): its share of the drawn size
+      * at once, the rest gliding over the slide; with `recessSteps` the step as lumps on sessions
+      * drawn now, each delivered when its session comes. */
+    private def recessOnsetStep(): Unit =
+      val lump = w.ext.recessStep * recessSizeNow
+      recessSlideSize = recessSizeNow - lump
+      recessStep = recessSlideSize / recessLeft
+      if w.ext.recessSteps >= 1.0 then
+        val k = min(w.ext.recessSteps.toInt, recessLeft)
+        recessLump = lump / k
+        val idx = Array.tabulate(recessLeft)(identity)
+        var j = 0
+        while j < k do
+          val r = j + recessLumpRng.nextBoundedInt(recessLeft - j)
+          val t = idx(j); idx(j) = idx(r); idx(r) = t
+          j += 1
+        recessLumpAt = new Array[Boolean](recessLeft)
+        j = 0
+        while j < k do
+          recessLumpAt(idx(j)) = true
+          j += 1
+      else recessLumpDown(lump)
+
+    /** The regain's step at the trough (see `WorldExt.recessStep`): its share of the recovery at
+      * once, the rest over the regain leg. */
+    private def recessRegainStep(): Unit =
+      val total = w.recessRecover * recessSizeNow
+      val lump = w.ext.recessStep * total
+      rrecStep = (total - lump) / rrecLeft
+      logVbase += lump
+      val regain = lump * w.recessReprice * (1.0 - w.ext.recessTransient)
+      eqM.logP += regain
+      vs.recess += regain
+      recessOver += regain
+      if w.ext.recessTransient > 0.0 then recessBack = total - lump
 
     /** The news jump and the slow repricing, both repriced the same session. */
     private def newsAndSlow(i: Int): Unit =
@@ -5359,7 +5731,7 @@ object MarketSim:
         // two scalars, not a pair: a tuple here is an allocation on every session
         val newsM =
           if w.newsScale > 0.0 then
-            1.0 - w.newsScale + w.newsScale * newsVolMultiplier(w, logVol, volNorm, kickS, volRespS)
+            1.0 - w.newsScale + w.newsScale * newsVolMultiplier(w, logVol, volNorm, kickS, volRespS, linM)
           else 1.0
         val size = if w.newsScale > 0.0 then w.newsSize * newsM else w.newsSize
         val comp = if w.newsScale > 0.0 then comp0 * newsM else comp0
@@ -5609,8 +5981,11 @@ object MarketSim:
       // targets are banded, and deliberately
       // unbanded: the 0.05 band exists to stop a BINARY target flip-flopping across a moving
       // average, and a continuous target has nothing to flip-flop about.
+      // the held exposure (see `WorldExt.crowdAdjust`): the target itself at 0, bit-identical;
+      // otherwise last session's exposure moved a share of the way to the target
       w.crowd match
-        case Crowd.Momentum => crowdE = trendPos
+        case Crowd.Momentum =>
+          crowdE = if w.ext.crowdAdjust > 0.0 then crowdE + crowdAdjK * (trendPos - crowdE) else trendPos
         case _              => ()
       // ONE price-impact rule for every crowd: pressure comes from the exposure TRADED this
       // session, never from the exposure held.  A crowd that has been long for a month and is still
@@ -5643,11 +6018,15 @@ object MarketSim:
         if w.noiseAsym <= 0.0 then 1.0
         else if w.noiseAsymCap > 0.0 then expDet(min(asymG - asymNorm, w.noiseAsymCap))
         else expDet(asymG - asymNorm)
-      val dNoise0 = newsDamp * SigmaN * expDet(logVol - volNorm) * zBody * asymM * mix
+      val dNoise0 = newsDamp * sigmaN * expDet(logVol - volNorm) * zBody * asymM * mix
       // read BEFORE this session's update, like the kick: the response is to PAST declines
       volRespM = volResponseMult(w, volRespS)
       val dNoise0k = if w.leverage > 0.0 then dNoise0 * expDet(w.leverage * kickS) else dNoise0
-      val dNoiseR = if w.volResp > 0.0 then dNoise0k * volRespM else dNoise0k
+      val dNoiseV = if w.volResp > 0.0 then dNoise0k * volRespM else dNoise0k
+      // the linear answer to declines and the drawdown (see `WorldExt.declineVol`), after the vol
+      // response's factor; the off branch keeps the released expression
+      val dNoiseR = if linOn then dNoiseV * linM else dNoiseV
+      val linMult = if linOn then linM else 1.0
       // THE CREDIT-TRIGGERED VOL REGIME (see `creditRegime`): the plateau holds, then decays;
       // outside a spell an onset is drawn against the credit growth gap as it stood before the
       // session.  The noise and the session's sd both take it, so the vol response's state stays
@@ -5674,10 +6053,12 @@ object MarketSim:
       if vparts.isDefined then
         vs.levKick = w.leverage * kickS
         vs.volResp = w.volResp * volRespS
+        vs.declineVol  = w.ext.declineVol * declineS
+        vs.drawdownVol = w.ext.drawdownVol * gapIn
         vs.asym    = lnDet(asymM)
         vs.regime  = lnDet(regimeM)
-        vs.sdPre   = newsDamp * SigmaN * expDet(logVol - volNorm) * leverageMult(w, kickS) * jumpVarMult(w) *
-                     asymM * volRespM * regimeM * mix
+        vs.sdPre   = newsDamp * sigmaN * expDet(logVol - volNorm) * leverageMult(w, kickS) * jumpVarMult(w) *
+                     asymM * volRespM * linMult * regimeM * mix
       // THE BUST SWING (see `BustSwing.advance`), repriced here, ahead of the step
       if w.bustAmp > 0.0 then bust.advance(eqM, logVbase, i)
       if w.noiseAsym > 0.0 then
@@ -5688,11 +6069,11 @@ object MarketSim:
       // BEFORE this session's update, like `dNoise` itself) -- plus the jump branch's
       // sqrt(1 - jumpVar) mixing.  Draw-free; 0.0 when both channels are off.
       sessSigma =
-        if anyChannel(w) || w.volResp > 0.0 || w.jumpResp > 0.0 then
+        if anyChannel(w) || w.volResp > 0.0 || w.jumpResp > 0.0 || w.ext.declineVol > 0.0 then
           val levMult = leverageMult(w, kickS)
           val jvMult  = jumpVarMult(w)
-          newsDamp * SigmaN * expDet(logVol - volNorm) * levMult * jvMult * asymM * volRespM * regimeM *
-            mix
+          newsDamp * sigmaN * expDet(logVol - volNorm) * levMult * jvMult * asymM * volRespM * linMult *
+            regimeM * mix
         else 0.0
 
       // The jump channel.  Its draws come from `jrng`, NOT `rng`, so `jumpVar = 0` takes the
@@ -5838,7 +6219,7 @@ object MarketSim:
       val x0 = delev.into(over.into(eqFlow + eqShockA, eqM, vs), eqM, vs)
       val stepIn =
         if flipOwed > 0.0 then
-          val sd = newsDamp * SigmaN * newsVolMultiplier(w, logVol, volNorm, kickS, volRespS) * asymM * regimeM
+          val sd = newsDamp * sigmaN * newsVolMultiplier(w, logVol, volNorm, kickS, volRespS, linM) * asymM * regimeM
           val x  = dayFlip(eqM, x0, logPOpen, perceivedFair, markdown - markdownPrev, sd, flipOwed, flipRng, vs)
           flipOwed = 0.0
           x
@@ -5852,7 +6233,8 @@ object MarketSim:
           stepIn - c
         else stepIn
       retE = eqM.step(perceivedFair, stepInFb)
-      over.record(stepInFb, eqM)
+      over.record(stepInFb, recessOver, eqM)
+      recessOver = 0.0
       if w.volResp > 0.0 || w.jumpResp > 0.0 then
         // The REALIZED decline, in units of the sd that generated it, saturated at four like the
         // kick's and centred at a normal's E[max(-z,0)] so the state has mean zero and the
@@ -5903,6 +6285,18 @@ object MarketSim:
         // its SHAPE over the following sessions changes -- built over 2-5 sessions by the
         // attack, decaying over ~1/(1-P).  At 0 this is `levSig` itself.
         kickS = w.levPersist * kickS + (1.0 - w.levPersist) * levSig
+      if w.ext.declineVol > 0.0 then
+        // THE DECLINE STATE (see `WorldExt.declineVol`): the leverage signal's decline, uncentred,
+        // in units of the session's own conditional sd -- every multiplier in it, this factor
+        // included, so a stretch the state has made volatile reads no larger -- saturated at four
+        // like the kick's and the vol response's; above 0 through the attack's fast EWMA
+        val u = min(max(newsJ - retE, 0.0) / max(sessSigma, 1e-12), 4.0)
+        val decIn =
+          if w.ext.declineVolAttack > 0.0 then
+            declineAtt = w.ext.declineVolAttack * declineAtt + (1.0 - w.ext.declineVolAttack) * u
+            declineAtt
+          else u
+        declineS = declineA * declineS + (1.0 - declineA) * decIn
       // joint-stress margin selling: when both markets are stressed, the bond gets dumped too --
       // and against it the refuge bid, flight-to-quality into a bond that is itself still orderly.
       // DURATION-SCALED, like the bond's own noise: an absolute bid gave a 5-year bond the same
@@ -5927,6 +6321,14 @@ object MarketSim:
         case Some(v) => recordVolParts(i, v)
         case None    => ()
       px(i) = expDet(eqM.logP - markdown)
+      if w.ext.drawdownVol > 0.0 then
+        // the printed close the next session's gap reads (see `WorldExt.drawdownVol`)
+        lastClose = eqM.logP - markdown
+        while ddTail > ddHead && ddVal(ddTail - 1) <= lastClose do ddTail -= 1
+        ddAt(ddTail) = i
+        ddVal(ddTail) = lastClose
+        ddTail += 1
+        while ddAt(ddHead) + DrawdownVolWindow <= i do ddHead += 1
       fv(i) = expDet(logVbase - markdown)
       rt(i) = rate
       lq(i) = eqM.lastLiq
@@ -5951,8 +6353,10 @@ object MarketSim:
       // they are different questions.  A crowd earns or loses on what it is holding; it moves the
       // price by what it is buying or selling.  Conflating the two is the defect that shipped
       // through 0.21.0.
+      // the momentum crowd's exposure is `crowdE`, its target at `crowdAdjust` 0 and the exposure
+      // it has adjusted to otherwise
       val crowdPos = w.crowd match
-        case Crowd.Momentum => trendPos
+        case Crowd.Momentum => crowdE
         case _              => crowdE - 1.0
       perfT = 0.99 * perfT + 0.01 * (crowdPos * retE) * 100.0
       val target = allocTarget(w.beta, perfT, perfV)
@@ -5984,7 +6388,8 @@ object MarketSim:
           boomMove, vs.flipLift, eqM.lastPull * imp, eqM.lastCarry, flow(eqFlow), flow(vs.noise),
           flow(vs.jump), flow(vs.jumpComp), flow(vs.downShock), flow(vs.overshoot), flow(vs.delev),
           flow(vs.flipReflect), flow(vs.volFeedback), retE - eqM.lastRawC, -(markdown - v.lastMd), Double.NaN,
-          logVol - volNorm, vs.levKick, vs.volResp, vs.asym, vs.regime, vs.slowState, amp, vs.sdPre,
+          logVol - volNorm, vs.levKick, vs.volResp, vs.declineVol, vs.drawdownVol, vs.asym, vs.regime,
+          vs.slowState, amp, vs.sdPre,
           vs.sdPre * amp))
       v.lastX = x
       v.lastMd = markdown
@@ -13362,7 +13767,8 @@ object MarketSim:
     "recessReprice", "recessBase", "recessShape", "overshoot", "overshootRate", "recessRecMult",
     "recessCredit", "recessInfl", "termPremium", "cpiNoise", "deflProb", "deflSize", "spikeRate", "spikeSize",
     "termVol", "brkVol", "brkNominal", "cpiNoiseLevel", "policyGrowth", "yieldBeta",
-    "yieldLag", "expAnchor", "volFeedback", "valueCap", "valueCapFall", "recessSpread", "recessTransient")
+    "yieldLag", "expAnchor", "volFeedback", "valueCap", "valueCapFall", "recessSpread", "recessTransient",
+    "noiseScale", "crowdAdjust", "declineVol", "drawdownVol", "declineVolAttack", "declineVolHalf")
 
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
@@ -13380,7 +13786,7 @@ object MarketSim:
     // Widened from 0.010-0.035 in 0.21.0: with the recovery drag the base pull governs SHALLOW
     // water only, so its useful range moved up.  The old ceiling would have excluded the shipped
     // value, which is the `fundVol` failure mode -- a search that cannot reach the answer.
-    ("valuePull",  0.010, 0.100, (w, x) => w.copy(valuePull = x), _.valuePull),
+    ("valuePull",  0.010, 0.25, (w, x) => w.copy(valuePull = x), _.valuePull),
     // Both in the ranges from the release they arrive in, for the same reason.
     ("recoveryDrag",  0.0, 20.0, (w, x) => w.copy(recoveryDrag = x), _.recoveryDrag),
     ("recoveryFloor", 0.01, 1.0, (w, x) => w.copy(recoveryFloor = x), _.recoveryFloor),
@@ -13473,8 +13879,8 @@ object MarketSim:
     // THE RECESSION (items 32/33): the hazard per unit stress a year, the fall in log, its length
     // in years and the share regained over twice that length
     ("recessRate",   0.0,  2.00, (w, x) => w.copy(recessRate = x), _.recessRate),
-    ("recessSize",   0.1,  2.00, (w, x) => w.copy(recessSize = x), _.recessSize),
-    ("recessLen",    0.5,  3.00, (w, x) => w.copy(recessLen = x), _.recessLen),
+    ("recessSize",   0.08, 2.00, (w, x) => w.copy(recessSize = x), _.recessSize),
+    ("recessLen",    0.10, 3.00, (w, x) => w.copy(recessLen = x), _.recessLen),
     ("recessRecover", 0.0, 1.00, (w, x) => w.copy(recessRecover = x), _.recessRecover),
     // the news rate's multiplier while a recession runs (1 off), and the rebound's damping by the
     // fast-over-slow realized-vol ratio (0 off)
@@ -13507,7 +13913,7 @@ object MarketSim:
     ("recessBase",   0.0,  1.50, (w, x) => w.copy(recessBase = x), _.recessBase),
     ("recessShape",  0.0,  3.00, (w, x) => w.copy(recessShape = x), _.recessShape),
     ("overshoot",    0.0,  1.00, (w, x) => w.copy(overshoot = x), _.overshoot),
-    ("overshootRate", 0.05, 0.40, (w, x) => w.copy(overshootRate = x), _.overshootRate),
+    ("overshootRate", 0.05, 0.6, (w, x) => w.copy(overshootRate = x), _.overshootRate),
     ("recessRecMult", 0.5, 2.00, (w, x) => w.copy(recessRecMult = x), _.recessRecMult),
     ("recessCredit", 0.0, 20.0, (w, x) => w.copy(recessCredit = x), _.recessCredit),
     ("recessInfl",   0.0,  2.00, (w, x) => w.copy(recessInfl = x), _.recessInfl),
@@ -13549,7 +13955,28 @@ object MarketSim:
     ("recessSpread",  0.0,  2.0, (w, x) => w.copy(ext = w.ext.copy(recessSpread = x)), _.ext.recessSpread),
     // the recession's transitory share: what the market sees through, 0 nothing
     ("recessTransient", 0.0, 1.0, (w, x) => w.copy(ext = w.ext.copy(recessTransient = x)), _.ext.recessTransient),
+    // the diffusion's scale (PLAN row 65): the Nasdaq's calm floor sits 1.2x the model's at 1;
+    // searched in both worlds
+    ("noiseScale", 1.0, 1.6, (w, x) => w.copy(ext = w.ext.copy(noiseScale = x)), _.ext.noiseScale),
+    // the momentum crowd's adjustment rate a year (PLAN row 65): 12 is a three-week half-life
+    ("crowdAdjust", 0.0, 12.0, (w, x) => w.copy(ext = w.ext.copy(crowdAdjust = x)), _.ext.crowdAdjust),
+    // the linear vol answer (PLAN row 65): the decline term, the drawdown term, their attack and
+    // the decline state's half-life in sessions; each term off at its floor, the half-life's off
+    // value 5 inside its range
+    ("declineVol", 0.0, 0.6, (w, x) => w.copy(ext = w.ext.copy(declineVol = x)), _.ext.declineVol),
+    ("drawdownVol", 0.0, 6.0, (w, x) => w.copy(ext = w.ext.copy(drawdownVol = x)), _.ext.drawdownVol),
+    ("declineVolAttack", 0.0, 0.95, (w, x) => w.copy(ext = w.ext.copy(declineVolAttack = x)), _.ext.declineVolAttack),
+    ("declineVolHalf", 2.0, 20.0, (w, x) => w.copy(ext = w.ext.copy(declineVolHalf = x)), _.ext.declineVolHalf),
   )
+
+  /** THE ROW 65 PROBE DIALS a search may set on its seed worlds and never steps (`-seedset`): the
+    * recession's step share and its lumps, by their world keys.  Outside `CalibrateRanges`, so no
+    * child moves them and the archive's columns are unchanged; written in a world's body only when
+    * on (`OptionalWorldKeys`), so a seed carrying one moves the seed worlds' digest and the export
+    * carries it. */
+  val ProbeDials: Vector[(String, (World, Double) => World, World => Double)] = Vector(
+    ("recessStep", (w, x) => w.copy(ext = w.ext.copy(recessStep = x)), _.ext.recessStep),
+    ("recessSteps", (w, x) => w.copy(ext = w.ext.copy(recessSteps = x)), _.ext.recessSteps))
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
     // depth, trendShare, drift and crowdImpact are in the search because they are the strongest
@@ -13584,7 +14011,7 @@ object MarketSim:
       }
       // the size pulled inside the news budget, and the description read off the world scored,
       // so a printed world is the one that was scored
-      val w = drawn.copy(newsSize = newsSizeWithinBudget(drawn.newsRate, drawn.newsSize))
+      val w = drawn.copy(newsSize = newsSizeWithinBudget(drawn.newsRate, drawn.newsSize, drawn.ext.noiseScale))
       val desc = ranges.map((nm, _, _, _, get) => f"$nm%s=${get(w)}%.4f").mkString(" ")
       val f = score(w, trainSeed)
       eprintln(f"  sample $k%3d  train loss $f%7.3f")
@@ -16090,6 +16517,19 @@ object MarketSim:
       val s = new java.math.BigDecimal(java.lang.Double.toString(x)).stripTrailingZeros.toPlainString
       if s == "0" && 1.0 / x < 0.0 then "-0" else s
 
+  /** The shortest decimal that reads back to `x` as the Rust twin's `{:?}` writes it: plain with at
+    * least one fractional digit for a magnitude in [1e-4, 1e16) or zero (`1.0`, `-0.0`, `0.25`), in
+    * scientific notation otherwise (`1e-7`, `1.5e16`), `NaN`, `inf` or `-inf`. */
+  def rustDebug(x: Double): String =
+    if x.isNaN then "NaN"
+    else if x.isInfinite then if x > 0.0 then "inf" else "-inf"
+    else
+      val a = Math.abs(x)
+      if a != 0.0 && (a < 1e-4 || a >= 1e16) then lowerExp(x)
+      else
+        val s = historyCell(x)
+        if s.contains('.') then s else s + ".0"
+
   /** The shortest decimal that reads back to `x`, in scientific notation as the Rust twin's `{:e}`
     * writes it: `1.5e-16`, `2e0`, `0e0`, `NaN`, `inf`. */
   private def lowerExp(x: Double): String =
@@ -16483,11 +16923,12 @@ object MarketSim:
       case FieldLine(k, v) => (k, v)
       case l => usage(s"-worldset $file member $index: cannot read [$l] as a world field")
     }
-    // `volPullStep` is the one key a member may omit: the worlds before 0.25.0 were written
-    // without it, and absent it reads as off (`WorldExt.volPullStep`)
+    // the keys a member may omit (`OptionalWorldKeys`): the worlds before them were written without
+    // them, and absent each reads as off
+    def optional(k: String) = OptionalWorldKeys.exists(_._1 == k)
     val want = worldJsonBody(Defaults).map(_.trim).collect { case FieldLine(k, _) => k }
-                 .filterNot(_ == OptionalWorldKey)
-    val got = fields.map(_._1).filterNot(_ == OptionalWorldKey)
+                 .filterNot(optional)
+    val got = fields.map(_._1).filterNot(optional)
     if got.sorted != want.sorted then
       val missing = want.filterNot(got.contains)
       val extra = got.filterNot(want.contains)
@@ -16498,12 +16939,17 @@ object MarketSim:
       // a quoted value is a MODE name (`crowd`), which its flag takes unquoted
       Seq("-" + k.toLowerCase, if v.startsWith("\"") then v.drop(1).dropRight(1) else v)
     }
-    if fields.exists(_._1 == OptionalWorldKey) then flags
-    else flags ++ Seq("-" + OptionalWorldKey.toLowerCase, "0")
+    flags ++ OptionalWorldKeys.filterNot((k, _) => fields.exists(_._1 == k))
+                              .flatMap((k, off) => Seq("-" + k.toLowerCase, off))
 
-  /** The world key a set member may omit (`worldSetArgs`): absent, the vol pull stays out of the
-    * step, as every world before 0.25.0 was published. */
-  val OptionalWorldKey = "volPullStep"
+  /** The world keys a set member may omit (`worldSetArgs`), each with the value an absent key
+    * reads: the vol pull out of the step, as every world before 0.25.0 was published; the row 65
+    * probes off (`WorldExt.recessStep`, `WorldExt.recessSteps`), and the linear vol answer's
+    * searched dials (`WorldExt.declineVol` with its half-life at 5, `WorldExt.drawdownVol`,
+    * `WorldExt.declineVolAttack`). */
+  val OptionalWorldKeys: Vector[(String, String)] = Vector(
+    ("volPullStep", "0"), ("recessStep", "0"), ("recessSteps", "0"), ("declineVol", "0"),
+    ("declineVolHalf", "5"), ("drawdownVol", "0"), ("declineVolAttack", "0"))
 
   /** Every `World` field, in declaration order, as the indented body of a JSON object.  A world
     * that reaches a consumer without its parameters cannot be re-simulated.
@@ -16550,6 +16996,7 @@ object MarketSim:
       ("capYears", num(w.capYears)), ("capWindow", num(w.capWindow)),
       ("cycleSd", num(w.cycleSd)), ("cycleYears", num(w.cycleYears)),
       ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", num(w.crowdImpact)),
+      ("crowdAdjust", num(w.ext.crowdAdjust)),
       ("panic", num(w.panic)), ("duration", num(w.duration)), ("bond10", num(w.bond10)), ("tips", num(w.ext.tips)), ("termPremium", num(w.ext.termPremium)),
       ("cpiNoise", num(w.ext.cpiNoise)), ("deflProb", num(w.ext.deflProb)), ("deflSize", num(w.ext.deflSize)),
       ("spikeRate", num(w.ext.spikeRate)), ("spikeSize", num(w.ext.spikeSize)), ("termVol", num(w.ext.termVol)),
@@ -16579,7 +17026,7 @@ object MarketSim:
       // is a reserved word in Scala, and a consumer reconstructing a world from this block passes
       // `-macro`
       ("macro", w.macroPanel.toString), ("levGain", num(w.levGain)), ("stressScale", num(w.stressScale)),
-      ("levPersist", num(w.levPersist)), ("noiseAsym", num(w.noiseAsym)),
+      ("levPersist", num(w.levPersist)), ("noiseScale", num(w.ext.noiseScale)), ("noiseAsym", num(w.noiseAsym)),
       ("noiseAsymPhi", num(w.noiseAsymPhi)), ("noiseAsymCap", num(w.noiseAsymCap)),
       ("volResp", num(w.volResp)), ("volRespPhi", num(w.volRespPhi)),
       ("volRespCap", num(w.volRespCap)), ("volRespAttack", num(w.volRespAttack)),
@@ -16602,7 +17049,28 @@ object MarketSim:
           case -1 => fields.length
           case k  => k + 1
         fields.patch(at, Vector(("volPullStep", num(1.0))), 0)
-    withStep.map((nm, v) => s"""    ${jsonStr(nm)}: $v""")
+    // the attack shapes the linear answer's two terms alone and the half-life its decline term:
+    // each is inert while what it shapes is off and reads as its off value then, so it moves no
+    // body or digest
+    val attack = if w.ext.declineVol > 0.0 || w.ext.drawdownVol > 0.0 then w.ext.declineVolAttack else 0.0
+    val half = if w.ext.declineVol > 0.0 then w.ext.declineVolHalf else 5.0
+    // THE ROW 65 KEYS (the recession's probes, the linear vol answer's searched dials), each beside
+    // the mechanism it changes: written only away from its off value, so every world without them
+    // keeps its body and digest (`OptionalWorldKeys`)
+    val keyed = Vector(
+      (Vector("recessTransient"), "recessStep", w.ext.recessStep, 0.0),
+      (Vector("recessStep", "recessTransient"), "recessSteps", w.ext.recessSteps, 0.0),
+      (Vector("jumpResp"), "declineVol", w.ext.declineVol, 0.0),
+      (Vector("declineVol", "jumpResp"), "declineVolHalf", half, 5.0),
+      (Vector("declineVolHalf", "declineVol", "jumpResp"), "drawdownVol", w.ext.drawdownVol, 0.0),
+      (Vector("drawdownVol", "declineVolHalf", "declineVol", "jumpResp"), "declineVolAttack", attack, 0.0)
+    ).foldLeft(withStep) { case (fs, (after, key, x, off)) =>
+      if x != off then
+        val at = after.iterator.map(a => fs.indexWhere(_._1 == a)).find(_ >= 0).fold(fs.length)(_ + 1)
+        fs.patch(at, Vector((key, num(x))), 0)
+      else fs
+    }
+    keyed.map((nm, v) => s"""    ${jsonStr(nm)}: $v""")
 
   private val FnvOffset = 0xcbf29ce484222325L
   private val FnvPrime  = 0x100000001b3L
@@ -17396,6 +17864,10 @@ $body
     var volFeedback = dw.ext.volFeedback
     var valueCap = dw.ext.valueCap; var valueCapFall = dw.ext.valueCapFall
     var recessSpread = dw.ext.recessSpread; var recessTransient = dw.ext.recessTransient
+    var noiseScale = dw.ext.noiseScale; var crowdAdjust = dw.ext.crowdAdjust
+    var recessStep = dw.ext.recessStep; var recessSteps = dw.ext.recessSteps
+    var declineVol = dw.ext.declineVol; var declineVolHalf = dw.ext.declineVolHalf
+    var drawdownVol = dw.ext.drawdownVol; var declineVolAttack = dw.ext.declineVolAttack
     var bondBetaCut = dw.ext.bondBetaCut; var satTailDrop = dw.ext.satTailDrop
     var easing = dw.easing; var unwind = dw.unwind; var refuge = dw.refuge
     var refugeDays = dw.refugeDays
@@ -17572,6 +18044,14 @@ $body
       case "-valuecapfall" => valueCapFall = numOr("-valuecapfall", consumeNext)
       case "-recessspread" => recessSpread = numOr("-recessspread", consumeNext)
       case "-recesstransient" => recessTransient = numOr("-recesstransient", consumeNext)
+      case "-noisescale" => noiseScale = numOr("-noisescale", consumeNext)
+      case "-crowdadjust" => crowdAdjust = numOr("-crowdadjust", consumeNext)
+      case "-recessstep" => recessStep = numOr("-recessstep", consumeNext)
+      case "-recesssteps" => recessSteps = numOr("-recesssteps", consumeNext)
+      case "-declinevol" => declineVol = numOr("-declinevol", consumeNext)
+      case "-declinevolhalf" => declineVolHalf = numOr("-declinevolhalf", consumeNext)
+      case "-drawdownvol" => drawdownVol = numOr("-drawdownvol", consumeNext)
+      case "-declinevolattack" => declineVolAttack = numOr("-declinevolattack", consumeNext)
       case "-bondbetacut" => bondBetaCut = numOr("-bondbetacut", consumeNext)
       case "-sattaildrop" => satTailDrop = numOr("-sattaildrop", consumeNext)
       case "-easing"     => easing = numOr("-easing", consumeNext)
@@ -17683,177 +18163,11 @@ $body
             Rules.zipWithIndex.map((r, i) => f"  ${i + 1}%d  ${r.name}%s").mkString("\n"))
     if powerYears.exists(_ < 1) then
       usage(s"-poweryears wants year counts of at least 1, got [${powerYears.mkString(",")}]")
-    // DOMAINS for the world dials.  Out of domain they do not fail on their own: `-jumprate 0` with
-    // a positive `-jumpvar` divides by zero in `jumpScale` and emitted a file of NaN at exit 0, and
-    // `-recoveryfloor 3` inverts asymmetric recovery -- arbitrage STRONGER in a deep drawdown, the
-    // documented mechanism run backwards -- into a world that then PASSES the acceptance gate.  A
-    // clamp that cannot throw is worse than one that can: what you get is a certified world, not a
-    // stack trace.
-    //
-    // Reject what the mechanism cannot express, never what merely looks unusual -- an over-tight
-    // bound breaks a sweep script for no defect.  Every value recorded anywhere in this repo is
-    // admitted, `-jumpvar 0` and `-haltlimit 0` (the documented disable values) included, as is
-    // every range `calibrate` sweeps.  Written as `!(x >= lo ...)` so a NaN literal -- `toDouble`
-    // accepts "nan" -- is refused here rather than reaching the model.
-    def share(flag: String, x: Double): Unit =
-      if !(x >= 0.0 && x <= 1.0) then usage(s"$flag wants a share in 0..1, got $x")
-    def belowOne(flag: String, x: Double): Unit =
-      if !(x >= 0.0 && x < 1.0) then usage(s"$flag wants at least 0 and below 1, got $x")
-    def nonNeg(flag: String, x: Double): Unit =
-      if !(x >= 0.0) then usage(s"$flag wants a non-negative number, got $x")
-    def positive(flag: String, x: Double): Unit =
-      if !(x > 0.0) then usage(s"$flag wants a positive number, got $x")
-    share("-trendshare", trendShare); share("-jumpvar", jumpVar); share("-jumprate", jumpRate)
-    share("-leverage", leverage); share("-downshock", downShock)
-    // A 2-sd shift is already past every fitted setting; negative would skew jumps UP.
-    if jumpSkew < 0.0 || jumpSkew > 2.0 then
-      usage(s"-jumpskew $jumpSkew out of range; needs 0 <= skew <= 2")
-    share("-recoveryfloor", recoveryFloor); share("-inflprob", inflProb)
-    share("-inflspeed", inflSpeed)
-    belowOne("-volpersist", volPersist); belowOne("-haltlimit", haltLimit)
-    positive("-depth", depth); positive("-duration", duration); nonNeg("-bond10", bond10); nonNeg("-tips", tips); nonNeg("-termpremium", termPremium)
-    nonNeg("-cpinoise", cpiNoise); nonNeg("-deflprob", deflProb); belowOne("-deflprob", deflProb); nonNeg("-deflsize", deflSize)
-    nonNeg("-spikerate", spikeRate); nonNeg("-spikesize", spikeSize); nonNeg("-termvol", termVol); nonNeg("-brkvol", brkVol)
-    if brkNominal < 0.0 || brkNominal > 1.0 then usage("-brknominal is a share in [0, 1]")
-    if discountYield != 0.0 && discountYield != 1.0 then
-      usage("-discountyield is 0 (the policy rate) or 1 (the ten-year yield)")
-    nonNeg("-cpinoiselevel", cpiNoiseLevel); nonNeg("-policygrowth", policyGrowth)
-    nonNeg("-yieldbeta", yieldBeta); nonNeg("-yieldlag", yieldLag)
-    if expAnchor < 0.0 || expAnchor > 1.0 then usage("-expanchor is a share from 0 to 1")
-    nonNeg("-volfeedback", volFeedback)
-    nonNeg("-valuecap", valueCap); nonNeg("-valuecapfall", valueCapFall)
-    nonNeg("-recessspread", recessSpread)
-    if recessTransient < 0.0 || recessTransient > 1.0 then usage("-recesstransient is a share from 0 to 1")
-    nonNeg("-bondbetacut", bondBetaCut); nonNeg("-sattaildrop", satTailDrop)
-    if yieldBeta > 0.0 && termVol <= 0.0 then usage("-yieldbeta needs the ten-year yield: -termvol above 0")
-    nonNeg("-stress", stress); nonNeg("-beta", beta); nonNeg("-volofvol", volOfVol)
-    nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
-    nonNeg("-newsrate", newsRate); nonNeg("-newssize", newsSize); nonNeg("-refugedays", refugeDays)
-    nonNeg("-newslev", newsLev)
-    newsBudgetRefusal(newsRate, newsSize).foreach(why => usage(why))
-    nonNeg("-newsbond", newsBond)
-    if !(newsBondSkip >= 0.0 && newsBondSkip < 1.0) then usage("-newsbondskip is a share in [0, 1)")
-    nonNeg("-creditregime", creditRegime); nonNeg("-creditregimerate", creditRegimeRate)
-    if !(slowBondInfl >= 0.0 && slowBondInfl <= 1.0) then usage("-slowbondinfl is a share in [0, 1]")
-    nonNeg("-satbeta", satBeta); nonNeg("-satidio", satIdio); nonNeg("-rangescale", rangeScale)
-    nonNeg("-satcyclesd", satCycleSd)
-    if satCycleSd > 0.0 && (satDriftHalf <= 0.0 || satLevelHalf <= 0.0) then
-      usage("-satcyclesd needs -satdrifthalf and -satlevelhalf above 0")
-    nonNeg("-rangedown", rangeDown)
-    if rangeDown > 0.0 && rangeScale <= 0.0 then
-      usage("-rangedown requires -rangescale > 0: it shapes the sampled bar")
-    nonNeg("-volidio", volIdio); nonNeg("-divyield", divYield); nonNeg("-overnight", overnight)
+    // THE FLAGS' OWN DOMAINS: the name and leg counts (an Int here can go negative), the cost; the
+    // world dials' is `worldDomainRefusal`, read once the world is built
     if basket < 0 then usage(s"-basket $basket: the name count cannot be negative")
-    nonNeg("-basketbeta", basketBeta); nonNeg("-basketsector", basketSector)
-    nonNeg("-basketidio", basketIdio); nonNeg("-basketgaps", basketGaps)
-    nonNeg("-basketdrift", basketDrift)
-    if macroPanel != 0 && macroPanel != 1 then usage(s"-macro $macroPanel: 0 (off) or 1 (the panel)")
-    if macroNull < 0 || macroNull > 2 then
-      usage(s"-macronull $macroNull: 0 (the path's own panel), 1 (a sibling's) or 2 (both)")
-    if macroNull > 0 && macroPanel == 0 then usage("-macronull needs -macro 1: it is the panel's null, not a panel")
-    nonNeg("-levgain", levGain)
-    nonNeg("-stressscale", stressScale)
-    nonNeg("-noiseasym", noiseAsym)
-    nonNeg("-noiseasymcap", noiseAsymCap)
-    nonNeg("-volresp", volResp); nonNeg("-volrespcap", volRespCap); nonNeg("-jumpresp", jumpResp)
-    nonNeg("-bustamp", bustAmp)
-    nonNeg("-cyclesd", cycleSd)
-    nonNeg("-beliefleak", beliefLeak)
-    if cycleSd > 0.0 && cycleYears <= 0.0 then
-      usage(s"-cyclesd $cycleSd needs -cycleyears above 0")
-    // WORD FOR WORD the Rust twin's messages: the two CLIs must refuse the same worlds, and
-    // `-stressadapt 0` is the one that would otherwise pass -- the spiral's scale never updates,
-    // so its stress index reads every session against the seed value.  NEGATED comparisons, like
-    // `nonNeg`: NaN parses, and `x < 0 || x >= 1` admits it where the Rust twin's range test
-    // refuses it.
-    if !(levPersist >= 0.0 && levPersist < 1.0) then
-      usage("-levpersist is a persistence in [0, 1)")
-    if !(noiseAsymPhi >= 0.0 && noiseAsymPhi < 1.0) then
-      usage("-noiseasymphi is a persistence in [0, 1)")
-    if !(volRespPhi >= 0.0 && volRespPhi < 1.0) then
-      usage("-volrespphi is a persistence in [0, 1)")
-    if !(volRespAttack >= 0.0 && volRespAttack < 1.0) then
-      usage("-volrespattack is a persistence in [0, 1)")
-    if !(stressAdapt > 0.0 && stressAdapt < 1.0) then
-      usage("-stressadapt is an EWMA weight in (0, 1)")
-    nonNeg("-slowvol", slowVol); nonNeg("-slowlev", slowLev); nonNeg("-slowbeta", slowBeta)
-    if !(slowShare >= 0.0 && slowShare < 1.0) then usage("-slowshare is a share in [0, 1)")
-    if !(slowPhi >= 0.0 && slowPhi < 1.0) then usage("-slowphi is a persistence in [0, 1)")
-    if !(slowPerm >= 0.0 && slowPerm <= 1.0) then usage("-slowperm is a share in [0, 1]")
-    if !(newsRevert >= 0.0 && newsRevert <= 1.0) then usage("-newsrevert is a share in [0, 1]")
-    if !(newsScale >= 0.0 && newsScale <= 1.0) then usage("-newsscale is a share in [0, 1]")
-    if !(noiseSkew >= 0.0 && noiseSkew < 1.0) then usage("-noiseskew is a skew in [0, 1)")
-    if !(newsFlip >= 0.0 && newsFlip <= 1.0) then usage("-newsflip is a share in [0, 1]")
-
-    if basket > 0 && basketBeta <= 0.0 then
-      usage("-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything")
     if sectors < 0 then usage(s"-sectors $sectors: the leg count cannot be negative")
-    if sectorIdio < 0.0 || sectorDriftSd < 0.0 then usage("-sectoridio and -sectordriftsd cannot be negative")
-    if sectors > 0 && sectorDriftHalf <= 0.0 then
-      usage("-sectors requires -sectordrifthalf > 0: the legs' drift state needs a half-life")
-    if overnight >= 1.0 then
-      usage(s"-overnight $overnight leaves the intraday session no variance to run the bridge on; it must be below 1")
-    if volIdio > 0.0 && rangeScale <= 0.0 then
-      usage("-volidio requires -rangescale > 0: volume rides the range")
-    nonNeg("-disasterrate", disasterRate); nonNeg("-disastersize", disasterSize)
-    share("-disasterrecover", disasterRecover)
-    // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely -- the pull
-    // chases its own shadow and nothing anchors the price level.  Strictly below 1.
-    if beliefShare < 0.0 || beliefShare >= 1.0 then
-      usage(s"-beliefshare $beliefShare out of range; needs 0 <= share < 1")
-    if beliefShare > 0.0 && beliefYears <= 0.0 then
-      usage(s"-beliefshare $beliefShare needs -beliefyears above 0")
-    nonNeg("-capyears", capYears)
-    if capYears > 0.0 && capWindow <= 0.0 then
-      usage(s"-capyears $capYears needs -capwindow above 0")
-    if disasterRate > 0.0 && (disasterSize <= 0.0 || disasterLen <= 0.0) then
-      usage(s"-disasterrate $disasterRate needs -disastersize and -disasterlen above 0")
-    if disasterRecover > 0.0 && disasterRecLen <= 0.0 then
-      usage(s"-disasterrecover $disasterRecover needs -disasterreclen above 0")
-    nonNeg("-recessrate", recessRate)
-    if recessRate > 0.0 && (recessSize <= 0.0 || recessLen <= 0.0) then
-      usage(s"-recessrate $recessRate needs -recesssize and -recesslen above 0")
-    if !(recessRecover >= 0.0 && recessRecover <= 1.0) then
-      usage(s"-recessrecover $recessRecover must be in [0, 1]")
-    if !(recessNews >= 1.0) then usage(s"-recessnews $recessNews must be at least 1")
-    nonNeg("-recessvol", recessVol)
-    if !(recessReprice >= 0.0 && recessReprice <= 1.0) then
-      usage(s"-recessreprice $recessReprice must be in [0, 1]")
-    nonNeg("-recessbase", recessBase)
-    nonNeg("-recessshape", recessShape)
-    if !(overshoot >= 0.0 && overshoot <= 1.0) then usage(s"-overshoot $overshoot must be in [0, 1]")
-    if !(overshootRate > 0.0 && overshootRate <= 1.0) then
-      usage(s"-overshootrate $overshootRate must be in (0, 1]")
-    if !(recessRecMult > 0.0) then usage(s"-recessrecmult $recessRecMult must be above 0")
-    nonNeg("-recesscredit", recessCredit)
-    nonNeg("-recessinfl", recessInfl)
-    nonNeg("-regimedrift", regimeDrift)
-    nonNeg("-driftsd", driftSd)
-    if boomFade <= 0.0 then usage(s"-boomfade $boomFade must be above 0")
-    nonNeg("-delevrate", delevRate)
-    nonNeg("-delevfrom", delevFrom)
-    if delevRate > 0.0 && (delevSize <= 0.0 || delevLen <= 0.0) then
-      usage(s"-delevrate $delevRate needs -delevsize and -delevlen above 0")
-    nonNeg("-spreaddd", spreadDd)
-    if disasterOvershoot < 0.0 || disasterOvershoot > 1.0 then
-      usage(s"-disasterovershoot $disasterOvershoot must be in 0..1")
-    if disasterAnticipate < 0.0 || disasterAnticipate > 1.0 then
-      usage(s"-disasteranticipate $disasterAnticipate must be in 0..1")
-    nonNeg("-volpull", volPull)
-    nonNeg("-boomrate", boomRate)
-    if boomRate > 0.0 && (boomSize <= 0.0 || boomLen <= 0.0) then
-      usage(s"-boomrate $boomRate needs -boomsize and -boomlen above 0")
-    nonNeg("-crowdimpact", crowdImpact); nonNeg("-panic", panic); nonNeg("-fundvol", fundVol)
-    nonNeg("-ratemean", rateMean); nonNeg("-easing", easing); nonNeg("-unwind", unwind)
-    nonNeg("-floorhold", floorhold)
-    nonNeg("-refuge", refuge); nonNeg("-inflsize", inflSize); nonNeg("-ratespeed", rateSpeed)
-    nonNeg("-discount", discount); nonNeg("-discountlag", discountLag)
-    nonNeg("-discountref", discountRef)
-    nonNeg("-margin", margin); nonNeg("-cost", cost)
-    // `-drift` carries no domain: a negative fundamental drift is a world, not an error.
-    // The PAIR is what no per-dial check can see -- `jumpScale` divides by `jumpRate`.
-    if jumpVar > 0.0 && jumpRate <= 0.0 then
-      usage(s"-jumpvar $jumpVar needs -jumprate above 0: the jump size is set by jumpVar/jumpRate")
+    nonNegRefusal("-cost", cost).foreach(why => usage(why))
     // The loss is only comparable on the ensemble the -noise weights were frozen from, so -fitness
     // pins 60x80 -- and REFUSES rather than ignores an explicit override, the same rule -emitfrom
     // follows.  Accepted-then-ignored is how "the loss improved" gets read off a different sample.
@@ -17912,7 +18226,11 @@ $body
                                  valueCap = valueCap, valueCapFall = valueCapFall,
                                  recessSpread = recessSpread, recessTransient = recessTransient,
                                  bondBetaCut = bondBetaCut, satTailDrop = satTailDrop,
-                                 volPullStep = volPullStep),
+                                 volPullStep = volPullStep, noiseScale = noiseScale,
+                                 crowdAdjust = crowdAdjust, recessStep = recessStep,
+                                 recessSteps = recessSteps, declineVol = declineVol,
+                                 declineVolHalf = declineVolHalf, drawdownVol = drawdownVol,
+                                 declineVolAttack = declineVolAttack),
                   easing = easing, unwind = unwind, refuge = refuge,
                   refugeDays = refugeDays,
                   inflProb = inflProb, inflSize = inflSize,
@@ -17934,6 +18252,7 @@ $body
                   slowShare = slowShare, slowVol = slowVol, slowLev = slowLev,
                   slowPhi = slowPhi, slowPerm = slowPerm, slowBeta = slowBeta,
                   noiseAsym = noiseAsym)
+    worldDomainRefusal(w).foreach(why => usage(why))
     // the digest of the world the other flags select, the one an `-emit` sidecar would carry
     if digestOnly then
       println(worldDigest(w))
