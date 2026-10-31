@@ -18,7 +18,7 @@ class RecordBandSuite extends FunSuite:
   private lazy val lines: Vector[String] =
     fixtureLines("recordbands-2026-10-20.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
       fixtureLines("volexit-2026-10-20.tsv").drop(1) ++ fixtureLines("volstate-2026-10-20.tsv").drop(1) ++
-      fixtureLines("bond10-2026-10-05.tsv").drop(1) ++ fixtureLines("tips-2026-10-11.tsv").drop(1) ++
+      fixtureLines("bond10-2026-10-05.tsv").drop(1) ++ fixtureLines("tips-2026-10-29.tsv").drop(1) ++
       fixtureLines("stockbond-2026-10-18.tsv").drop(1)
 
   private def row(set: String, name: String): Vector[Double] =

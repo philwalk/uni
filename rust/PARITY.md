@@ -161,9 +161,10 @@ needs a contract, and a set-equality check on its names is not one.**
 The world block's optional keys are a second such table (`OPTIONAL_WORLD_KEYS` /
 `OptionalWorldKeys`): the keys a set member may omit, each with the value an absent key reads
 -- `volPullStep` 0, the row 65 probes `recessStep` and `recessSteps` 0, the linear vol answer's
-`declineVol` 0, `declineVolHalf` 5, `drawdownVol` 0 and `declineVolAttack` 0. A key is written
-only away from its off value (`declineVolHalf` only while `declineVol` is on, `declineVolAttack`
-only while either dial is), so adding a dial moves no frozen world's body or digest, and the
+`declineVol` 0, `declineVolHalf` 5, `drawdownVol` 0 and `declineVolAttack` 0, and the rate side's
+`yieldAnchor` 0 (written after `expAnchor`) and `termPress` 0 (written after `termVol`). A key is
+written only away from its off value (`declineVolHalf` only while `declineVol` is on,
+`declineVolAttack` only while either dial is), so adding a dial moves no frozen world's body or digest, and the
 loader appends each absent key after the body's own in the table's order, so both twins hand
 the CLI the same arguments. The probe dials (`probe_dials` / `ProbeDials`) are optional keys
 outside the searched table: a search sets them and never steps them. A searched dial an
@@ -174,21 +175,6 @@ check in the CLI's order, each check the CLI's refusal text. The CLI reads it on
 built and the search re-draws any proposal it refuses, so no searched world is one the CLI
 would refuse. The first failing check is the refusal, so the order is under contract too; a
 check on which flags were given stays in the parser.
-
-**Open twin gap (0.25.1, 2026-10-29; the Scala port deferred by the user):** the Rust carries
-`yieldAnchor` (searched dial 106, optional key) and `termPress` (searched dial 107, range 0-4, the
-optional key after `termVol`: the term innovation times `1 + termPress x max(press, 0) / 0.05`,
-`WORLD_DOMAIN` 162), the Nasdaq set's era row `NASDAQ_ERA_ROWS`
-(`bond stress share %` reported, not graded, on the Nasdaq: `fit_targets` drops it from the
-search's ledger, the membership units and the band gates there), the real-side rows
-`real yield change vs inflation corr`, `real rate ex post share below 0 %` and
-`real rate ex post p10 %` (`real_rows` 13, `BOND_TARGETS` 38, the fixture `tips-2026-10-29.tsv`
-replacing `tips-2026-10-11.tsv`), and the recipes `0.25.1-sp500` / `0.25.1-nasdaq`. The Scala
-twin has none of them: its dial order is 105, its band tables carry the old fixture, and a
-`0.25.1` recipe name is unknown to it. The emit sidecar's schema is unchanged on purpose, so a
-sidecar still reads identically in both twins; a `-worldset` file carrying `yieldAnchor` is
-refused by the Scala as an unknown key. The port closes the gap before the twins are compared
-again; until then `jsrc/recordBands.sc -tips` is not byte-identical to `record_bands -tips`.
 
 `-emit`'s own columns are levels rather than differences, so that trap is remote there —
 but `rate` is floored at zero and `inflPress` starts there, and a column that can be

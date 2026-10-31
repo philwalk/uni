@@ -212,8 +212,8 @@ class Row65DialsSuite extends FunSuite:
         w.ext.declineVolAttack == 0.0
     assert(off(MarketSim.Defaults))
     MarketSim.Releases.foreach((v, w) => assert(off(w), s"release $v"))
-    // the vol line's solve carries them (PLAN row 65): the 0.25.0 S&P recipe alone
-    MarketSim.Recipes.foreach((n, w, _) => assertEquals(off(w), n != "0.25.0-sp500", s"recipe $n"))
+    // the vol line's solve carries them (PLAN row 65): the S&P recipes from 0.25.0 on
+    MarketSim.Recipes.foreach((n, w, _) => assertEquals(off(w), !Set("0.25.0-sp500", "0.25.1-sp500").contains(n), s"recipe $n"))
   }
 
   test("both dials at zero are bit-identical") {

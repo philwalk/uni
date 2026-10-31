@@ -65,7 +65,8 @@ class VerdictReadingsSuite extends FunSuite:
   test("bandedOf keeps exactly the rows that carry a record band") {
     val rows = MarketSim.fidelityRows(a, st, None, 27, 8, MarketSim.DefaultSeed, world)
     val b    = MarketSim.bandedOf(rows)
-    assertEquals(b.keySet, a.recordBands.map(_.name).toSet)
+    // the set's era rows carry a band and are reported, not read into the table
+    assertEquals(b.keySet, a.recordBands.map(_.name).filterNot(a.eraRows.contains).toSet)
     // NaN where the world runs no such leg: the same reading, unmeasurable on both sides
     rows.filter(_.recordBand.isDefined).foreach(r =>
       assert(b(r.name) == r.model || (b(r.name).isNaN && r.model.isNaN), r.name))

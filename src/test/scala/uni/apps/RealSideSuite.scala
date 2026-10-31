@@ -2,7 +2,7 @@ package uni.apps
 
 import munit.FunSuite
 
-/** THE REAL SIDE's record readings (`CpiBandRows` and kin, `tips-2026-10-11.tsv`) on series whose
+/** THE REAL SIDE's record readings (`CpiBandRows` and kin, `tips-2026-10-29.tsv`) on series whose
   * rows are known in closed form.  The Rust twin carries the same checks in `real_side_tests`; the
   * fixture itself is the twins' byte-for-byte comparison on the records. */
 class RealSideSuite extends FunSuite:
@@ -55,18 +55,28 @@ class RealSideSuite extends FunSuite:
 
   test("the real-yield rows read a line and a sawtooth") {
     val x = Array.tabulate(36)(i => 1.0 + 0.1 * i)
-    val r = MarketSim.realYieldReadings(x)
+    val r = MarketSim.realYieldReadings(x, Array.fill(35)(0.0))
     assert(near(r(0), 0.0), s"a line's monthly change has no spread: ${r(0)}")
+    assert(r(1) == 0.0, s"no spread reads no link: ${r(1)}")
+    // a sawtooth whose rises are the inflation months reads a link of one; a month the record
+    // lacks drops out of it
+    val half = Array.tabulate(37)(i => if i % 2 == 0 then 1.0 else 1.5)
+    val infl = Array.tabulate(36)(i => half(i + 1) - half(i))
+    infl(7) = Double.NaN
+    val link = MarketSim.realYieldReadings(half, infl)
+    assert(near(link(0), 0.5 * math.sqrt(36.0 / 35.0)), s"${link(0)}")
+    assert(near(link(1), 1.0), s"${link(1)}")
     val rep = MarketSim.realYieldReported(x)
     assert(near(rep(0), 2.75) && near(rep(2), 1.0, 1e-12) && rep(3) == 1.0 && near(rep(4), 4.5), s"$rep")
     // a sawtooth: every change is +0.3 or -0.3, so their sd is 0.3 times sqrt(n / (n - 1))
     val saw  = Array.tabulate(37)(i => if i % 2 == 0 then 1.0 else 1.3)
     val want = 0.3 * math.sqrt(36.0 / 35.0)
     val flat = Array.fill(37)(2.0)
-    assert(near(MarketSim.realYieldReadings(saw)(0), want, 1e-12) && near(MarketSim.breakevenReadings(saw, flat, saw)(0), want, 1e-12) &&
+    val noInfl = Array.fill(36)(0.0)
+    assert(near(MarketSim.realYieldReadings(saw, noInfl)(0), want, 1e-12) && near(MarketSim.breakevenReadings(saw, flat, saw)(0), want, 1e-12) &&
            near(MarketSim.breakevenReadings(saw, flat, saw)(1), want, 1e-12) && near(MarketSim.breakevenReadings(saw, saw, saw)(1), 0.0, 1e-12) &&
            near(MarketSim.breakevenReadings(saw, flat, saw)(2), 1.0, 1e-12),
-           s"sawtooth ${MarketSim.realYieldReadings(saw)}")
+           s"sawtooth ${MarketSim.realYieldReadings(saw, noInfl)}")
     val be = MarketSim.breakevenReported(saw)
     assert(near(be(0), 1.0 + 0.3 * 18.0 / 37.0, 1e-12) && be(2) == 1.0, s"$be")
   }
@@ -79,6 +89,72 @@ class RealSideSuite extends FunSuite:
     assert(near(t(0), 0.001 / 8.0 * math.sqrt(252.0) * 100.0), s"vol per duration ${t(0)}")
     assert(t(1).isNaN, s"never under water and a volatility that implies no depth: ${t(1)}")
     assert(near(t(2), 1.0) && near(t(3), -1.0), s"correlations ${t(2)} ${t(3)}")
+  }
+
+  /** The real yield's monthly change against the month's inflation on a path: the record reads
+    * 0.11 (DFII10, 2003-2026). */
+  private def inflLink(realYield: Array[Double], cpi: Array[Double]): Double =
+    val m   = (0 until realYield.length by 21).toVector
+    val dry = m.sliding(2).map(w => realYield(w(1)) - realYield(w(0))).toVector
+    val inf = m.sliding(2).map(w => MarketSim.lnDet(cpi(w(1)) / cpi(w(0)))).toVector
+    val (ma, mb) = (dry.sum / dry.length, inf.sum / inf.length)
+    val sab = dry.zip(inf).map((a, b) => (a - ma) * (b - mb)).sum
+    val saa = dry.map(a => (a - ma) * (a - ma)).sum
+    val sbb = inf.map(b => (b - mb) * (b - mb)).sum
+    sab / math.sqrt(saa * sbb)
+
+  /** THE BOND'S VOL REGIME (`WorldExt.termPress`): off in every frozen world, a searched dial and
+    * an optional key; the 0.25.1 recipe carries it, and with the key off the same world runs the
+    * calm vol alone: on, the long bond's annual vol varies across the years (the coefficient of
+    * variation up by a sixth at the recipe's calm vol, by a third at 0.0065) and the path moves. */
+  test("the bond's vol regime follows inflation pressure") {
+    MarketSim.Releases.foreach((v, w) => assert(w.ext.termPress == 0.0, s"release $v"))
+    assert(MarketSim.CalibrateDialOrder.contains("termPress"))
+    assert(MarketSim.OptionalWorldKeys.exists(_._1 == "termPress"))
+    // the 0.25.1 recipes carry the regime; the same world with the key off is the calm vol alone
+    val r = MarketSim.namedWorld("0.25.1-sp500").map(_._1).getOrElse(fail("recipe"))
+    assert(r.ext.termVol > 0.0 && r.ext.termPress > 0.0, "the recipe carries the regime")
+    val w   = r.copy(ext = r.ext.copy(termPress = 0.0))
+    val off = MarketSim.simulate(w, 100, MarketSim.DefaultSeed)
+    val on  = MarketSim.simulate(r, 100, MarketSim.DefaultSeed)
+    assert(!on.bond.sameElements(off.bond))
+    def sd(v: Seq[Double]): Double =
+      val m = v.sum / v.length
+      math.sqrt(v.map(x => (x - m) * (x - m)).sum / (v.length - 1))
+    def cv(bond: Array[Double]): Double =
+      val vols = MarketSim.dailyReturns(bond).grouped(MarketSim.DaysPerYear)
+        .filter(_.length == MarketSim.DaysPerYear).map(y => sd(y.toIndexedSeq)).toVector
+      sd(vols) / (vols.sum / vols.length)
+    val (a, b) = (cv(off.bond), cv(on.bond))
+    assert(b > 1.15 * a, s"annual bond vol cv $b at 1 against $a at 0")
+    // at a stronger innovation (0.0065, a third above the recipe's calm vol) the term state
+    // carries more of the bond's vol and the regime shows by a third
+    val strong = w.copy(ext = w.ext.copy(termVol = 0.0065))
+    val (a2, b2) = (cv(MarketSim.simulate(strong, 40, MarketSim.DefaultSeed).bond),
+                    cv(MarketSim.simulate(strong.copy(ext = strong.ext.copy(termPress = 1.0)), 40, MarketSim.DefaultSeed).bond))
+    assert(b2 > 1.3 * a2, s"annual bond vol cv $b2 at 1 against $a2 at 0 (strong)")
+  }
+
+  /** ONE EXPECTATION FOR BOTH LEGS (`WorldExt.yieldAnchor`): off in every frozen world and an
+    * optional key; at 0 the path is the recipe's to the bit; at 1 the real yield's monthly change
+    * no longer follows the month's inflation (the released form reads it above 0.3 on the S&P
+    * recipe, the record 0.11), while the breakeven is untouched to the bit. */
+  test("one expectation takes the inflation surprise out of the real yield") {
+    MarketSim.Releases.foreach((v, w) => assert(w.ext.yieldAnchor == 0.0, s"release $v"))
+    // the one-expectation form is the 0.25.1 recipes' (searched); every world before them carries 0
+    MarketSim.Recipes.foreach((n, w, _) => assertEquals(w.ext.yieldAnchor > 0.0, n.startsWith("0.25.1-"), s"recipe $n"))
+    assert(MarketSim.OptionalWorldKeys.exists(_._1 == "yieldAnchor"))
+    val w0 = MarketSim.namedWorld("0.25.0-sp500").map(_._1).getOrElse(fail("recipe"))
+    val w  = w0.copy(ext = w0.ext.copy(tips = 8.0))
+    assert(w.ext.expAnchor < 1.0)
+    val off = MarketSim.simulate(w, 30, MarketSim.DefaultSeed)
+    val z   = MarketSim.simulate(w.copy(ext = w.ext.copy(yieldAnchor = 0.0)), 30, MarketSim.DefaultSeed)
+    assert(z.realYield10.sameElements(off.realYield10))
+    val on = MarketSim.simulate(w.copy(ext = w.ext.copy(yieldAnchor = 1.0)), 30, MarketSim.DefaultSeed)
+    assert(on.expInfl10.sameElements(off.expInfl10), "the breakeven is untouched")
+    val (a, b) = (inflLink(off.realYield10, off.cpi), inflLink(on.realYield10, on.cpi))
+    assert(a > 0.3, s"released form $a")
+    assert(math.abs(b) < 0.15, s"one expectation $b against $a")
   }
 
   test("the yield's beta on the market moves the bond against the market") {
@@ -188,6 +264,17 @@ class RealSideSuite extends FunSuite:
   test("the real-rate rows read a mean and a sample sd") {
     val r = MarketSim.realRateReadings(Array(1.0, 2.0, 3.0, 4.0))
     assert(near(r(0), 2.5) && near(r(1), math.sqrt(5.0 / 3.0)), s"$r")
+  }
+
+  /** The ex-post real rate's negative share and tenth percentile, on a vector whose both are
+    * known. */
+  test("the real-rate rows read the negative share and the tenth percentile") {
+    val x = Array.tabulate(100)(i => i.toDouble - 24.5)
+    val r = MarketSim.realRateReadings(x)
+    // the sample variance of 100 evenly spaced points one apart is 100 x 101 / 12
+    assert(near(r(0), 25.0) && near(r(1), math.sqrt(100.0 * 101.0 / 12.0), 1e-12), s"$r")
+    assert(near(r(2), 25.0), s"negative share ${r(2)}")
+    assert(near(r(3), MarketSim.pctile(x.toIndexedSeq, 0.10), 1e-12) && r(3) < -14.0 && r(3) > -16.0, s"p10 ${r(3)}")
   }
 
   /** THE STOCK-BOND ROWS: equal series correlate at one, and with the inflation seen never moving

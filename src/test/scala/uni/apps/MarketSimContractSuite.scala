@@ -1316,7 +1316,8 @@ class MarketSimContractSuite extends FunSuite:
     for (v, w) <- MarketSim.Releases do assert(w.sectors == 0, s"release $v")
     for (n, w, _) <- MarketSim.Recipes do
       assertEquals(w.sectors > 0,
-                   Set("0.24.5-sp500", "0.24.5-nasdaq-basket", "0.24.6-nasdaq-basket", "0.24.6-sp500", "0.25.0-sp500").contains(n),
+                   Set("0.24.5-sp500", "0.24.5-nasdaq-basket", "0.24.6-nasdaq-basket", "0.24.6-sp500", "0.25.0-sp500",
+                       "0.25.1-sp500").contains(n),
                    s"recipe $n")
     val chans = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, basket = 8, basketBeta = 1.56,
                                         basketSector = 1.1, basketIdio = 0.9, basketGaps = 6.0)

@@ -1723,15 +1723,23 @@ object RecordBands {
       (ends.map((m, _, v) => (m, v)), s"${ends.head._2}..${ends.last._2}")
     val (ryMonths, ryWindow) = monthLevels(realFile)
     val ry       = ryMonths.map(_._2).toArray
-    val ryRecord = MarketSim.realYieldReadings(ry)
+    // the CPI level of each month the CPI window holds
+    val cpiOfMonth = cpi.map((d, v) => (d.take(7), v)).toMap
+    // the CPI's inflation over the month each real-yield change spans (a month the CPI lacks
+    // leaves no rate)
+    val infl = ryMonths.sliding(2).map { p =>
+      (cpiOfMonth.get(p(0)._1), cpiOfMonth.get(p(1)._1)) match
+        case (Some(a), Some(b)) => 100.0 * MarketSim.lnDet(b / a)
+        case _                  => Double.NaN
+    }.toArray
+    val ryRecord = MarketSim.realYieldReadings(ry, infl)
     eprintln(s"${fredName(realFile)}: ${ry.length} month ends $ryWindow; ${rowList(MarketSim.RealYieldBandRows, ryRecord)}; " +
              s"reported ${rowList(MarketSim.RealYieldReportedRows, MarketSim.realYieldReported(ry))}")
     printTipsGroup(set, MarketSim.RealYieldBandRows, fredName(realFile), ryWindow, ry.length, ryRecord,
-                   MarketSim.realYieldResamples(ry, resamples, seed, run.block), alpha(1))
+                   MarketSim.realYieldResamples(ry, infl, resamples, seed, run.block), alpha(2))
     val (beiMonths, beiWindow) = monthLevels(beiFile)
     val bei       = beiMonths.map(_._2).toArray
     // the year-over-year rate of the CPI window's months, beside each breakeven month end
-    val cpiOfMonth = cpi.map((d, v) => (d.take(7), v)).toMap
     val yoy = beiMonths.map { (m, _) =>
       val yearAgo = f"${m.take(4).toInt - 1}%04d-${m.drop(5).take(2)}"
       (cpiOfMonth.get(m), cpiOfMonth.get(yearAgo)) match
@@ -1787,7 +1795,7 @@ object RecordBands {
     eprintln(f"${fredName(dffFile)}%s less the next year's ${fredName(cpiFile)}%s: ${x.length}%d months $rrWindow%s; ${rowList(MarketSim.RealRateBandRows, rrRecord)}%s; " +
              f"reported real yield less the ex-post real rate over their ${both.length}%d common months $over%.3f")
     printTipsGroup(set, MarketSim.RealRateBandRows, fredName(dffFile), rrWindow, x.length, rrRecord,
-                   MarketSim.realRateResamples(x, resamples, seed, run.block), alpha(2))
+                   MarketSim.realRateResamples(x, resamples, seed, run.block), alpha(4))
 
   /** `-profits`: THE PROFIT DECLINE ROWS (`ProfitDeclineRows`; `profits-2026-10-19.tsv`) of a
     * quarterly FRED series (corporate profits after tax, CPATAX), read by `profitDeclineOf` on

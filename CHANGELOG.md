@@ -50,11 +50,6 @@ rule: `0.25.1-sp500.json` (59 members) 54.30 to 50.90, −3.40 [−4.18, −2.60
 outgoing set had one, the real yield's inflation link at 0.1% and 0.3%. They are the worlds to pin
 in place of the 0.25.0 recipes.
 
-**The Scala twin does not carry 0.25.1.** Its dial order stops at 105 (`yieldAnchor` and `termPress`
-unknown), its band tables carry the old TIPS fixture, and a `0.25.1` recipe name or a world file
-with either key is refused there; the emit sidecar's schema is unchanged, so a sidecar reads
-identically in both. `rust/PARITY.md` carries the gap.
-
 ## v0.25.0 — 2026-10-29
 
 **The calibrated membership rule.** A world is a member when the record is a typical single

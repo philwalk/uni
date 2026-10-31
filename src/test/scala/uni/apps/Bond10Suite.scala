@@ -100,7 +100,7 @@ class Bond10Suite extends FunSuite:
     assert(!off.bond10.sameElements(on.bond10) && !off.tips10.sameElements(on.tips10) && !off.realYield10.sameElements(on.realYield10))
     def dm(v: Array[Double]): Double =
       val ends = (20 until v.length by 21).map(v).toArray
-      MarketSim.realYieldReadings(ends)(0)
+      MarketSim.realYieldReadings(ends, Array.fill(ends.length - 1)(0.0))(0)
     assert(dm(on.realYield10) < dm(off.realYield10), s"term state ${dm(on.realYield10)} against the overnight rate ${dm(off.realYield10)}")
   }
 
