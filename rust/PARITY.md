@@ -175,6 +175,21 @@ built and the search re-draws any proposal it refuses, so no searched world is o
 would refuse. The first failing check is the refusal, so the order is under contract too; a
 check on which flags were given stays in the parser.
 
+**Open twin gap (0.25.1, 2026-10-29; the Scala port deferred by the user):** the Rust carries
+`yieldAnchor` (searched dial 106, optional key) and `termPress` (searched dial 107, range 0-4, the
+optional key after `termVol`: the term innovation times `1 + termPress x max(press, 0) / 0.05`,
+`WORLD_DOMAIN` 162), the Nasdaq set's era row `NASDAQ_ERA_ROWS`
+(`bond stress share %` reported, not graded, on the Nasdaq: `fit_targets` drops it from the
+search's ledger, the membership units and the band gates there), the real-side rows
+`real yield change vs inflation corr`, `real rate ex post share below 0 %` and
+`real rate ex post p10 %` (`real_rows` 13, `BOND_TARGETS` 38, the fixture `tips-2026-10-29.tsv`
+replacing `tips-2026-10-11.tsv`), and the recipes `0.25.1-sp500` / `0.25.1-nasdaq`. The Scala
+twin has none of them: its dial order is 105, its band tables carry the old fixture, and a
+`0.25.1` recipe name is unknown to it. The emit sidecar's schema is unchanged on purpose, so a
+sidecar still reads identically in both twins; a `-worldset` file carrying `yieldAnchor` is
+refused by the Scala as an unknown key. The port closes the gap before the twins are compared
+again; until then `jsrc/recordBands.sc -tips` is not byte-identical to `record_bands -tips`.
+
 `-emit`'s own columns are levels rather than differences, so that trap is remote there —
 but `rate` is floored at zero and `inflPress` starts there, and a column that can be
 *identically* zero is exactly the case. They are folded through `(-0.0) + 0.0 = +0.0`,

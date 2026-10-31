@@ -715,7 +715,7 @@ fn refused(bad: bool, why: &str) -> Option<String> {
 /// every range `calibrate` sweeps. A `contains` test is false for NaN, so a NaN literal is
 /// refused here rather than reaching the model. Value-level checks only: a check on which flags
 /// were given stays in the parser.
-const WORLD_DOMAIN: [fn(&World) -> Option<String>; 160] = [
+const WORLD_DOMAIN: [fn(&World) -> Option<String>; 162] = [
     |w| share_refusal("-trendshare", w.trend_share),
     |w| share_refusal("-leverage", w.leverage),
     |w| share_refusal("-downshock", w.down_shock),
@@ -738,6 +738,7 @@ const WORLD_DOMAIN: [fn(&World) -> Option<String>; 160] = [
     |w| non_neg_refusal("-spikerate", w.spike_rate),
     |w| non_neg_refusal("-spikesize", w.spike_size),
     |w| non_neg_refusal("-termvol", w.term_vol),
+    |w| non_neg_refusal("-termpress", w.term_press),
     |w| non_neg_refusal("-brkvol", w.brk_vol),
     |w| {
         refused(
@@ -793,6 +794,12 @@ const WORLD_DOMAIN: [fn(&World) -> Option<String>; 160] = [
         refused(
             !(0.0..=1.0).contains(&w.exp_anchor),
             "-expanchor is a share from 0 to 1",
+        )
+    },
+    |w| {
+        refused(
+            !(0.0..=1.0).contains(&w.yield_anchor),
+            "-yieldanchor is a share from 0 to 1",
         )
     },
     |w| non_neg_refusal("-volfeedback", w.vol_feedback),
@@ -1395,6 +1402,7 @@ pub fn default_world() -> World {
         spike_rate: 0.0,
         spike_size: 0.0,
         term_vol: 0.0,
+        term_press: 0.0,
         brk_vol: 0.0,
         brk_nominal: 0.0,
         discount_yield: 0.0,
@@ -1416,6 +1424,7 @@ pub fn default_world() -> World {
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
+        yield_anchor: 0.0,
         vol_feedback: 0.0,
         easing: 0.052,
         unwind: 0.35,
@@ -1584,6 +1593,7 @@ fn v0_19_2() -> World {
         spike_rate: 0.0,
         spike_size: 0.0,
         term_vol: 0.0,
+        term_press: 0.0,
         brk_vol: 0.0,
         brk_nominal: 0.0,
         discount_yield: 0.0,
@@ -1605,6 +1615,7 @@ fn v0_19_2() -> World {
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
+        yield_anchor: 0.0,
         vol_feedback: 0.0,
         easing: 0.045,
         unwind: 0.35,
@@ -1734,6 +1745,7 @@ fn v0_24_1() -> World {
         spike_rate: 0.0,
         spike_size: 0.0,
         term_vol: 0.0,
+        term_press: 0.0,
         brk_vol: 0.0,
         brk_nominal: 0.0,
         discount_yield: 0.0,
@@ -1755,6 +1767,7 @@ fn v0_24_1() -> World {
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
+        yield_anchor: 0.0,
         vol_feedback: 0.0,
         easing: 0.052,
         unwind: 0.35,
@@ -2034,7 +2047,81 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     rows.extend(rows_0245(nq_0244));
     rows.extend(rows_0246(nq_0244));
     rows.extend(rows_0250(nq_0244));
+    rows.extend(rows_0251(nq_0244));
     rows
+}
+
+/// `0.25.1-sp500`: member 0 of `0.25.1-sp500.json` (2026-10-30): the 0.25.0 S&P recipe under the
+/// one-expectation form (`yield_anchor` 0.73, where the record's link of 0.11 sits) and the bond's
+/// vol regime (`term_press` 1, `term_vol` the calm era's innovation), the rate and bond side
+/// re-solved around them and every dial that read no worse at the 0.25.0 value returned to it. On
+/// the ledger with the real yield's inflation link and the ex-post real rate's negative share and
+/// tenth percentile graded: 38.5 against the 0.25.0 recipe's 45.8 on the judge's seeds, membership
+/// p 0.93, every class passing on every read.
+fn recipe_0251_sp500(mut w: World) -> World {
+    w.rate_mean = 0.064741312;
+    w.news_bond = 0.47452643;
+    w.news_bond_skip = 0.017489922;
+    w.slow_bond_infl = 0.030234235;
+    w.term_premium = 0.069160855;
+    w.term_vol = 0.0048085213;
+    w.term_press = 1.0000000;
+    w.cpi_noise_level = 0.87106100;
+    w.policy_growth = 0.068884987;
+    w.yield_lag = 28.615200;
+    w.exp_anchor = 0.49890381;
+    w.yield_anchor = 0.72761553;
+    w.vol_feedback = 0.29804100;
+    w.refuge = 0.13842340;
+    w.refuge_days = 1.3746700;
+    w.lev_gain = 4.5653900;
+    w.margin = 0.0079948400;
+    w
+}
+
+/// `0.25.1-nasdaq`: member 0 of `0.25.1-nasdaq.json` (2026-10-30), as the S&P's: `yield_anchor`
+/// 0.63 and `term_press` 1, the rate and bond side re-solved around them, on the Nasdaq's own era
+/// the breakeven premium's innovation too, and every dial that read no worse at the 0.25.0 value
+/// returned to it. 34.4 against the 0.25.0 recipe's 42.8 on the judge's seeds with
+/// `bond stress share %` reported (`NASDAQ_ERA_ROWS`), membership p 0.91, every class passing on
+/// every read.
+fn recipe_0251_nasdaq(mut w: World) -> World {
+    w.rate_mean = 0.034508216;
+    w.news_bond = 0.24905600;
+    w.news_bond_skip = 0.26802600;
+    w.slow_bond_infl = 0.48413900;
+    w.term_premium = 0.090792400;
+    w.term_vol = 0.0056821201;
+    w.term_press = 1.0000000;
+    w.brk_vol = 0.0026305000;
+    w.cpi_noise_level = 0.94952559;
+    w.policy_growth = 0.18095488;
+    w.yield_beta = 0.028855859;
+    w.yield_lag = 24.417600;
+    w.exp_anchor = 0.53590901;
+    w.yield_anchor = 0.63363114;
+    w.vol_feedback = 0.55284452;
+    w.refuge = 0.10451699;
+    w.refuge_days = 0.41558600;
+    w.lev_gain = 6.3588392;
+    w.margin = 0.0046249100;
+    w
+}
+
+/// The 0.25.1 recipes.
+fn rows_0251(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
+    vec![
+        (
+            "0.25.1-sp500",
+            recipe_0251_sp500(recipe_0250_sp500(v0_24_6_sp500())),
+            "sp500",
+        ),
+        (
+            "0.25.1-nasdaq",
+            recipe_0251_nasdaq(recipe_0250_nasdaq(v0_24_6_nasdaq(nq_0244))),
+            "nasdaq",
+        ),
+    ]
 }
 
 /// The 0.24.6 recipes. THE DRIFT HELD AT THE RECORD: each 0.24.5 recipe at the drift that puts
@@ -2221,6 +2308,7 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
         spike_rate: 0.0,
         spike_size: 0.0,
         term_vol: 0.0,
+        term_press: 0.0,
         brk_vol: 0.0,
         brk_nominal: 0.0,
         discount_yield: 0.0,
@@ -2242,6 +2330,7 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
+        yield_anchor: 0.0,
         vol_feedback: 0.0,
         infl_size: 0.081,
         ..recipe_0245_nasdaq(nq_0244)
@@ -3088,6 +3177,7 @@ fn v0_23_0() -> World {
         spike_rate: 0.0,
         spike_size: 0.0,
         term_vol: 0.0,
+        term_press: 0.0,
         brk_vol: 0.0,
         brk_nominal: 0.0,
         discount_yield: 0.0,
@@ -3109,6 +3199,7 @@ fn v0_23_0() -> World {
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
+        yield_anchor: 0.0,
         vol_feedback: 0.0,
         easing: 0.052,
         unwind: 0.35,
@@ -3258,6 +3349,7 @@ fn v0_22_1() -> World {
         spike_rate: 0.0,
         spike_size: 0.0,
         term_vol: 0.0,
+        term_press: 0.0,
         brk_vol: 0.0,
         brk_nominal: 0.0,
         discount_yield: 0.0,
@@ -3279,6 +3371,7 @@ fn v0_22_1() -> World {
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
+        yield_anchor: 0.0,
         vol_feedback: 0.0,
         easing: 0.060,
         unwind: 0.35,
@@ -3430,6 +3523,7 @@ fn v0_22_0() -> World {
         spike_rate: 0.0,
         spike_size: 0.0,
         term_vol: 0.0,
+        term_press: 0.0,
         brk_vol: 0.0,
         brk_nominal: 0.0,
         discount_yield: 0.0,
@@ -3451,6 +3545,7 @@ fn v0_22_0() -> World {
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
+        yield_anchor: 0.0,
         vol_feedback: 0.0,
         easing: 0.060,
         unwind: 0.35,
@@ -3602,6 +3697,7 @@ fn v0_21_0() -> World {
         spike_rate: 0.0,
         spike_size: 0.0,
         term_vol: 0.0,
+        term_press: 0.0,
         brk_vol: 0.0,
         brk_nominal: 0.0,
         discount_yield: 0.0,
@@ -3623,6 +3719,7 @@ fn v0_21_0() -> World {
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
+        yield_anchor: 0.0,
         vol_feedback: 0.0,
         easing: 0.052,
         unwind: 0.35,
@@ -3774,6 +3871,7 @@ fn v0_20_0() -> World {
         spike_rate: 0.0,
         spike_size: 0.0,
         term_vol: 0.0,
+        term_press: 0.0,
         brk_vol: 0.0,
         brk_nominal: 0.0,
         discount_yield: 0.0,
@@ -3795,6 +3893,7 @@ fn v0_20_0() -> World {
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
+        yield_anchor: 0.0,
         vol_feedback: 0.0,
         easing: 0.046,
         unwind: 0.35,
@@ -4570,7 +4669,7 @@ pub struct World {
     /// marked to is emitted as `realYield10`, the expectation as `expInfl10` (the breakeven over
     /// the nominal leg's yield by construction), the policy rate less the one-year expectation as
     /// `realRate`, and the leg's price as `tips10`; graded against a par TIPS built from FRED's
-    /// DFII10 and CPI-U (`tips-2026-10-11.tsv`). No refuge bid: the record's TIPS fall with
+    /// DFII10 and CPI-U (`tips-2026-10-29.tsv`). No refuge bid: the record's TIPS fall with
     /// equities in a flight to quality (2008, March 2020), which is what its monthly correlation
     /// with the market (+0.16, against the nominal bond's below zero) reads.
     pub tips: f64,
@@ -4611,6 +4710,18 @@ pub struct World {
     /// 0.22 pp a month as a random walk within the year and reverts over years, which the
     /// overnight rate's noise cannot give a ten-year yield; the long bond is marked to it too.
     pub term_vol: f64,
+    /// THE BOND'S VOL REGIME UNDER INFLATION PRESSURE (the `termPress` key, searched): the term
+    /// state's innovation `term_vol` times `1 + term_press x max(press, 0) / 0.05`, the pressure
+    /// in rate units, so at 1 a ten-point pressure triples the ten-year yield's innovation and the
+    /// long bond's vol with it; `term_vol` is then the calm era's innovation. The record's
+    /// par-bond annual vol averages 4.9% over 1962-78 and 14.7% over 1979-82 (the calendar years'
+    /// vol varies with an sd of 0.45 of its mean, where the 0.25.1 S&P recipe reads 0.24 without
+    /// the tie and 0.32 with it), and three in four of its stressed sessions
+    /// (`bond stress share %`, 0.66) fall in 1979-80 at 10-12% yields after a six-month rise;
+    /// under this tie the model's stressed sessions fall in inflation regimes (nine in ten on the
+    /// S&P, six in ten on the Nasdaq) where a vol state on its own stream puts them at random
+    /// (16-27%, against 17% of all sessions). 0 is bit-identical.
+    pub term_press: f64,
     /// THE BREAKEVEN PREMIUM (item 60): the sd per sqrt-year, decimal, of the innovation of the
     /// premium the market's ten-year breakeven carries over its inflation expectation, an OU state
     /// reverting at `BRK_REVERT` on its own stream. At 0 the breakeven is the expectation alone,
@@ -4765,6 +4876,16 @@ pub struct World {
     /// regime moves the REAL yield instead, which is 2003-2026 (breakevens flat on the prints,
     /// 2022's yields following the policy rate as real yields). 1 is bit-identical.
     pub exp_anchor: f64,
+    /// THE NOMINAL YIELD'S INFLATION EXPECTATION AT THE BREAKEVEN'S ANCHORING (searched; the
+    /// `yieldAnchor` key, written when on): the share taken out of the gap between the market's
+    /// inflation estimates carried whole in the ten-year yield and carried at `exp_anchor` in the
+    /// breakeven, so at 1 the two legs price one expectation and the real yield (`y10 - e10`)
+    /// holds no inflation surprise, only the slow means' drift. The record's real yield moves
+    /// with policy, not with the print: DFII10's monthly change against the month's CPI-U
+    /// inflation reads 0.11 (`real yield change vs inflation corr`), where the two-expectation
+    /// form reads a median 0.58 (0.35-0.76 over 23-year histories) and one expectation -0.06; the
+    /// search places the share where the record's link sits. 0 is bit-identical; inert while `exp_anchor` is 1.
+    pub yield_anchor: f64,
     /// VOLATILITY FEEDBACK (item 61's third rule): a selling flow into the equity of this times
     /// the excess of the amplifier's fast realized sd over its four-year level (the rebound's
     /// `vol_pull` ratio), per year, so a decline keeps going while volatility stays high and the
@@ -8848,7 +8969,14 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // the state is off
         // the state; the beta's state (`fq`, updated above) is carried below with the breakeven's
         let y10_base = if term_on {
-            tau += -TERM_REVERT * tau * dt + w.term_vol * sqdt * taurng.randn();
+            let sig_tau = w.term_vol;
+            // the innovation under inflation pressure (`term_press`); off, the released bits
+            let sig_tau = if w.term_press > 0.0 {
+                sig_tau * (1.0 + w.term_press * press.max(0.0) / 0.05)
+            } else {
+                sig_tau
+            };
+            tau += -TERM_REVERT * tau * dt + sig_tau * sqdt * taurng.randn();
             r_sum += rate;
             a_sum += acc;
             g_sum += g_hat;
@@ -8864,11 +8992,15 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             // the rate's long-run mean plus each state's excess over its own, decaying
             let (g_x, s_x, a_x) = (g_hat - gbar, s_hat - sbar, acc - abar);
             let target_mkt = rbar + g_x + s_x - a_x + pg;
-            rbar + g_x * p_i10 + s_x * p_s10 - a_x * p_a10
-                + pg * p_g10
-                + (rate - target_mkt) * p_r10
-                + tau
-                + fq
+            // the inflation terms at the breakeven's anchoring (`yield_anchor`): the off
+            // branch is the released expression to the bit
+            let (gi, si) = if w.yield_anchor > 0.0 {
+                let k = 1.0 - w.yield_anchor * (1.0 - w.exp_anchor);
+                (g_x * p_i10 * k, s_x * p_s10 * k)
+            } else {
+                (g_x * p_i10, s_x * p_s10)
+            };
+            rbar + gi + si - a_x * p_a10 + pg * p_g10 + (rate - target_mkt) * p_r10 + tau + fq
         } else {
             rate
         };
@@ -10384,7 +10516,7 @@ pub struct WorldStats {
     /// yield's and the breakeven's monthly change sd, the TIPS leg's four rows and the ex-post
     /// real rate's mean and sd, NaN when the leg is off; `real_reported` the reported rows
     /// (`REAL_REPORTED_ROWS`) the same way
-    pub real_rows: [f64; 10],
+    pub real_rows: [f64; 13],
     pub real_reported: [f64; 6],
     /// THE STOCK-BOND ROWS (item 61; `stock_bond_of_path`): the medians over paths of the
     /// ten-year leg's monthly correlation with the equity, its slope on the inflation seen and
@@ -13296,7 +13428,7 @@ pub fn bond10_resamples(
     })
 }
 
-/// THE REAL SIDE's banded rows (item 60; `tips-2026-10-11.tsv`), five groups each read on its own
+/// THE REAL SIDE's banded rows (item 60; `tips-2026-10-29.tsv`), five groups each read on its own
 /// public-domain record and resampled in one-year blocks of its own cadence.
 ///
 /// CPI (`cpi_readings`, monthly log changes of CPI-U): mean inflation, the log change a year in
@@ -13339,8 +13471,15 @@ pub const CPI_CENTURY_ROWS: [&str; 2] = [
 /// are the era's, so `real_yield_reported` carries them with persistence at twelve months and
 /// the lowest and highest month end, and the graded row is the innovation -- 0.22 pp a month, a
 /// random walk within the year (the 12-month change's sd is 0.96 of sqrt(12) times it) that
-/// mean-reverts over years.
-pub const REAL_YIELD_BAND_ROWS: [&str; 1] = ["real yield monthly change sd pp"];
+/// mean-reverts over years. THE INFLATION LINK: the correlation of that monthly change with the
+/// month's CPI-U inflation, 0.11 on the record -- inflation news goes to the breakeven and the
+/// real yield moves with policy, not with the print (one expectation for both legs,
+/// `World::yield_anchor`); a world whose nominal yield carries the inflation estimates its
+/// breakeven anchors reads a median 0.58 (0.35-0.76 over 23-year histories).
+pub const REAL_YIELD_BAND_ROWS: [&str; 2] = [
+    "real yield monthly change sd pp",
+    "real yield change vs inflation corr",
+];
 pub const REAL_YIELD_REPORTED_ROWS: [&str; 5] = [
     "real yield level %",
     "real yield sd pp",
@@ -13384,8 +13523,16 @@ pub const TIPS_BAND_ROWS: [&str; 4] = [
 /// The short real rate read EX POST (`real_rate_readings`, monthly: the month's mean policy rate
 /// less the next twelve months' CPI-U inflation, in percent): mean and sd. There is no public
 /// record of one-year expected inflation, so the realised rate is the record the model's
-/// `realRate` is set against.
-pub const REAL_RATE_BAND_ROWS: [&str; 2] = ["real rate ex post %", "real rate ex post sd pp"];
+/// `realRate` is set against. Its NEGATIVE SHARE (months
+/// below zero, in percent) and TENTH PERCENTILE are the stress a priced real ladder feels: the
+/// record pairs its low real rates with high inflation (the 1970s), and a world whose real rate
+/// seldom goes under shelters such a buyer.
+pub const REAL_RATE_BAND_ROWS: [&str; 4] = [
+    "real rate ex post %",
+    "real rate ex post sd pp",
+    "real rate ex post share below 0 %",
+    "real rate ex post p10 %",
+];
 /// THE REAL SIDE's reported rows (`real_rows_of_path`, `Anchors::real_reported`): the TIPS era's
 /// levels beside the model's, never graded (see `REAL_YIELD_BAND_ROWS`), and the leg's worst
 /// twelve months beside the record's 2022 run.
@@ -13586,10 +13733,13 @@ fn monthly_changes(x: &[f64]) -> Vec<f64> {
     x.windows(2).map(|p| p[1] - p[0]).collect()
 }
 
-/// `REAL_YIELD_BAND_ROWS` on month-end levels in percent.
+/// `REAL_YIELD_BAND_ROWS` on month-end levels in percent, beside the inflation of the month each
+/// change spans (`infl`, percent, one per change; a month the record lacks is NaN and drops out
+/// of the correlation; a series without spread reads 0).
 #[must_use]
-pub fn real_yield_readings(x: &[f64]) -> [f64; 1] {
-    [sd1(&monthly_changes(x))]
+pub fn real_yield_readings(x: &[f64], infl: &[f64]) -> [f64; 2] {
+    let d = monthly_changes(x);
+    [sd1(&d), finite_corr(&d, infl)]
 }
 
 /// `REAL_YIELD_REPORTED_ROWS`: the level, its sd, persistence at twelve months, the lowest and
@@ -13609,19 +13759,23 @@ pub fn real_yield_reported(x: &[f64]) -> [f64; 5] {
 /// `real_yield_readings` reads the levels: resampling the levels would put a jump the size of
 /// two blocks' level difference at every join, and the record then sits at its own resamples'
 /// fifth percentile (0.22 against 0.21-0.34).
+/// The months' inflation rides in the same blocks, so the link row's resamples pair each change
+/// with its own month; the sd row's draws are the single series' (`block_resamples_triples`).
 #[must_use]
 pub fn real_yield_resamples(
     x: &[f64],
+    infl: &[f64],
     resamples: usize,
     seed: u64,
     block_years: Option<usize>,
-) -> Vec<[f64; 1]> {
-    block_resamples_of(
-        &monthly_changes(x),
+) -> Vec<[f64; 2]> {
+    let dx = monthly_changes(x);
+    block_resamples_triples(
+        [&dx, infl, infl],
         block_years.map_or(MONTHLY_BLOCK, |y| MONTHS_PER_YEAR * y),
         resamples,
         seed,
-        |d| [sd1(d)],
+        |d, i, _| [sd1(d), finite_corr(d, i)],
     )
 }
 
@@ -13770,10 +13924,12 @@ pub fn tips_resamples(
     })
 }
 
-/// `REAL_RATE_BAND_ROWS` on the monthly ex-post real rate in percent.
+/// `REAL_RATE_BAND_ROWS` on the monthly ex-post real rate in percent: its mean, sd, the share of
+/// months below zero in percent and its tenth percentile.
 #[must_use]
-pub fn real_rate_readings(x: &[f64]) -> [f64; 2] {
-    [mean_of(x), sd1(x)]
+pub fn real_rate_readings(x: &[f64]) -> [f64; 4] {
+    let below = x.iter().filter(|v| **v < 0.0).count() as f64 / x.len() as f64;
+    [mean_of(x), sd1(x), 100.0 * below, pctile(x, 0.10)]
 }
 
 /// `record_resamples` on the monthly ex-post real rate in five-year blocks, read by
@@ -13784,7 +13940,7 @@ pub fn real_rate_resamples(
     resamples: usize,
     seed: u64,
     block_years: Option<usize>,
-) -> Vec<[f64; 2]> {
+) -> Vec<[f64; 4]> {
     block_resamples_of(
         x,
         block_years.map_or(MONTHLY_BLOCK, |y| MONTHS_PER_YEAR * y),
@@ -17044,7 +17200,7 @@ struct PathRead {
     bond10_crash: Vec<[f64; 2]>,
     bond10_excess: f64,
     /// the real side's graded and reported rows (`real_rows_of_path`), NaN when the leg is off
-    real_rows: [f64; 10],
+    real_rows: [f64; 13],
     real_reported: [f64; 6],
     vol: f64,
     kurt: f64,
@@ -17137,15 +17293,16 @@ fn cpi_persistence_of_path(cpi: &[f64]) -> f64 {
 }
 
 /// THE REAL SIDE's rows on one path (item 60): `REAL_YIELD_BAND_ROWS`, `BREAKEVEN_BAND_ROWS`,
-/// `TIPS_BAND_ROWS` and `REAL_RATE_BAND_ROWS` in that order, then `REAL_REPORTED_ROWS`; NaN
-/// when the TIPS leg is off. Each is read as the record's: the real yield and the expectation
+/// `TIPS_BAND_ROWS` and `REAL_RATE_BAND_ROWS` in that order (the rows added since in the same
+/// order after them: the real yield's inflation link, the real rate's negative share and tenth
+/// percentile), then `REAL_REPORTED_ROWS`; NaN when the TIPS leg is off. Each is read as the record's: the real yield and the expectation
 /// at 21-session month ends; the leg's REAL return (its price deflated by the path's CPI) at the
 /// leg's duration against the nominal leg and the equity; the policy rate's monthly mean less
 /// the next twelve months' realized inflation. The reported rows are the real yield's and the
 /// breakeven's level and sd, the real yield less the ex-post real rate over the months both
 /// hold, and the leg's worst twelve-month real return in percent.
-fn real_rows_of_path(s: &Path) -> ([f64; 10], [f64; 6]) {
-    let none = ([f64::NAN; 10], [f64::NAN; 6]);
+fn real_rows_of_path(s: &Path) -> ([f64; 13], [f64; 6]) {
+    let none = ([f64::NAN; 13], [f64::NAN; 6]);
     if s.tips10.is_empty() {
         return none;
     }
@@ -17195,18 +17352,17 @@ fn real_rows_of_path(s: &Path) -> ([f64; 10], [f64; 6]) {
     // the nominal yield at the same month ends: the real yield plus the breakeven
     let y: Vec<f64> = ry.iter().zip(&be).map(|(a, b)| a + b).collect();
     let be_rows = breakeven_readings(&be[MONTHS_PER_YEAR..], &yoy, &y[MONTHS_PER_YEAR..]);
+    // the inflation of the month each real-yield change spans, off the same month ends
+    let infl: Vec<f64> = cpi_ends
+        .windows(2)
+        .map(|p| 100.0 * ln_det(p[1] / p[0]))
+        .collect();
+    let ry_rows = real_yield_readings(&ry, &infl);
+    let rr_rows = real_rate_readings(&rr);
     (
         [
-            real_yield_readings(&ry)[0],
-            be_rows[0],
-            t[0],
-            t[1],
-            t[2],
-            t[3],
-            mean_of(&rr),
-            sd1(&rr),
-            be_rows[1],
-            be_rows[2],
+            ry_rows[0], be_rows[0], t[0], t[1], t[2], t[3], rr_rows[0], rr_rows[1], be_rows[1],
+            be_rows[2], ry_rows[1], rr_rows[2], rr_rows[3],
         ],
         [
             mean_of(&ry),
@@ -17457,7 +17613,7 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
     let (real_rows, real_reported) = if nd.real || rest {
         real_rows_of_path(s)
     } else {
-        ([f64::NAN; 10], [f64::NAN; 6])
+        ([f64::NAN; 13], [f64::NAN; 6])
     };
     let stock_bond = if nd.bond10 || rest {
         stock_bond_of_path(s)
@@ -17856,6 +18012,9 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
             med_by(|p| p.real_rows[7]),
             med_by(|p| p.real_rows[8]),
             med_by(|p| p.real_rows[9]),
+            med_by(|p| p.real_rows[10]),
+            med_by(|p| p.real_rows[11]),
+            med_by(|p| p.real_rows[12]),
         ],
         real_reported: [
             med_by(|p| p.real_reported[0]),
@@ -18768,7 +18927,7 @@ pub struct Anchors {
     /// (`bond10_readings`; `bond10-2026-10-05.tsv`)
     pub bond10_window: &'static str,
     pub bond10_years: usize,
-    /// THE PRICE LEVEL's record windows (item 60; `tips-2026-10-11.tsv`): CPI-U over the rate's
+    /// THE PRICE LEVEL's record windows (item 60; `tips-2026-10-29.tsv`): CPI-U over the rate's
     /// window for the level, spread and share rows, and the century (not seasonally adjusted,
     /// from 1913) for the deflation share and the spell rate, read on the world's histories of
     /// `cpi_century_years` -- the paths' own length, the century being longer than any path
@@ -18780,7 +18939,7 @@ pub struct Anchors {
     pub cpi_persistence: f64,
     pub cpi_century_window: &'static str,
     pub cpi_century_years: usize,
-    /// THE REAL SIDE's record windows (item 60; `tips-2026-10-11.tsv`): DFII10 and T10YIE at
+    /// THE REAL SIDE's record windows (item 60; `tips-2026-10-29.tsv`): DFII10 and T10YIE at
     /// month ends over the TIPS era for the real yield's and the breakeven's rows, the par TIPS
     /// beside the DGS10 par bond and the market on their common sessions for the leg's, and the
     /// policy rate less the next year's inflation over the rate's window for the ex-post real
@@ -18996,6 +19155,13 @@ pub const SP500_ERA_ROWS: [&str; 4] = [
     "breakeven vs yield corr monthly",
     "tips vs bond10 corr",
 ];
+
+/// THE NASDAQ SET's era row (`Anchors::era_rows`): the long bond's stress share, whose record
+/// (0.66% of sessions on DGS20 1962-2026) is the 1979 shift of the bond's vol regime after
+/// seventeen calm years; on the set's rate window (1999-2026) the record reads 0.06 from one
+/// four-session episode, too thin to band, so the window's world reports the row as the S&P
+/// set reports the TIPS era's breakeven rows.
+pub const NASDAQ_ERA_ROWS: [&str; 1] = ["bond stress share %"];
 
 const NASDAQ_REPORTED: [ReportedRecord; 5] = [
     ReportedRecord {
@@ -19279,7 +19445,7 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
 
 /// The S&P set's `RecordBand`s: `recordbands-2026-09-26.tsv`, CRSP total return 1954-2026 and, for
 /// the two clustering rows, the century -- each row on the window the set reads it over.
-const RECORD_BANDS_SP500: [RecordBand; 49] = [
+const RECORD_BANDS_SP500: [RecordBand; 52] = [
     RecordBand {
         name: "equity vol %",
         record: 16.820747,
@@ -19652,8 +19818,19 @@ const RECORD_BANDS_SP500: [RecordBand; 49] = [
             0.212523, 0.215477, 0.218343, 0.221074, 0.223869, 0.226999, 0.230165, 0.233120,
             0.236023, 0.238971, 0.242718, 0.248255, 0.254535, 0.267193, 0.275313,
         ],
-        joint_c: 0.496875,
-        joint: (0.156582, 0.271156),
+        joint_c: 0.496825,
+        joint: (0.156584, 0.271120),
+    },
+    RecordBand {
+        name: "real yield change vs inflation corr",
+        record: 0.108909,
+        q: [
+            -0.100630, 0.007343, 0.046757, 0.063160, 0.073111, 0.081674, 0.089631, 0.096719,
+            0.103319, 0.109581, 0.115668, 0.121234, 0.126925, 0.132680, 0.138577, 0.144832,
+            0.151394, 0.158701, 0.167099, 0.177833, 0.192342, 0.218076, 0.294112,
+        ],
+        joint_c: 0.496825,
+        joint: (-0.020857, 0.234801),
     },
     RecordBand {
         name: "breakeven monthly change sd pp",
@@ -19740,8 +19917,8 @@ const RECORD_BANDS_SP500: [RecordBand; 49] = [
             0.898642, 0.972973, 1.046144, 1.119710, 1.190828, 1.267785, 1.347719, 1.426203,
             1.515552, 1.613046, 1.732329, 1.882805, 2.103983, 2.530460, 3.435033,
         ],
-        joint_c: 0.496825,
-        joint: (-0.282686, 2.805455),
+        joint_c: 0.495825,
+        joint: (-0.245383, 2.726290),
     },
     RecordBand {
         name: "real rate ex post sd pp",
@@ -19751,8 +19928,30 @@ const RECORD_BANDS_SP500: [RecordBand; 49] = [
             2.751520, 2.816118, 2.878743, 2.940903, 3.005505, 3.073979, 3.137470, 3.205052,
             3.273472, 3.352911, 3.447115, 3.559290, 3.729437, 4.043738, 4.827196,
         ],
-        joint_c: 0.496825,
-        joint: (1.811839, 4.203960),
+        joint_c: 0.495825,
+        joint: (1.833429, 4.169319),
+    },
+    RecordBand {
+        name: "real rate ex post share below 0 %",
+        record: 35.052755,
+        q: [
+            2.110199, 15.709261, 21.336460, 24.267292, 26.377491, 27.901524, 29.425557, 30.715123,
+            31.887456, 33.059789, 34.114889, 35.287222, 36.342321, 37.514654, 38.686987, 39.859320,
+            41.148886, 42.672919, 44.431419, 46.658851, 49.824150, 55.920281, 72.098476,
+        ],
+        joint_c: 0.495825,
+        joint: (13.364596, 58.616647),
+    },
+    RecordBand {
+        name: "real rate ex post p10 %",
+        record: -2.034771,
+        q: [
+            -5.958383, -4.000948, -3.027841, -2.796004, -2.566297, -2.433155, -2.396423, -2.302520,
+            -2.149712, -2.131062, -2.079785, -2.034771, -2.003877, -1.980595, -1.904875, -1.862422,
+            -1.819417, -1.787548, -1.663508, -1.576074, -1.469941, -0.770870, 0.652830,
+        ],
+        joint_c: 0.495825,
+        joint: (-4.751136, -0.496406),
     },
     RecordBand {
         name: "stock-bond corr monthly",
@@ -19823,7 +20022,7 @@ const RECORD_BANDS_SP500: [RecordBand; 49] = [
 ];
 
 /// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ 1999-03-11..2026-08-20.
-const RECORD_BANDS_NASDAQ: [RecordBand; 49] = [
+const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
     RecordBand {
         name: "equity vol %",
         record: 26.901577,
@@ -20196,8 +20395,19 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 49] = [
             0.212523, 0.215477, 0.218343, 0.221074, 0.223869, 0.226999, 0.230165, 0.233120,
             0.236023, 0.238971, 0.242718, 0.248255, 0.254535, 0.267193, 0.275313,
         ],
-        joint_c: 0.496875,
-        joint: (0.156582, 0.271156),
+        joint_c: 0.496825,
+        joint: (0.156584, 0.271120),
+    },
+    RecordBand {
+        name: "real yield change vs inflation corr",
+        record: 0.108909,
+        q: [
+            -0.100630, 0.007343, 0.046757, 0.063160, 0.073111, 0.081674, 0.089631, 0.096719,
+            0.103319, 0.109581, 0.115668, 0.121234, 0.126925, 0.132680, 0.138577, 0.144832,
+            0.151394, 0.158701, 0.167099, 0.177833, 0.192342, 0.218076, 0.294112,
+        ],
+        joint_c: 0.496825,
+        joint: (-0.020857, 0.234801),
     },
     RecordBand {
         name: "breakeven monthly change sd pp",
@@ -20284,8 +20494,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 49] = [
             -1.020671, -0.962551, -0.900663, -0.844312, -0.789355, -0.735906, -0.678087, -0.615759,
             -0.547378, -0.473877, -0.391147, -0.280921, -0.130742, 0.154895, 0.679747,
         ],
-        joint_c: 0.496825,
-        joint: (-1.993585, 0.314453),
+        joint_c: 0.496025,
+        joint: (-1.970057, 0.287904),
     },
     RecordBand {
         name: "real rate ex post sd pp",
@@ -20295,8 +20505,30 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 49] = [
             2.126953, 2.207573, 2.283839, 2.351520, 2.418515, 2.480020, 2.541579, 2.602988,
             2.669883, 2.748029, 2.845122, 2.955557, 3.096696, 3.378844, 3.899292,
         ],
-        joint_c: 0.496825,
-        joint: (1.084052, 3.518588),
+        joint_c: 0.496025,
+        joint: (1.112597, 3.486613),
+    },
+    RecordBand {
+        name: "real rate ex post share below 0 %",
+        record: 60.188088,
+        q: [
+            38.557994, 52.037618, 57.053292, 59.561129, 61.442006, 63.009404, 64.576803, 65.517241,
+            66.771160, 67.711599, 68.652038, 69.592476, 70.532915, 71.473354, 72.413793, 73.667712,
+            74.608150, 75.862069, 77.429467, 78.996865, 81.504702, 85.893417, 92.163009,
+        ],
+        joint_c: 0.496025,
+        joint: (49.529781, 87.460815),
+    },
+    RecordBand {
+        name: "real rate ex post p10 %",
+        record: -3.199849,
+        q: [
+            -7.794490, -6.838667, -6.800951, -5.958383, -5.958383, -5.958383, -5.019658, -4.501462,
+            -3.334712, -3.283287, -3.265716, -3.199849, -3.198873, -2.832504, -2.620093, -2.497177,
+            -2.421011, -2.396423, -2.302520, -2.149712, -2.049617, -1.895866, -1.789408,
+        ],
+        joint_c: 0.496025,
+        joint: (-7.562298, -1.862422),
     },
     RecordBand {
         name: "stock-bond corr monthly",
@@ -20709,7 +20941,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     sector_market_sd: 0.052916,
     channel_dials: NASDAQ_CHANNEL_DIALS,
     reported: &NASDAQ_REPORTED,
-    era_rows: &[],
+    era_rows: &NASDAQ_ERA_ROWS,
 };
 
 pub fn anchors_named(spec: &str) -> Anchors {
@@ -21063,6 +21295,24 @@ fn fit_targets_all(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             BREAKEVEN_BAND_ROWS[2],
             (|st: &WorldStats| st.real_rows[9]) as StatFn,
             band_record(a, BREAKEVEN_BAND_ROWS[2]),
+            0.0,
+        ),
+        (
+            REAL_YIELD_BAND_ROWS[1],
+            (|st: &WorldStats| st.real_rows[10]) as StatFn,
+            band_record(a, REAL_YIELD_BAND_ROWS[1]),
+            0.0,
+        ),
+        (
+            REAL_RATE_BAND_ROWS[2],
+            (|st: &WorldStats| st.real_rows[11]) as StatFn,
+            band_record(a, REAL_RATE_BAND_ROWS[2]),
+            0.0,
+        ),
+        (
+            REAL_RATE_BAND_ROWS[3],
+            (|st: &WorldStats| st.real_rows[12]) as StatFn,
+            band_record(a, REAL_RATE_BAND_ROWS[3]),
             0.0,
         ),
         // THE STOCK-BOND ROWS and the CPI news row (item 61), banded like the real side's
@@ -25251,7 +25501,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "tips", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 105] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 107] = [
     "depth",
     "trendShare",
     "drift",
@@ -25357,6 +25607,8 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 105] = [
     "drawdownVol",
     "declineVolAttack",
     "declineVolHalf",
+    "yieldAnchor",
+    "termPress",
 ];
 
 /// THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration search
@@ -26139,6 +26391,26 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             20.0,
             |w, x| w.decline_vol_half = x,
             |w| w.decline_vol_half,
+        ),
+        // the nominal yield's inflation expectation at the breakeven's anchoring (the one-expectation
+        // form): 1 is one expectation for both legs, the real yield free of the print; the record's
+        // link of 0.11 sits a little under it (`real yield change vs inflation corr`)
+        (
+            "yieldAnchor",
+            0.0,
+            1.0,
+            |w, x| w.yield_anchor = x,
+            |w| w.yield_anchor,
+        ),
+        // the bond's vol regime under inflation pressure: the term innovation's multiplier per
+        // five points of pressure; the re-solves place it near 1 with the calm vol below the
+        // pooled (`bond10 vol per duration`, `bond stress share %`)
+        (
+            "termPress",
+            0.0,
+            4.0,
+            |w, x| w.term_press = x,
+            |w| w.term_press,
         ),
     ]
 }
@@ -27072,7 +27344,7 @@ const EQUITY_TARGETS: [&str; 51] = [
         reason = "the partition contract is read by the tests, never by a report"
     )
 )]
-const BOND_TARGETS: [&str; 35] = [
+const BOND_TARGETS: [&str; 38] = [
     "bond vol % (24y)",
     "bond crash at 2% infl",
     "bond crash per % infl",
@@ -27091,6 +27363,9 @@ const BOND_TARGETS: [&str; 35] = [
     "tips vs equity corr monthly",
     "real rate ex post %",
     "real rate ex post sd pp",
+    "real yield change vs inflation corr",
+    "real rate ex post share below 0 %",
+    "real rate ex post p10 %",
     "tail hedge corr",
     "short rate %",
     "rate floor share %",
@@ -29982,6 +30257,8 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
             0.0,
         ),
         (&["jumpResp"][..], "declineVol", w.decline_vol, 0.0),
+        (&["expAnchor"][..], "yieldAnchor", w.yield_anchor, 0.0),
+        (&["termVol"][..], "termPress", w.term_press, 0.0),
         (&["declineVol", "jumpResp"][..], "declineVolHalf", half, 5.0),
         (
             &["declineVolHalf", "declineVol", "jumpResp"][..],
@@ -31096,6 +31373,8 @@ pub const OPTIONAL_WORLD_KEYS: &[(&str, &str)] = &[
     ("declineVolHalf", "5"),
     ("drawdownVol", "0"),
     ("declineVolAttack", "0"),
+    ("yieldAnchor", "0"),
+    ("termPress", "0"),
 ];
 
 /// `-worldset F -worldindex K` runs member K of an exported archive. Pre-scanned as `-atrelease`
@@ -31703,6 +31982,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut spike_rate = dw.spike_rate;
     let mut spike_size = dw.spike_size;
     let mut term_vol = dw.term_vol;
+    let mut term_press = dw.term_press;
     let mut brk_vol = dw.brk_vol;
     let mut brk_nominal = dw.brk_nominal;
     let mut discount_yield = dw.discount_yield;
@@ -31724,6 +32004,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut decline_vol_attack = dw.decline_vol_attack;
     let mut yield_lag = dw.yield_lag;
     let mut exp_anchor = dw.exp_anchor;
+    let mut yield_anchor = dw.yield_anchor;
     let mut vol_feedback = dw.vol_feedback;
     let mut easing = dw.easing;
     let mut unwind = dw.unwind;
@@ -31965,6 +32246,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-spikerate" => spike_rate = req_f64(&mut it, "-spikerate"),
             "-spikesize" => spike_size = req_f64(&mut it, "-spikesize"),
             "-termvol" => term_vol = req_f64(&mut it, "-termvol"),
+            "-termpress" => term_press = req_f64(&mut it, "-termpress"),
             "-brkvol" => brk_vol = req_f64(&mut it, "-brkvol"),
             "-brknominal" => brk_nominal = req_f64(&mut it, "-brknominal"),
             "-discountyield" => discount_yield = req_f64(&mut it, "-discountyield"),
@@ -31986,6 +32268,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-declinevolattack" => decline_vol_attack = req_f64(&mut it, "-declinevolattack"),
             "-yieldlag" => yield_lag = req_f64(&mut it, "-yieldlag"),
             "-expanchor" => exp_anchor = req_f64(&mut it, "-expanchor"),
+            "-yieldanchor" => yield_anchor = req_f64(&mut it, "-yieldanchor"),
             "-volfeedback" => vol_feedback = req_f64(&mut it, "-volfeedback"),
             "-easing" => easing = req_f64(&mut it, "-easing"),
             "-unwind" => unwind = req_f64(&mut it, "-unwind"),
@@ -32245,6 +32528,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         spike_rate,
         spike_size,
         term_vol,
+        term_press,
         brk_vol,
         brk_nominal,
         discount_yield,
@@ -32266,6 +32550,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         decline_vol_attack,
         yield_lag,
         exp_anchor,
+        yield_anchor,
         vol_feedback,
         easing,
         unwind,
@@ -37473,7 +37758,7 @@ mod real_side_tests {
         (a - b).abs() <= tol
     }
 
-    /// THE REAL SIDE's record readings (`CPI_BAND_ROWS` and kin, `tips-2026-10-11.tsv`) on series
+    /// THE REAL SIDE's record readings (`CPI_BAND_ROWS` and kin, `tips-2026-10-29.tsv`) on series
     /// whose rows are known in closed form. The Scala twin carries the same checks in
     /// `RealSideSuite`; the fixture itself is the twins' byte-for-byte comparison on the records.
     #[test]
@@ -37587,15 +37872,44 @@ mod real_side_tests {
         );
     }
 
+    /// The ex-post real rate's negative share and tenth percentile, on a vector whose both are
+    /// known.
+    #[test]
+    fn the_real_rate_rows_read_the_negative_share_and_the_tenth_percentile() {
+        let x: Vec<f64> = (0..100).map(|i| i as f64 - 24.5).collect();
+        let r = real_rate_readings(&x);
+        assert!(
+            near(r[0], 25.0, 1e-9) && near(r[1], sd1(&x), 1e-12),
+            "{r:?}"
+        );
+        assert!(near(r[2], 25.0, 1e-9), "negative share {}", r[2]);
+        assert!(
+            near(r[3], pctile(&x, 0.10), 1e-12) && r[3] < -14.0 && r[3] > -16.0,
+            "p10 {}",
+            r[3]
+        );
+    }
+
     #[test]
     fn the_real_yield_rows_read_a_line_and_a_sawtooth() {
         let x: Vec<f64> = (0..36).map(|i| 1.0 + 0.1 * i as f64).collect();
-        let r = real_yield_readings(&x);
+        let r = real_yield_readings(&x, &vec![0.0; 35]);
         assert!(
             near(r[0], 0.0, 1e-9),
             "a line's monthly change has no spread: {}",
             r[0]
         );
+        assert!(r[1] == 0.0, "no spread reads no link: {}", r[1]);
+        // a sawtooth whose rises are the inflation months reads a link of one; a month the
+        // record lacks drops out of it
+        let saw: Vec<f64> = (0..37)
+            .map(|i| if i % 2 == 0 { 1.0 } else { 1.5 })
+            .collect();
+        let mut infl: Vec<f64> = saw.windows(2).map(|p| p[1] - p[0]).collect();
+        infl[7] = f64::NAN;
+        let r = real_yield_readings(&saw, &infl);
+        assert!(near(r[0], 0.5 * (36.0 / 35.0f64).sqrt(), 1e-9), "{}", r[0]);
+        assert!(near(r[1], 1.0, 1e-9), "{}", r[1]);
         let rep = real_yield_reported(&x);
         assert!(
             near(rep[0], 2.75, 1e-9)
@@ -37611,7 +37925,7 @@ mod real_side_tests {
             .collect();
         let want = 0.3 * (36.0f64 / 35.0).sqrt();
         assert!(
-            near(real_yield_readings(&saw)[0], want, 1e-12)
+            near(real_yield_readings(&saw, &vec![0.0; 36])[0], want, 1e-12)
                 && near(
                     breakeven_readings(&saw, &vec![2.0; 37], &saw)[0],
                     want,
@@ -37629,7 +37943,7 @@ mod real_side_tests {
                     1e-12
                 ),
             "sawtooth {:?}",
-            real_yield_readings(&saw)
+            real_yield_readings(&saw, &vec![0.0; 36])
         );
         let be = breakeven_reported(&saw);
         assert!(
@@ -37765,6 +38079,108 @@ mod real_side_tests {
         assert!(off.price == on.price && off.rate == on.rate && off.bond == on.bond);
         assert!(off.infl_press == on.infl_press && off.liq == on.liq);
         assert!(off.cpi != on.cpi, "the level itself moves");
+    }
+
+    /// The real yield's monthly change against the month's inflation on a path: the record
+    /// reads 0.11 (DFII10, 2003-2026).
+    fn infl_link(p: &Path) -> f64 {
+        let n = p.real_yield10.len();
+        let m: Vec<usize> = (0..n).step_by(21).collect();
+        let dry: Vec<f64> = m
+            .windows(2)
+            .map(|w| p.real_yield10[w[1]] - p.real_yield10[w[0]])
+            .collect();
+        let infl: Vec<f64> = m
+            .windows(2)
+            .map(|w| ln_det(p.cpi[w[1]] / p.cpi[w[0]]))
+            .collect();
+        let k = dry.len() as f64;
+        let (ma, mb) = (dry.iter().sum::<f64>() / k, infl.iter().sum::<f64>() / k);
+        let (mut sab, mut saa, mut sbb) = (0.0, 0.0, 0.0);
+        for (a, b) in dry.iter().zip(&infl) {
+            sab += (a - ma) * (b - mb);
+            saa += (a - ma) * (a - ma);
+            sbb += (b - mb) * (b - mb);
+        }
+        sab / (saa * sbb).sqrt()
+    }
+
+    /// THE BOND'S VOL REGIME (`term_press`): off in every frozen world, a searched dial and an
+    /// optional key; the 0.25.1 recipe carries it, and with the key off the same world runs the
+    /// calm vol alone: on, the long bond's annual vol varies across the years (the coefficient of
+    /// variation up by a sixth at the recipe's calm vol, by a third at 0.0065) and the path moves.
+    #[test]
+    fn the_bonds_vol_regime_follows_inflation_pressure() {
+        for (v, w) in releases() {
+            assert!(w.term_press == 0.0, "release {v}");
+        }
+        assert!(CALIBRATE_DIAL_ORDER.contains(&"termPress"));
+        assert!(OPTIONAL_WORLD_KEYS.iter().any(|(k, _)| *k == "termPress"));
+        // the 0.25.1 recipes carry the regime; the same world with the key off is the calm vol alone
+        let (r, _) = named_world("0.25.1-sp500").expect("recipe");
+        assert!(
+            r.term_vol > 0.0 && r.term_press > 0.0,
+            "the recipe carries the regime"
+        );
+        let mut w = r;
+        w.term_press = 0.0;
+        let off = simulate(&w, 100, DEFAULT_SEED);
+        let on = simulate(&r, 100, DEFAULT_SEED);
+        assert!(on.bond != off.bond);
+        let cv = |p: &Path| -> f64 {
+            let r = daily_returns(&p.bond);
+            let vols: Vec<f64> = r.chunks_exact(DAYS_PER_YEAR).map(sd1).collect();
+            sd1(&vols) / mean_of(&vols)
+        };
+        let (a, b) = (cv(&off), cv(&on));
+        assert!(b > 1.15 * a, "annual bond vol cv {b} at 1 against {a} at 0");
+        // at a stronger innovation (0.0065, a third above the recipe's calm vol) the term state
+        // carries more of the bond's vol and the regime shows by a third
+        let mut strong = w;
+        strong.term_vol = 0.0065;
+        let off = simulate(&strong, 40, DEFAULT_SEED);
+        strong.term_press = 1.0;
+        let on = simulate(&strong, 40, DEFAULT_SEED);
+        let (a, b) = (cv(&off), cv(&on));
+        assert!(
+            b > 1.3 * a,
+            "annual bond vol cv {b} at 1 against {a} at 0 (strong)"
+        );
+    }
+
+    /// ONE EXPECTATION FOR BOTH LEGS (`yield_anchor`): off in every frozen world and an optional
+    /// key; at 0 the path is the recipe's to the bit; at 1 the real yield's monthly change no
+    /// longer follows the month's inflation (the released form reads it above 0.3 on the S&P
+    /// recipe, the record 0.11), while the breakeven is untouched to the bit.
+    #[test]
+    fn one_expectation_takes_the_inflation_surprise_out_of_the_real_yield() {
+        for (v, w) in releases() {
+            assert!(w.yield_anchor == 0.0, "release {v}");
+        }
+        // the one-expectation form is the 0.25.1 recipes' (searched); every world before them
+        // carries 0
+        for (n, w, _) in recipes() {
+            let on = n.starts_with("0.25.1-");
+            assert_eq!(w.yield_anchor > 0.0, on, "recipe {n}");
+        }
+        assert!(OPTIONAL_WORLD_KEYS.iter().any(|(k, _)| *k == "yieldAnchor"));
+        let (mut w, _) = named_world("0.25.0-sp500").expect("recipe");
+        w.tips = 8.0;
+        assert!(w.exp_anchor < 1.0);
+        let off = simulate(&w, 30, DEFAULT_SEED);
+        let mut z = w;
+        z.yield_anchor = 0.0;
+        assert!(simulate(&z, 30, DEFAULT_SEED).real_yield10 == off.real_yield10);
+        let mut one = w;
+        one.yield_anchor = 1.0;
+        let on = simulate(&one, 30, DEFAULT_SEED);
+        assert!(
+            on.exp_infl10 == off.exp_infl10,
+            "the breakeven is untouched"
+        );
+        let (a, b) = (infl_link(&off), infl_link(&on));
+        assert!(a > 0.3, "released form {a}");
+        assert!(b.abs() < 0.15, "one expectation {b} against {a}");
     }
 
     /// THE YIELD'S BETA ON THE MARKET moves the bond against the equity: at 0.05 the monthly
@@ -39519,7 +39935,7 @@ mod record_band_tests {
         out.extend(read("volexit-2026-10-20.tsv").into_iter().skip(1));
         out.extend(read("volstate-2026-10-20.tsv").into_iter().skip(1));
         out.extend(read("bond10-2026-10-05.tsv").into_iter().skip(1));
-        out.extend(read("tips-2026-10-11.tsv").into_iter().skip(1));
+        out.extend(read("tips-2026-10-29.tsv").into_iter().skip(1));
         out.extend(read("stockbond-2026-10-18.tsv").into_iter().skip(1));
         out
     }
@@ -43077,7 +43493,13 @@ mod basket_ruler_tests {
             // `0.24.5-sp500` is the channels recipe under its re-solve, and carries its basket
             if !n.ends_with("basket")
                 && !n.ends_with("channels")
-                && !["0.24.5-sp500", "0.24.6-sp500", "0.25.0-sp500"].contains(&n)
+                && ![
+                    "0.24.5-sp500",
+                    "0.24.6-sp500",
+                    "0.25.0-sp500",
+                    "0.25.1-sp500",
+                ]
+                .contains(&n)
             {
                 assert!(w.basket == 0, "recipe {n}");
             }
@@ -43461,6 +43883,7 @@ mod sector_channel_tests {
                 "0.24.6-nasdaq-basket",
                 "0.24.6-sp500",
                 "0.25.0-sp500",
+                "0.25.1-sp500",
             ]
             .contains(&n);
             assert_eq!(w.sectors > 0, carries, "recipe {n}");
@@ -44251,7 +44674,13 @@ mod verdict_reading_tests {
         let b = banded_of(&rows);
         let mut got: Vec<&str> = b.keys().copied().collect();
         got.sort_unstable();
-        let mut want: Vec<&str> = NASDAQ_ANCHORS.record_bands.iter().map(|r| r.name).collect();
+        // the set's era rows carry a band and are reported, not read into the table
+        let mut want: Vec<&str> = NASDAQ_ANCHORS
+            .record_bands
+            .iter()
+            .map(|r| r.name)
+            .filter(|n| !NASDAQ_ANCHORS.era_rows.contains(n))
+            .collect();
         want.sort_unstable();
         assert_eq!(got, want);
         for r in rows.iter().filter(|r| r.record_band.is_some()) {
@@ -44679,9 +45108,13 @@ mod lin_vol_tests {
         for (v, w) in releases() {
             assert!(off(&w), "release {v}");
         }
-        // the vol line's solve carries them (PLAN row 65): the 0.25.0 S&P recipe alone
+        // the vol line's solve carries them (PLAN row 65): the S&P recipes from 0.25.0 on
         for (n, w, _) in recipes() {
-            assert_eq!(off(&w), n != "0.25.0-sp500", "recipe {n}");
+            assert_eq!(
+                off(&w),
+                !["0.25.0-sp500", "0.25.1-sp500"].contains(&n),
+                "recipe {n}"
+            );
         }
     }
 

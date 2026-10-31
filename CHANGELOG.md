@@ -1,3 +1,60 @@
+## v0.25.1 — 2026-10-30
+
+**One inflation expectation across the legs.** `-yieldanchor` is the share taken out of the gap
+between the market's inflation estimates carried whole in the ten-year yield and carried at
+`-expanchor` in the breakeven; at 1 the two legs price one expectation and the real yield (the
+ten-year yield less the breakeven) holds no inflation surprise, only the slow means' drift. The
+record's real yield moves with policy, not with the print: DFII10's monthly change against the
+month's CPI-U inflation reads 0.11, where the two-expectation form reads a median 0.58 (0.35–0.76
+over the 0.25.0 S&P set's 23-year histories). Searched (0–1), written in a world's block only when
+on; 0 is bit-identical, and inert while `-expanchor` is 1. Three real-side rows grade it
+(`tips-2026-10-29.tsv`, replacing `tips-2026-10-11.tsv`): `real yield change vs inflation corr`
+(0.11) on DFII10 and CPI-U 2003–2026 in both sets, and `real rate ex post share below 0 %` and
+`real rate ex post p10 %` on DFF less CPI-U over each set's rate window (35% and −2.0 on 1954–2025,
+60% and −3.2 on 1999–2025). The breakeven's change sd stays an era row of the S&P set.
+
+**The bond's vol regime under inflation pressure.** `-termpress` scales the term state's innovation
+by `1 + termpress × max(pressure, 0) / 0.05`, the pressure in rate units, so at 1 a ten-point
+pressure triples the ten-year yield's innovation and the long bond's vol with it, and `-termvol` is
+the calm era's innovation. The record's par bond averaged 4.9% annual vol over 1962–78 and 14.7%
+over 1979–82 (yield-change vol 45 and 202 bp a year), and three in four of its stressed sessions
+(`bond stress share %`) fall in October 1979–April 1980 at 10–12% yields after a six-month rise of
+one to three points. Under this tie the model's stressed sessions fall in inflation regimes nine
+times in ten on the S&P recipe and six in ten on the Nasdaq's, where a vol state on the term
+innovation's own stream puts them at random and costs the judge on both worlds; the long bond's
+year-to-year vol variation (sd over mean of the calendar years' vol) is 0.32 on the S&P recipe
+against 0.24 without the tie and the record's 0.45. Searched (0–4), written only when on; 0 is
+bit-identical. The row's level (0.66 on 1962–2026) is one event, the 1979 shift of the vol regime
+after seventeen calm years, and no multiplier on the pressure reaches it without losing the bond
+vol rows: the S&P recipe reads 0.18 against the 0.25.0 recipe's 0.15, and the S&P set leaves the
+record at the 97th percentile of its pooled histories, where the 0.25.0 set had it.
+
+**The era rule reaches the bond stress share.** The Nasdaq set reports `bond stress share %`
+instead of grading it: on its 1999–2026 rate window the record reads 0.06 from one four-session
+episode, too thin to band, as the S&P set reports the TIPS era's breakeven rows. The S&P set grades
+it on the 64-year record. A set's era rows leave its search objective, its membership units and its
+band gates together (`fit_targets`); `-validate` lists them under the rows reported, not graded.
+
+**The 0.25.1 recipes and sets.** `0.25.1-sp500` and `0.25.1-nasdaq` are the 0.25.0 recipes under
+the one-expectation form (`-yieldanchor` 0.73 / 0.63) and the vol regime (`-termpress` 1),
+re-solved around them: on both, the expectation's anchoring, the calm vol, the CPI noise exponent,
+the policy rule's growth weight, the rate's mean and the refuge; on the S&P the term premium and the
+bond's news and slow legs; on the Nasdaq the breakeven premium's innovation, the yield's beta, the
+vol feedback and the leverage gain. Every dial that read no worse at the 0.25.0 value returned to
+it. On the judge's seeds 38.5 against the 0.25.0 S&P recipe's 45.8, and 34.4 against the 0.25.0
+Nasdaq recipe's 42.8 with the era row reported; membership p 0.93 / 0.91, every class passing on
+every read. Each recipe is member 0 of its set, and each set is the members one round of the loop
+admitted around its recipe; both score significantly better than the 0.25.0 sets under the release
+rule: `0.25.1-sp500.json` (59 members) 54.30 to 50.90, −3.40 [−4.18, −2.60], and
+`0.25.1-nasdaq.json` (37) 59.33 to 56.32, −3.01 [−4.57, −1.57]. Neither has a set miss; each
+outgoing set had one, the real yield's inflation link at 0.1% and 0.3%. They are the worlds to pin
+in place of the 0.25.0 recipes.
+
+**The Scala twin does not carry 0.25.1.** Its dial order stops at 105 (`yieldAnchor` and `termPress`
+unknown), its band tables carry the old TIPS fixture, and a `0.25.1` recipe name or a world file
+with either key is refused there; the emit sidecar's schema is unchanged, so a sidecar reads
+identically in both. `rust/PARITY.md` carries the gap.
+
 ## v0.25.0 — 2026-10-29
 
 **The calibrated membership rule.** A world is a member when the record is a typical single

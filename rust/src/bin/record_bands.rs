@@ -3106,7 +3106,18 @@ impl TipsOpts {
     ) -> Vec<(String, f64)> {
         let (ry_months, window) = self.month_levels(real_file);
         let ry: Vec<f64> = ry_months.iter().map(|(_, v)| *v).collect();
-        let record = ms::real_yield_readings(&ry);
+        // the CPI's inflation over the month each real-yield change spans (a month the CPI lacks
+        // leaves no rate)
+        let cpi_at: std::collections::HashMap<String, f64> =
+            cpi.iter().map(|(d, v)| (d[..7].to_string(), *v)).collect();
+        let infl: Vec<f64> = ry_months
+            .windows(2)
+            .map(|p| match (cpi_at.get(&p[0].0), cpi_at.get(&p[1].0)) {
+                (Some(a), Some(b)) => 100.0 * ms::ln_det(b / a),
+                _ => f64::NAN,
+            })
+            .collect();
+        let record = ms::real_yield_readings(&ry, &infl);
         eprintln!(
             "{}: {} month ends {window}; {}; reported {}",
             fred_name(real_file),
@@ -3120,7 +3131,7 @@ impl TipsOpts {
             window,
             n: ry.len(),
             record,
-            reads: ms::real_yield_resamples(&ry, self.resamples, self.seed, block_years()),
+            reads: ms::real_yield_resamples(&ry, &infl, self.resamples, self.seed, block_years()),
         });
         let (bei_months, window) = self.month_levels(bei_file);
         let bei: Vec<f64> = bei_months.iter().map(|(_, v)| *v).collect();
