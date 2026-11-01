@@ -140,10 +140,12 @@ const USAGE: &str =
                 and its parts at 1.5% / 2.0%, the coupling of the volatility with the price, and the
                 declines of 10% or more a century, on a -volstate chain or -french FILE (CRSP's
                 daily total return as the close, the earnings and, as its log, the return the
-                coupling and the declines read); the sessions after -from through
-                -to, each with the -fred rate at its previous session and the calendar days since
-                it; the record, its one-year-block resamples (`ledger_resamples`) and a joint band
-                per family (`LEDGER_FAMILIES`) at -joint (default 0.05); then the one-day
+                coupling and the declines read) and the vol process (the standardized
+                innovation's and the log level's rows, `vol_process_of`); the sessions after
+                -from through -to, each with the -fred rate at its previous session and the
+                calendar days since it; the record, its one-year-block resamples
+                (`ledger_resamples`) and a joint band per family (`LEDGER_FAMILIES`) at -joint
+                (default 0.05); then the one-day
                 reversion (`ledger_lag1_of`) on the window's sessions after the lag cut
                 (`UNLAG_CUT`) alone, its own resamples and band
   -basket       THE BASKET RULER for `-basketruler` (`basket_ruler_tsv`): -closes WIDE.csv is one row a

@@ -715,7 +715,7 @@ fn refused(bad: bool, why: &str) -> Option<String> {
 /// every range `calibrate` sweeps. A `contains` test is false for NaN, so a NaN literal is
 /// refused here rather than reaching the model. Value-level checks only: a check on which flags
 /// were given stays in the parser.
-const WORLD_DOMAIN: [fn(&World) -> Option<String>; 162] = [
+const WORLD_DOMAIN: [fn(&World) -> Option<String>; 163] = [
     |w| share_refusal("-trendshare", w.trend_share),
     |w| share_refusal("-leverage", w.leverage),
     |w| share_refusal("-downshock", w.down_shock),
@@ -868,6 +868,7 @@ const WORLD_DOMAIN: [fn(&World) -> Option<String>; 162] = [
         (w.cycle_sd > 0.0 && w.cycle_years <= 0.0)
             .then(|| format!("-cyclesd {} needs -cycleyears above 0", w.cycle_sd))
     },
+    |w| share_refusal("-cyclevol", w.cycle_vol),
     |w| non_neg_refusal("-volrespcap", w.vol_resp_cap),
     |w| non_neg_refusal("-jumpresp", w.jump_resp),
     |w| {
@@ -1286,6 +1287,7 @@ pub fn default_world() -> World {
         // no larger cycle passes the variance-ratio profile on every seed.
         cycle_sd: 0.1,
         cycle_years: 15.0,
+        cycle_vol: 0.0,
         belief_leak: 0.2,
         leverage: 0.10,
         down_shock: 0.0,
@@ -1547,6 +1549,7 @@ fn v0_19_2() -> World {
         cap_window: 6.0,
         cycle_sd: 0.0,
         cycle_years: 11.5,
+        cycle_vol: 0.0,
         belief_leak: 0.0,
         disaster_rate: 0.0,
         disaster_size: 2.0,
@@ -1731,6 +1734,7 @@ fn v0_24_1() -> World {
         cap_window: 6.0,
         cycle_sd: 0.0,
         cycle_years: 11.5,
+        cycle_vol: 0.0,
         belief_leak: 0.0,
         crowd: Crowd::Momentum,
         crowd_impact: 0.03,
@@ -2055,9 +2059,10 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
 /// one-expectation form (`yield_anchor` 0.73, where the record's link of 0.11 sits) and the bond's
 /// vol regime (`term_press` 1, `term_vol` the calm era's innovation), the rate and bond side
 /// re-solved around them and every dial that read no worse at the 0.25.0 value returned to it. On
-/// the ledger with the real yield's inflation link and the ex-post real rate's negative share and
-/// tenth percentile graded: 38.5 against the 0.25.0 recipe's 45.8 on the judge's seeds, membership
-/// p 0.93, every class passing on every read.
+/// the ledger with the real yield's inflation link, the ex-post real rate's negative share and
+/// tenth percentile and the conditions index's hazard graded: 39.2 against the 0.25.0 recipe's 46.5
+/// on the judge's seeds, membership p 0.94, every class passing on every read and by the margin on
+/// 40 more.
 fn recipe_0251_sp500(mut w: World) -> World {
     w.rate_mean = 0.064741312;
     w.news_bond = 0.47452643;
@@ -2084,7 +2089,7 @@ fn recipe_0251_sp500(mut w: World) -> World {
 /// the breakeven premium's innovation too, and every dial that read no worse at the 0.25.0 value
 /// returned to it. 34.4 against the 0.25.0 recipe's 42.8 on the judge's seeds with
 /// `bond stress share %` reported (`NASDAQ_ERA_ROWS`), membership p 0.91, every class passing on
-/// every read.
+/// every read and by the margin on 40 more.
 fn recipe_0251_nasdaq(mut w: World) -> World {
     w.rate_mean = 0.034508216;
     w.news_bond = 0.24905600;
@@ -2922,6 +2927,7 @@ fn v0_24_4() -> World {
         belief_leak: 0.2,
         cycle_sd: 0.1,
         cycle_years: 15.0,
+        cycle_vol: 0.0,
         ..v0_24_1()
     }
 }
@@ -3102,6 +3108,7 @@ fn v0_23_0() -> World {
         cap_window: 6.0,
         cycle_sd: 0.0,
         cycle_years: 11.5,
+        cycle_vol: 0.0,
         belief_leak: 0.0,
         leverage: 0.12,
         down_shock: 0.0,
@@ -3274,6 +3281,7 @@ fn v0_22_1() -> World {
         cap_window: 6.0,
         cycle_sd: 0.0,
         cycle_years: 11.5,
+        cycle_vol: 0.0,
         belief_leak: 0.0,
         leverage: 0.0,
         down_shock: 0.0,
@@ -3448,6 +3456,7 @@ fn v0_22_0() -> World {
         cap_window: 6.0,
         cycle_sd: 0.0,
         cycle_years: 11.5,
+        cycle_vol: 0.0,
         belief_leak: 0.0,
         leverage: 0.0,
         down_shock: 0.0,
@@ -3622,6 +3631,7 @@ fn v0_21_0() -> World {
         cap_window: 6.0,
         cycle_sd: 0.0,
         cycle_years: 11.5,
+        cycle_vol: 0.0,
         belief_leak: 0.0,
         leverage: 0.0,
         down_shock: 0.0,
@@ -3825,6 +3835,7 @@ fn v0_20_0() -> World {
         cap_window: 6.0,
         cycle_sd: 0.0,
         cycle_years: 11.5,
+        cycle_vol: 0.0,
         belief_leak: 0.0,
         disaster_rate: 0.0,
         disaster_size: 2.0,
@@ -4203,6 +4214,14 @@ pub struct World {
     pub cycle_sd: f64,
     /// the cycle's half-life in years (Shiller's CAPE reads 11.5)
     pub cycle_years: f64,
+    /// PROBE: THE CYCLE'S INCREMENT IN THE VOL STATE. The cycle's daily innovation is multiplied by
+    /// the session's conditional diffusion sd (the session sigma x the spiral's amplification) over
+    /// its four-year rms, to this power: at 1 the cycle re-rates in the same vol state the rest of
+    /// the return arrives in, its stationary sd preserved (the multiplier's mean square is 1 by
+    /// construction); 0 is the released constant-sd increment, bit-identical. A constant-sd
+    /// increment is a Gaussian floor under the vol level: it thins the standardized return's tail
+    /// and damps the level's doubling (the sensitivity read, 2026-11-01).
+    pub cycle_vol: f64,
     /// THE LEVERAGE EFFECT: how hard a decline raises the NEXT session's diffusive volatility,
     /// where an equal rally raises nothing — EGARCH's signed term, fed by the same decline
     /// signal the spiral's `stress_idx` reads (max(-ret,0)/scale, centred at 0.399 so the vol
@@ -5294,9 +5313,31 @@ const GAP_DRIFT_BAND: f64 = 0.15;
 /// THE SPREAD STATIONARITY ROW's band (see `gap_spread_of`): the pooled valuation gap's sd over a
 /// path's first decade may differ from its sd over the later half by at most this share. With
 /// the 3-year warm-up both recipes passed the mean row and read -0.16 to -0.42 here (the gap
-/// starts at the fundamental, with no spread); with `BURN_IN`'s 28 years they read -0.07 to
-/// +0.15 at 60 paths and -0.03 to +0.10 at 200, on four seeds each.
-const GAP_SPREAD_BAND: f64 = 0.20;
+/// starts at the fundamental, with no spread); with `BURN_IN`'s 28 years a stationary world
+/// reads 0 with a read sd of 0.05-0.09 at 200 x 100 (the noisiest 0.25.1 member 0.095), so the
+/// band holds the noisiest member by the margin (3.3 sds) and the margin still refuses a -0.16
+/// drift (1.8 sds inside).
+const GAP_SPREAD_BAND: f64 = 0.25;
+/// THE BOND RALLY ROW's floor on `WorldStats::bond_growth_net`: a bond unrelated to the equity
+/// (each path's declines read against a sibling path's bond) reads -0.05 to 0.18, +-0.10 a read
+/// at 200 x 100 on the 0.25.1 recipes with and without their links, and the floor sits 3 of those
+/// sds above the highest. The gross response (`bond_growth`) carries the bond's carry over the
+/// decline, 1.6 to 5.6 on the same unrelated bonds, and is the placement row's reading.
+const BOND_RALLY_NET_FLOOR: f64 = 0.5;
+/// THE CORRELATION FLIP ROW's rise: the stock-bond correlation in inflation regimes above the
+/// calm's by at least this. The two unlinked legs read +0.03 / +0.05 (+-0.003 a read), the
+/// regimes' common inflation; the members read it to +-0.01, and the level is the placement row
+/// `stock-bond corr vs inflation seen`.
+const CORR_FLIP_MIN: f64 = 0.10;
+/// THE OPEN's mechanism margin: the worst sessions' overnight gap share above all sessions' by
+/// at least this. The share's difference reads 0 +-0.005 (S&P) / +-0.008 (Nasdaq) a read at 200
+/// x 100 without the mechanism, by construction of the regression share; the members' medians
+/// read 0.07 / 0.10.
+const OVERNIGHT_WORST_MARGIN: f64 = 0.015;
+/// THE PAIR CORRELATION rows' margin (sector and basket): the worst decile's pair correlation
+/// above the middle decile's by at least this. The difference reads 0 +-0.013 a read at 200 x 100
+/// without the mechanism; the members read 0.38 and more.
+const PAIR_CORR_MARGIN: f64 = 0.05;
 
 /// DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner Taylor
 /// to r^12 on the reduced argument, and 2^k built from raw exponent bits. Every operation is
@@ -5609,6 +5650,12 @@ impl Market {
             scale_var_ref: 0.01 * 0.01,
             stress_amp: 0.0,
         }
+    }
+
+    /// The spiral's amplification this session's step will apply to flow and noise, read before
+    /// the step (`step`'s `amp`).
+    fn amp(&self) -> f64 {
+        1.0 + self.stress_k * self.stress_amp * self.lev_mult * self.gain_mult
     }
 
     /// The liquidity multiplier this session's step will apply to flow and noise, read before the
@@ -6839,12 +6886,14 @@ mod macro_k {
 /// premium) are placement rows with their records in `macro_placement_rows`. `macro_panel_tests` /
 /// `MacroPanelSuite` re-derive the hazard floor from the fixture.
 mod macro_bands {
-    /// engaged: clear of the null panel's 0.49 (+-0.02 on 500 episodes); the model read 0.63
-    /// before the leverage cycle and reads 0.92 with it
-    pub(super) const COND_PRE_PEAK_NULL: f64 = 0.55;
-    /// the quarter-horizon 20% hazard: the four references' minimum (QQQ 1.45) floored to 0.1;
-    /// CRSP 2.7, SPY 2.2, NDX 2.0; a decoupled series 1.0
-    pub(super) const HAZARD_MIN: f64 = 1.4;
+    /// engaged: clear of a decoupled panel's build-up, 0.54 (S&P) / 0.51 (Nasdaq) +-0.02 a read
+    /// at 200 x 100 on the 0.25.1 recipes (`-macronull 1`, 40 reads each); the model read 0.63
+    /// before the leverage cycle and reads 0.83-0.96 with it
+    pub(super) const COND_PRE_PEAK_NULL: f64 = 0.60;
+    /// engaged: the quarter-horizon 20% hazard clear of a decoupled panel's 1.00 (+-0.023 a read
+    /// at 200 x 100 on both 0.25.1 recipes, 80 reads, none above 1.07). The level is a placement
+    /// row (`macro cond hazard`: CRSP 2.72 for the S&P set, QQQ 1.44 for the Nasdaq's)
+    pub(super) const HAZARD_NULL: f64 = 1.1;
 }
 
 /// THE MACRO PANEL, derived from the finished loop's recorded state. Each member is a fixed map
@@ -8223,6 +8272,9 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let mut cyc = 0.0f64;
     // the running peak of the price WITHOUT the cycle, for the drag's drawdown read
     let mut cyc_peak_ex = 0.0f64;
+    // PROBE (`cycle_vol`): the conditional sd's four-year mean square, the increment's norm;
+    // started at the noise's base sd, settled inside the burn-in
+    let mut cyc_ref = SIGMA_N * w.noise_scale * SIGMA_N * w.noise_scale;
     if w.cycle_sd > 0.0 {
         cyc = w.cycle_sd * cyc_rng.randn();
         eq_m.log_p = cyc;
@@ -9516,7 +9568,31 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         // repricing, like the swing's.
         let mut cyc_move = 0.0f64;
         if w.cycle_sd > 0.0 {
-            let cyc_new = cyc_phi * cyc + cyc_inno * cyc_rng.randn();
+            // PROBE (`cycle_vol`): the increment carries the session's vol state, the
+            // conditional diffusion sd (the session sigma's factors x the spiral's amplification)
+            // over its four-year rms
+            let cyc_m = if w.cycle_vol > 0.0 {
+                let lev_m = if w.leverage > 0.0 {
+                    exp_det(w.leverage * kick_s)
+                } else {
+                    1.0
+                };
+                let sd_now = news_damp
+                    * sigma_n
+                    * exp_det(log_vol - vol_norm)
+                    * lev_m
+                    * asym_m
+                    * vol_resp_m
+                    * lin_mult
+                    * regime_m
+                    * mix
+                    * eq_m.amp();
+                cyc_ref = 0.999 * cyc_ref + 0.001 * sd_now * sd_now;
+                pow_det((sd_now * sd_now / cyc_ref).sqrt(), w.cycle_vol)
+            } else {
+                1.0
+            };
+            let cyc_new = cyc_phi * cyc + cyc_inno * cyc_m * cyc_rng.randn();
             cyc_move = cyc_new - cyc;
             cyc = cyc_new;
             eq_m.log_p += cyc_move;
@@ -10307,6 +10383,28 @@ fn crash_points(series: &[f64], cpi: &[f64], eps: &[Episode]) -> Vec<[f64; 2]> {
         .collect()
 }
 
+/// `crash_points` net of `series`' drift: each decline's log move less the series' mean session
+/// log move over the whole path times the decline's sessions, in percent. A series unrelated to
+/// the equity reads zero here whatever it accrues, where the gross move reads its carry over the
+/// decline (5.6 on the S&P recipe's no-link world, 2.9 on the Nasdaq's).
+fn crash_points_net(series: &[f64], cpi: &[f64], eps: &[Episode]) -> Vec<[f64; 2]> {
+    if series.len() < 2 {
+        return Vec::new();
+    }
+    let mu = (series[series.len() - 1] / series[0]).ln() / (series.len() - 1) as f64;
+    eps.iter()
+        .filter_map(|ep| {
+            crash_seen(cpi, ep).map(|x| {
+                let drift = mu * (ep.trough - ep.peak) as f64;
+                [
+                    x,
+                    ((series[ep.trough] / series[ep.peak]).ln() - drift) * 100.0,
+                ]
+            })
+        })
+        .collect()
+}
+
 /// Inflation seen (yoy, pp) closer than this is one rate: a constant rate carries ~1e-13 of noise.
 pub const SEEN_TOL: f64 = 1e-9;
 
@@ -10497,6 +10595,9 @@ pub struct WorldStats {
     pub bond_vol: f64,
     pub bond_growth: f64,
     pub bond_infl: f64,
+    /// the bond's response at `CRASH_SEEN_REF` net of its drift (`crash_points_net`): the
+    /// mechanism row's reading, where `bond_growth` is the placement row's
+    pub bond_growth_net: f64,
     /// THE 10-YEAR LEG's readings (`World::bond10`), NaN when the leg is off: its annualised RMS
     /// volatility over the whole path, its bond return over the growth and inflation crash
     /// episodes, read as the bond's are
@@ -10815,6 +10916,7 @@ impl WorldStats {
             bond_vol: b.bond_vol,
             bond_growth: b.bond_growth,
             bond_infl: b.bond_infl,
+            bond_growth_net: b.bond_growth_net,
             bond10_vol: b.bond10_vol,
             bond10_growth: b.bond10_growth,
             bond10_infl: b.bond10_infl,
@@ -11381,14 +11483,14 @@ pub fn vol_exit_resamples(
 /// 16 rows) and, the placement's T being the minimum over units, would lift every other unit's p.
 /// In order: the volatility exit's surface (`VOL_EXIT_GRID`, each point's 1x edge then its 3x
 /// edge, the production pair being `VOL_STATE_ROWS`' own), its parts at the production thresholds
-/// (`vol_exit_parts`), the coupling of the volatility with the price (`vol_coupling_of`), and the
-/// correction rate (`declines_of`), read on the set's volatility-state window
-/// (`Anchors::vol_state_window`), the model on each history of that length (`ledger_histories`);
-/// then the one-day reversion (`lag1_demeaned` of the daily log returns, ruled 2026-10-23), read
-/// on the record after `UNLAG_CUT` alone, where the lag correction leaves no lag-1 to read, and on
-/// each history of that many sessions (`LedgerRecords::lag1_sessions`). The records in
-/// `ledgerrows-2026-10-22.tsv`.
-pub const LEDGER_ROWS: [&str; 29] = [
+/// (`vol_exit_parts`), the coupling of the volatility with the price (`vol_coupling_of`), the
+/// correction rate (`declines_of`) and the vol process (`vol_process_of`), read on the set's
+/// volatility-state window (`Anchors::vol_state_window`), the model on each history of that length
+/// (`ledger_histories`); then the one-day reversion (`lag1_demeaned` of the daily log returns,
+/// ruled 2026-10-23), read on the record after `UNLAG_CUT` alone, where the lag correction leaves
+/// no lag-1 to read, and on each history of that many sessions (`LedgerRecords::lag1_sessions`).
+/// The records in `ledgerrows-2026-11-01.tsv`.
+pub const LEDGER_ROWS: [&str; 36] = [
     "vol-exit 1x edge 1.0/1.5 pts/yr",
     "vol-exit 3x edge 1.0/1.5 pts/yr",
     "vol-exit 1x edge 1.0/2.0 pts/yr",
@@ -11417,14 +11519,23 @@ pub const LEDGER_ROWS: [&str; 29] = [
     "vol coupling quarterly corr",
     "up-day vol slope in falls",
     "declines 10%+ a century",
+    "z beyond 3 sds %",
+    "z beyond 4 sds %",
+    "log vol sd",
+    "vol doubling months %",
+    "sessions beyond 5% a century",
+    "log vol autocorr 1m",
+    "log vol autocorr 12m",
     "return lag-1 autocorr",
 ];
 /// The ledger rows' families, as `LEDGER_ROWS` lays them out: the surface, the parts, the coupling,
-/// the declines, the one-day reversion.
-pub const LEDGER_FAMILIES: [std::ops::Range<usize>; 5] = [0..14, 14..24, 24..27, 27..28, 28..29];
+/// the declines, the vol process's innovation and level, the level's persistence, the one-day
+/// reversion.
+pub const LEDGER_FAMILIES: [std::ops::Range<usize>; 7] =
+    [0..14, 14..24, 24..27, 27..28, 28..33, 33..35, 35..36];
 /// The ledger rows read on the volatility-state window (`ledger_readings_of`): all but the
 /// one-day reversion.
-pub const LEDGER_STATE_ROWS: usize = 28;
+pub const LEDGER_STATE_ROWS: usize = 35;
 /// THE EXIT'S SURFACE: (hold below, cash at) besides the production pair, as decimals of the
 /// trailing sd.
 pub const VOL_EXIT_GRID: [(f64, f64); 7] = [
@@ -11679,6 +11790,90 @@ fn declines_of(r: &[f64]) -> f64 {
     100.0 * dd_spans(&px, 0.10).len() as f64 / (r.len() as f64 / DAYS_PER_YEAR as f64)
 }
 
+/// THE VOL PROCESS (`LEDGER_ROWS`' fifth and sixth families, 2026-11-01): the return decomposed
+/// into a volatility level and a standardized innovation, each graded on its own, so that a world
+/// cannot buy the level's persistence with the innovation's size or hide a tail count under one
+/// kurtosis (a world read the record's kurtosis, the largest session's statistic, with three times
+/// its 10%+ sessions a century). On the window's daily log returns: the innovation z_t = r_t / s_t,
+/// s_t the sample sd (n - 1) of the 21 sessions before t (a zero sd leaves the session out), the
+/// share of sessions beyond 3 and beyond 4 sds (its kurtosis is one session's: the record's reads
+/// 33 with a one-year-block band of 6-74); the level lv over whole non-overlapping 21-session
+/// blocks from the window's first session, the coupling's log rms (0.5 ln of the block's mean
+/// squared return), its sample sd and the share of blocks whose lv rose ln 2 or more over the
+/// block before (a vol doubling); the sessions with |r| above 5% per 252; then the level's
+/// persistence, lv's demeaned autocorrelation at 1 and 12 blocks (`lag1_demeaned`'s estimator at
+/// each lag), its own family judged by where the record falls among the model's histories: a
+/// one-year block resample breaks the blocks' order, so its band is the no-persistence null (the
+/// record's 12-block autocorrelation 0.24-0.28 against a band of -0.17..0.17). NaN where a reading
+/// has no sessions or blocks to read.
+fn vol_process_of(r: &[f64]) -> [f64; 7] {
+    const W: usize = 21;
+    let mut z: Vec<f64> = Vec::with_capacity(r.len());
+    for t in W..r.len() {
+        let x = &r[t - W..t];
+        let mean = scala_sum(x.iter().copied()) / W as f64;
+        let var = scala_sum(x.iter().map(|v| (v - mean) * (v - mean))) / (W - 1) as f64;
+        let sd = var.sqrt();
+        if sd > 0.0 {
+            z.push(r[t] / sd);
+        }
+    }
+    let z_tail = |k: f64| -> f64 {
+        if z.is_empty() {
+            f64::NAN
+        } else {
+            100.0 * z.iter().filter(|v| v.abs() > k).count() as f64 / z.len() as f64
+        }
+    };
+    let lv: Vec<f64> = r
+        .chunks_exact(W)
+        .map(|b| 0.5 * ln_det(scala_sum(b.iter().map(|v| v * v)).max(1e-300) / b.len() as f64))
+        .collect();
+    let n = lv.len();
+    let m = if n == 0 {
+        f64::NAN
+    } else {
+        scala_sum(lv.iter().copied()) / n as f64
+    };
+    let den = scala_sum(lv.iter().map(|v| (v - m) * (v - m)));
+    let lv_sd = if n < 2 {
+        f64::NAN
+    } else {
+        (den / (n - 1) as f64).sqrt()
+    };
+    let ac = |lag: usize| -> f64 {
+        if n <= lag + 1 || den <= 0.0 {
+            f64::NAN
+        } else {
+            scala_sum((0..n - lag).map(|i| (lv[i] - m) * (lv[i + lag] - m))) / den
+        }
+    };
+    let doubling = if n < 2 {
+        f64::NAN
+    } else {
+        100.0
+            * lv.windows(2)
+                .filter(|w| w[1] - w[0] >= std::f64::consts::LN_2)
+                .count() as f64
+            / (n - 1) as f64
+    };
+    let big = if r.is_empty() {
+        f64::NAN
+    } else {
+        100.0 * r.iter().filter(|v| v.abs() > 0.05).count() as f64
+            / (r.len() as f64 / DAYS_PER_YEAR as f64)
+    };
+    [
+        z_tail(3.0),
+        z_tail(4.0),
+        lv_sd,
+        doubling,
+        big,
+        ac(1),
+        ac(12),
+    ]
+}
+
 /// The ledger rows read on the volatility-state window (`LEDGER_STATE_ROWS`) on one record or
 /// path's volatility-state sessions.
 #[must_use]
@@ -11689,6 +11884,7 @@ pub fn ledger_readings_of(d: &[VolStateDay]) -> [f64; LEDGER_STATE_ROWS] {
     out[..24].copy_from_slice(&vol_exit_ledger_of(&e));
     out[24..27].copy_from_slice(&vol_coupling_of(&r));
     out[27] = declines_of(&r);
+    out[28..35].copy_from_slice(&vol_process_of(&r));
     out
 }
 
@@ -11757,14 +11953,16 @@ pub fn ledger_lag1_resamples(
     block_resamples(r, block_years, resamples, seed, |x| [ledger_lag1_of(x)])
 }
 
-/// THE LEDGER ROWS' RECORDS (`ledgerrows-2026-10-22.tsv`): a set's reading of every `LEDGER_ROWS`
+/// THE LEDGER ROWS' RECORDS (`ledgerrows-2026-11-01.tsv`): a set's reading of every `LEDGER_ROWS`
 /// row, and the banded rows' resamples and joint bands, which they are judged by (`model@`): the
-/// coupling's and the one-day reversion's; the surface, the parts and the declines are judged by
-/// where the record falls among the model's histories (`record@`). `lag1_sessions` is the record's
-/// session count after `UNLAG_CUT`, the length the model's histories of the reversion are read at.
+/// coupling's, the vol process's innovation and level and the one-day reversion's; the surface,
+/// the parts, the declines and the level's persistence are judged by where the record falls among
+/// the model's histories (`record@`).
+/// `lag1_sessions` is the record's session count after `UNLAG_CUT`, the length the model's
+/// histories of the reversion are read at.
 pub struct LedgerRecords {
-    pub record: [f64; 29],
-    pub bands: [RecordBand; 4],
+    pub record: [f64; 36],
+    pub bands: [RecordBand; 9],
     pub lag1_sessions: usize,
 }
 
@@ -11773,7 +11971,8 @@ const NASDAQ_LEDGER: LedgerRecords = LedgerRecords {
         -1.493742, 7.835167, -1.731010, 4.423257, -1.598227, 1.655211, -0.003868, 10.233504,
         1.144072, 8.408481, 1.057782, 9.765416, 0.673300, 6.302301, 50.038610, 15.615003,
         45.000000, 13.078909, 13.325448, 52.052475, 34.565455, 63.888889, 0.671685, -1.601635,
-        -0.285806, -0.377615, -1.579370, 69.402368, -0.056147,
+        -0.285806, -0.377615, -1.579370, 69.402368, 1.340024, 0.336385, 0.442641, 3.707995,
+        252.624621, 0.680897, 0.283904, -0.056147,
     ],
     bands: [
         RecordBand {
@@ -11813,6 +12012,62 @@ const NASDAQ_LEDGER: LedgerRecords = LedgerRecords {
             joint: (-3.198647, -0.253055),
         },
         RecordBand {
+            name: "z beyond 3 sds %",
+            record: 1.340024,
+            q: [
+                1.042241, 1.202162, 1.257307, 1.290394, 1.312452, 1.328995, 1.340024, 1.356568,
+                1.367597, 1.378626, 1.389655, 1.400684, 1.411713, 1.422742, 1.433771, 1.450314,
+                1.461343, 1.477887, 1.494430, 1.516488, 1.549575, 1.615749, 1.819786,
+            ],
+            joint_c: 0.493825,
+            joint: (1.185618, 1.632293),
+        },
+        RecordBand {
+            name: "z beyond 4 sds %",
+            record: 0.336385,
+            q: [
+                0.209551, 0.270211, 0.297783, 0.308812, 0.319841, 0.330870, 0.336385, 0.341899,
+                0.347414, 0.352928, 0.358443, 0.363957, 0.369472, 0.374986, 0.380501, 0.386015,
+                0.391530, 0.397044, 0.408073, 0.419102, 0.435646, 0.463218, 0.534907,
+            ],
+            joint_c: 0.493825,
+            joint: (0.264696, 0.474247),
+        },
+        RecordBand {
+            name: "log vol sd",
+            record: 0.442641,
+            q: [
+                0.348557, 0.381266, 0.397878, 0.407178, 0.413413, 0.418644, 0.423055, 0.427082,
+                0.430856, 0.434201, 0.437498, 0.440873, 0.444227, 0.447493, 0.451150, 0.454735,
+                0.458626, 0.463173, 0.468332, 0.475040, 0.484889, 0.504135, 0.549782,
+            ],
+            joint_c: 0.493825,
+            joint: (0.377036, 0.508596),
+        },
+        RecordBand {
+            name: "vol doubling months %",
+            record: 3.707995,
+            q: [
+                1.506373, 2.433372, 2.780997, 2.896871, 3.128621, 3.244496, 3.244496, 3.360371,
+                3.476246, 3.476246, 3.592121, 3.707995, 3.707995, 3.823870, 3.939745, 3.939745,
+                4.055620, 4.171495, 4.287370, 4.403244, 4.634994, 5.098494, 6.373117,
+            ],
+            joint_c: 0.493825,
+            joint: (2.317497, 5.214368),
+        },
+        RecordBand {
+            name: "sessions beyond 5% a century",
+            record: 252.624621,
+            q: [
+                66.626274, 115.207932, 145.744974, 165.177637, 180.446158, 192.938584, 202.654916,
+                212.371248, 222.087579, 230.415863, 240.132195, 249.848527, 259.564858, 267.893142,
+                278.997521, 290.101900, 302.594327, 316.474800, 333.131369, 355.340127, 390.041311,
+                456.667585, 617.681080,
+            ],
+            joint_c: 0.493825,
+            joint: (106.879647, 474.712200),
+        },
+        RecordBand {
             name: "return lag-1 autocorr",
             record: -0.056147,
             q: [
@@ -11833,7 +12088,8 @@ const SP500_LEDGER: LedgerRecords = LedgerRecords {
         -1.387045, -0.112506, -1.381921, -1.352275, -0.516015, -0.112060, -0.322592, 2.174119,
         -0.216482, 0.698917, -0.302807, 0.922389, 0.237333, 1.701461, 25.069084, 5.311153,
         45.000000, 9.827473, 12.007971, 36.010443, 32.145166, 66.666667, 0.181760, -1.457118,
-        -0.410259, -0.530453, -3.383634, 38.942546, -0.078768,
+        -0.410259, -0.530453, -3.383634, 38.942546, 1.442148, 0.370207, 0.455485, 3.716609,
+        84.839119, 0.657588, 0.238687, -0.078768,
     ],
     bands: [
         RecordBand {
@@ -11871,6 +12127,62 @@ const SP500_LEDGER: LedgerRecords = LedgerRecords {
             ],
             joint_c: 0.490825,
             joint: (-5.414428, -1.398985),
+        },
+        RecordBand {
+            name: "z beyond 3 sds %",
+            record: 1.442148,
+            q: [
+                1.121671, 1.304011, 1.359266, 1.392419, 1.408995, 1.425572, 1.436623, 1.453199,
+                1.458725, 1.469776, 1.480827, 1.491878, 1.502929, 1.513979, 1.525030, 1.536081,
+                1.547132, 1.563709, 1.574760, 1.596862, 1.624489, 1.685269, 1.806829,
+            ],
+            joint_c: 0.494025,
+            joint: (1.287435, 1.696320),
+        },
+        RecordBand {
+            name: "z beyond 4 sds %",
+            record: 0.370207,
+            q: [
+                0.243121, 0.298376, 0.326003, 0.342579, 0.353630, 0.359156, 0.370207, 0.375732,
+                0.381258, 0.386783, 0.392309, 0.397834, 0.403359, 0.408885, 0.414410, 0.419936,
+                0.425461, 0.436512, 0.442038, 0.453089, 0.469665, 0.502818, 0.591226,
+            ],
+            joint_c: 0.494025,
+            joint: (0.292850, 0.508343),
+        },
+        RecordBand {
+            name: "log vol sd",
+            record: 0.455485,
+            q: [
+                0.373895, 0.398931, 0.414187, 0.422970, 0.428558, 0.433259, 0.437271, 0.440874,
+                0.444230, 0.447344, 0.450434, 0.453627, 0.456695, 0.459879, 0.463076, 0.466514,
+                0.470342, 0.474518, 0.479499, 0.485953, 0.495213, 0.512827, 0.554929,
+            ],
+            joint_c: 0.494025,
+            joint: (0.394486, 0.518640),
+        },
+        RecordBand {
+            name: "vol doubling months %",
+            record: 3.716609,
+            q: [
+                1.858304, 3.019744, 3.368177, 3.600465, 3.716609, 3.832753, 3.948897, 4.065041,
+                4.065041, 4.181185, 4.297329, 4.413473, 4.413473, 4.529617, 4.645761, 4.761905,
+                4.761905, 4.878049, 4.994193, 5.226481, 5.458769, 5.923345, 7.084785,
+            ],
+            joint_c: 0.494025,
+            joint: (2.903600, 6.039489),
+        },
+        RecordBand {
+            name: "sessions beyond 5% a century",
+            record: 84.839119,
+            q: [
+                13.908052, 30.597715, 43.114962, 50.068988, 55.632209, 59.804625, 63.977041,
+                68.149456, 70.931067, 75.103483, 79.275898, 83.448314, 86.229924, 90.402340,
+                94.574756, 98.747171, 104.310392, 109.873613, 116.827639, 126.563276, 140.471328,
+                166.896628, 251.735747,
+            ],
+            joint_c: 0.494025,
+            joint: (27.816105, 176.632264),
         },
         RecordBand {
             name: "return lag-1 autocorr",
@@ -17221,6 +17533,8 @@ struct PathRead {
     bond_vol: Vec<f64>,
     /// the bond's `crash_points` over the path's declines of 15%+
     bond_crash: Vec<[f64; 2]>,
+    /// the same net of the bond's drift (`crash_points_net`)
+    bond_crash_net: Vec<[f64; 2]>,
     corr_calm: f64,
     corr_infl: f64,
     val_disp: f64,
@@ -17720,6 +18034,11 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
         } else {
             Vec::new()
         },
+        bond_crash_net: if br {
+            crash_points_net(&s.bond, &s.cpi, &eps)
+        } else {
+            Vec::new()
+        },
         corr_calm: if br { corr_in(false) } else { f64::NAN },
         corr_infl: if br { corr_in(true) } else { f64::NAN },
         val_disp: if rest {
@@ -17883,6 +18202,7 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
         )
     };
     let bond_crash_pooled = pooled(|p| &p.bond_crash);
+    let bond_crash_net_pooled = pooled(|p| &p.bond_crash_net);
     let bond10_crash_pooled = pooled(|p| &p.bond10_crash);
     let eps: Vec<Episode> = per
         .iter()
@@ -17977,6 +18297,7 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
             .collect::<Vec<f64>>()),
         bond_growth: bond_crash_pooled[0],
         bond_infl: bond_crash_pooled[1],
+        bond_growth_net: bond_crash_net_pooled[0],
         bond10_vol: med_by(|p| p.bond10_vol),
         bond10_excess: med_by(|p| p.bond10_excess),
         bond10_growth: bond10_crash_pooled[0],
@@ -18208,20 +18529,111 @@ fn vr_of(st: &WorldStats, q: usize) -> f64 {
     clippy::too_many_arguments,
     reason = "the Scala twin's parameter list, which uses named arguments for the same seven;               collapsing any pair here would make the two signatures stop reading alike"
 )]
-fn band_check(
-    name: &str,
-    got: f64,
-    lo: f64,
-    hi: f64,
-    cls: GateClass,
-    dp: i32,
-    unit: &str,
-) -> (String, bool, GateClass) {
-    (
-        format!("{name} {}-{}{unit}", jf(lo, 0, dp), jf(hi, 0, dp)),
-        got > lo && got < hi,
-        cls,
-    )
+fn band_check(name: &str, got: f64, lo: f64, hi: f64, cls: GateClass, dp: i32, unit: &str) -> Gate {
+    Gate {
+        name: format!("{name} {}-{}{unit}", jf(lo, 0, dp), jf(hi, 0, dp)),
+        clauses: vec![Clause::open("", got, lo, hi)],
+        class: cls,
+        band: true,
+    }
+}
+
+/// One clause of a gate: a reading and the interval it must sit in, open unless `closed`. An
+/// infinite bound is no bound: the clause is one-sided.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Clause {
+    /// what the clause reads, inside its gate; empty for a band gate's one clause
+    pub label: &'static str,
+    pub reading: f64,
+    pub lo: f64,
+    pub hi: f64,
+    pub closed: bool,
+}
+
+impl Clause {
+    #[must_use]
+    pub const fn open(label: &'static str, reading: f64, lo: f64, hi: f64) -> Self {
+        Self {
+            label,
+            reading,
+            lo,
+            hi,
+            closed: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn closed(label: &'static str, reading: f64, lo: f64, hi: f64) -> Self {
+        Self {
+            label,
+            reading,
+            lo,
+            hi,
+            closed: true,
+        }
+    }
+
+    /// inside its interval; a NaN reading never is
+    #[must_use]
+    pub fn holds(&self) -> bool {
+        let x = self.reading;
+        let above = self.lo == f64::NEG_INFINITY
+            || if self.closed {
+                self.lo <= x
+            } else {
+                self.lo < x
+            };
+        let below = self.hi == f64::INFINITY
+            || if self.closed {
+                x <= self.hi
+            } else {
+                x < self.hi
+            };
+        above && below
+    }
+
+    /// the reading's distance inside its nearer bound, negative outside; NaN where the reading or
+    /// a bound it is read against is
+    #[must_use]
+    pub fn clearance(&self) -> f64 {
+        let from_lo = if self.lo == f64::NEG_INFINITY {
+            f64::INFINITY
+        } else {
+            self.reading - self.lo
+        };
+        let to_hi = if self.hi == f64::INFINITY {
+            f64::INFINITY
+        } else {
+            self.hi - self.reading
+        };
+        if from_lo.is_nan() || to_hi.is_nan() {
+            f64::NAN
+        } else if from_lo < to_hi {
+            from_lo
+        } else {
+            to_hi
+        }
+    }
+}
+
+/// A gate as its clauses: it passes when every clause holds. `band` marks a band on one reading
+/// (`band_check`), the gates `gate_bands_at` reports.
+struct Gate {
+    name: String,
+    clauses: Vec<Clause>,
+    class: GateClass,
+    band: bool,
+}
+
+impl Gate {
+    fn of(name: &str, clauses: Vec<Clause>, class: GateClass) -> Self {
+        Self {
+            name: name.to_string(),
+            clauses,
+            class,
+            band: false,
+        }
+    }
 }
 
 /// The horizon the verdict ensemble runs at: every band and anchor weight was calibrated on
@@ -18320,21 +18732,51 @@ pub fn gate_bands_at(
     banded: &std::collections::HashMap<&'static str, f64>,
 ) -> Vec<GateBand> {
     let mut out = Vec::new();
-    gate_checks_with(a, st, banded, &mut |name, reading, band, class| {
-        out.push(GateBand {
-            name: name.to_string(),
-            reading,
-            band,
+    gate_checks_with(a, st, banded, &mut |name, c, class, band| {
+        if band {
+            out.push(GateBand {
+                name: name.to_string(),
+                reading: c.reading,
+                band: (c.lo, c.hi),
+                class,
+            });
+        }
+    });
+    out
+}
+
+/// One clause of a gate `gate_checks_at` grades, as `gate_clauses_at` reports it.
+#[derive(Clone, Debug)]
+pub struct GateClause {
+    /// the gate's name as `gate_checks_at` prints it
+    pub gate: String,
+    pub clause: Clause,
+    pub class: GateClass,
+}
+
+/// Every clause of every gate `gate_checks_at` grades, in gate order: what the membership's
+/// margin reads (`margin_failures`).
+pub fn gate_clauses_at(
+    a: Anchors,
+    st: &WorldStats,
+    banded: &std::collections::HashMap<&'static str, f64>,
+) -> Vec<GateClause> {
+    let mut out = Vec::new();
+    gate_checks_with(a, st, banded, &mut |name, c, class, _| {
+        out.push(GateClause {
+            gate: name.to_string(),
+            clause: *c,
             class,
         });
     });
     out
 }
 
-/// What `gate_checks_with` tells about each band gate: its name, reading, band and class.
-type GateSeen<'a> = dyn FnMut(&str, f64, (f64, f64), GateClass) + 'a;
+/// What `gate_checks_with` tells about each clause: its gate's name, the clause, the class and
+/// whether the gate is a band on one reading.
+type GateSeen<'a> = dyn FnMut(&str, &Clause, GateClass, bool) + 'a;
 
-/// `gate_checks_at`, telling `seen` each band gate's name, reading, band and class as it grades it.
+/// `gate_checks_at`, telling `seen` each gate's clauses, in gate order, as it grades them.
 #[expect(
     clippy::too_many_lines,
     reason = "one table of bands, mirroring the Scala twin's gateChecks row for row"
@@ -18347,13 +18789,8 @@ fn gate_checks_with(
 ) -> Vec<(String, bool, GateClass)> {
     use GateClass::Mechanism;
     use GateClass::Realism;
-    // every band gate below goes through this one, so `seen` hears each in gate order
-    let mut band_check =
-        |name: &str, got: f64, lo: f64, hi: f64, cls: GateClass, dp: i32, unit: &str| {
-            let g = band_check(name, got, lo, hi, cls, dp, unit);
-            seen(&g.0, got, (lo, hi), cls);
-            g
-        };
+    const INF: f64 = f64::INFINITY;
+    const NEG_INF: f64 = f64::NEG_INFINITY;
     let lv = |name: &str, verdict: f64| banded.get(name).copied().unwrap_or(verdict);
     let vol = lv("equity vol %", st.vol * 100.0);
     let ac1 = lv("clustering lag 1", st.ac1);
@@ -18362,7 +18799,7 @@ fn gate_checks_with(
         "crashes/century",
         st.ep_per_path * 100.0 / st.years_per_path,
     );
-    let n = |s: &str| s.to_string();
+    let shape_floor = 1.max(st.n_shapes / 10) as f64;
     let mut v = vec![
         // MEASURED, not assumed. 8-25% was the S&P's shape and it asserted of 17 of the 35 real
         // equity instruments in `test-data/equity-anchors` that they are not markets — QQQ (26.9%),
@@ -18402,25 +18839,31 @@ fn gate_checks_with(
             0,
             "",
         ),
-        (
-            format!("clustering {:.2}-{:.2}", REALISM_AC1.0, REALISM_AC1.1),
-            ac1 > REALISM_AC1.0 && ac1 < REALISM_AC1.1 && ac20 > 0.03,
+        Gate::of(
+            &format!("clustering {:.2}-{:.2}", REALISM_AC1.0, REALISM_AC1.1),
+            vec![
+                Clause::open("lag 1", ac1, REALISM_AC1.0, REALISM_AC1.1),
+                Clause::open("lag 20", ac20, 0.03, INF),
+            ],
             Realism,
         ),
         // Widened from 8-45 for the same reason as the volatility band above: 45 excluded two of
         // the 35 real instruments (EWA, EWW), which read 49.4 and 46.6 over the clean w1996 window
         // against a cross-section range of 13.2-49.4. A band that calls a real market unreal is not
         // a realism check.
-        (
-            format!(
+        Gate::of(
+            &format!(
                 "crash rate {:.0}-{:.0}/century",
                 REALISM_CRASHES.0, REALISM_CRASHES.1
             ),
-            st.ep_per_path >= 1.0 && pc >= REALISM_CRASHES.0 && pc <= REALISM_CRASHES.1,
+            vec![
+                Clause::closed("episodes a path", st.ep_per_path, 1.0, INF),
+                Clause::closed("a century", pc, REALISM_CRASHES.0, REALISM_CRASHES.1),
+            ],
             Realism,
         ),
-        (
-            n("both recovery shapes"),
+        Gate::of(
+            "both recovery shapes",
             // max(1, _) is load-bearing. n_shapes / 10 is INTEGER division, so below ten shapes
             // both clauses read ">= 0" and the check passes with NEITHER shape present —
             // measured at -drift 0.9, which produced V=0, balanced=1, U=0 and passed a check
@@ -18428,20 +18871,34 @@ fn gate_checks_with(
             // which is where shape evidence is weakest and the check matters most. Requiring at
             // least one of each makes too-few-shapes FAIL: a gate that passes on no evidence
             // reads as verification.
-            st.n_shapes > 0
-                && st.v_count >= 1.max(st.n_shapes / 10)
-                && st.u_count >= 1.max(st.n_shapes / 10),
+            vec![
+                Clause::open("shapes", st.n_shapes as f64, 0.0, INF),
+                Clause::closed("V shapes", st.v_count as f64, shape_floor, INF),
+                Clause::closed("U shapes", st.u_count as f64, shape_floor, INF),
+            ],
             Realism,
         ),
-        (n("no runaway drift"), st.ann_ret.abs() < 30.0, Realism),
+        Gate::of(
+            "no runaway drift",
+            vec![Clause::open("", st.ann_ret, -30.0, 30.0)],
+            Realism,
+        ),
         // 0.02% ~ one clamped session per 20 path-years. The old bound (0.5%) would have
         // passed a world where the clamp was already reshaping kurtosis by a third.
-        (n("clamp rarely binds"), st.clamp_pct < 0.02, Realism),
+        Gate::of(
+            "clamp rarely binds",
+            vec![Clause::open("", st.clamp_pct, NEG_INF, 0.02)],
+            Realism,
+        ),
         // THE DENOMINATOR IS THE POINT. `clamp_pct` measures the guard against ALL sessions, where
         // it is negligible by construction and passes in worlds whose worst sessions are ENTIRELY
         // its doing. This measures it against the tail it actually touches. Both are kept: one says
         // the guard is not distorting the body, the other that it is not authoring the tail.
-        (n("clamp shapes no tail"), st.tail_floor_pct < 2.0, Realism),
+        Gate::of(
+            "clamp shapes no tail",
+            vec![Clause::open("", st.tail_floor_pct, NEG_INF, 2.0)],
+            Realism,
+        ),
         // RELATIVE to duration, not absolute. The old 7-20% band was TLT's: of eight real funds
         // it admitted one, and asserted of the US Aggregate (4.24%) that it is not a market.
         // 0.5-2.5 per year of duration admits every fund measured, high yield at 2.001 included,
@@ -18455,57 +18912,79 @@ fn gate_checks_with(
             1,
             "x duration",
         ),
-        (
-            n("bonds rally in growth shocks"),
-            st.bond_growth > 3.0,
+        // net of the bond's drift: the gross response is carry over the decline on a bond with no
+        // link to the equity (`BOND_RALLY_NET_FLOOR`); the gross level is the placement row
+        Gate::of(
+            "bonds rally in growth shocks",
+            vec![Clause::open(
+                "",
+                st.bond_growth_net,
+                BOND_RALLY_NET_FLOOR,
+                INF,
+            )],
             Mechanism,
         ),
-        (
-            n("bonds lose more the higher the inflation seen"),
-            st.bond_infl < -0.5,
+        Gate::of(
+            "bonds lose more the higher the inflation seen",
+            vec![Clause::open("", st.bond_infl, NEG_INF, -0.5)],
             Mechanism,
         ),
-        (
-            n("corr flips positive under inflation"),
-            !st.corr_infl.is_nan()
-                && !st.corr_calm.is_nan()
-                && st.corr_infl > st.corr_calm + 0.15
-                && st.corr_infl > 0.0
-                && st.corr_calm < 0.35,
+        Gate::of(
+            "corr flips positive under inflation",
+            vec![
+                Clause::open(
+                    "above the calm's by 0.10",
+                    st.corr_infl,
+                    st.corr_calm + CORR_FLIP_MIN,
+                    INF,
+                ),
+                Clause::open("positive", st.corr_infl, 0.0, INF),
+                Clause::open("calm under 0.35", st.corr_calm, NEG_INF, 0.35),
+            ],
             Mechanism,
         ),
         // Two-sided like the spiral's: the channel must strike, and disasters that arrive more
         // than a few times a century are not disasters — they are a second volatility regime
         // wearing the name. An off-world (rate 0) fails this row, which is what a mechanism row
         // MEANS.
-        (
-            n("macro disasters strike, not every decade"),
-            st.dis_per_century > 0.05 && st.dis_per_century < 4.0,
+        Gate::of(
+            "macro disasters strike, not every decade",
+            vec![Clause::open("", st.dis_per_century, 0.05, 4.0)],
             Mechanism,
         ),
         // The valuation cycle's engagement row. The floor fails a world without the mechanism
         // (the disaster-only default read 0.095); the ceiling is the unmoored guard — a
         // dispersion past 0.70 means perceived fair has lost the fundamental.
-        (
-            n("valuation cycle engages, not unmoored"),
-            st.val_disp > 0.13 && st.val_disp < 0.70,
+        Gate::of(
+            "valuation cycle engages, not unmoored",
+            vec![Clause::open("", st.val_disp, 0.13, 0.70)],
             Mechanism,
         ),
         // THE STATIONARITY ROW (item 27): the paths must be stationary from the first session —
         // the valuation gap's pooled mean may not drift between a path's first decade and its
         // later half. A world whose slow valuation state starts off its own law (the fair-value
         // start every world had before the cycle) fails it, which is what a mechanism row MEANS.
-        (
-            n("valuation stationary from the first session"),
-            !st.gap_drift.is_nan() && st.gap_drift.abs() < GAP_DRIFT_BAND,
+        Gate::of(
+            "valuation stationary from the first session",
+            vec![Clause::open(
+                "",
+                st.gap_drift,
+                -GAP_DRIFT_BAND,
+                GAP_DRIFT_BAND,
+            )],
             Mechanism,
         ),
         // and its SPREAD: a gap started at the fundamental has the right mean long before it has
         // the right spread, and every mechanism that reads the gap's level against its own
         // history -- the bust swing -- runs quiet until it does
-        (
-            n("valuation spread stationary from the first session"),
-            !st.gap_spread_drift.is_nan() && st.gap_spread_drift.abs() < GAP_SPREAD_BAND,
+        Gate::of(
+            "valuation spread stationary from the first session",
+            vec![Clause::open(
+                "",
+                st.gap_spread_drift,
+                -GAP_SPREAD_BAND,
+                GAP_SPREAD_BAND,
+            )],
             Mechanism,
         ),
         band_check("inflation", st.infl_ann, 1.0, 6.0, Realism, 0, "%/yr"),
@@ -18530,9 +19009,14 @@ fn gate_checks_with(
     // THE OPEN's mechanism, when it ran: the record's worst sessions open with more of the day
     // already gone.
     if let Some(os) = st.open {
-        v.push((
-            "overnight gap share rises on the worst sessions".to_string(),
-            os.worst_gap_share > os.all_gap_share,
+        v.push(Gate::of(
+            "overnight gap share rises on the worst sessions",
+            vec![Clause::open(
+                "",
+                os.worst_gap_share,
+                os.all_gap_share + OVERNIGHT_WORST_MARGIN,
+                INF,
+            )],
             Mechanism,
         ));
     }
@@ -18554,9 +19038,14 @@ fn gate_checks_with(
                 "",
             ));
         }
-        v.push((
-            BASKET_MECHANISM_ROW.to_string(),
-            b.pair_corr_worst > b.pair_corr_mid,
+        v.push(Gate::of(
+            BASKET_MECHANISM_ROW,
+            vec![Clause::open(
+                "",
+                b.pair_corr_worst,
+                b.pair_corr_mid + PAIR_CORR_MARGIN,
+                INF,
+            )],
             Mechanism,
         ));
     }
@@ -18564,37 +19053,60 @@ fn gate_checks_with(
     // decile below its worst decile's, which a factor structure whose idio is the legs' own
     // produces. The sector LEVELS are placement rows (`SECTOR_ROWS`).
     if let Some(s) = st.sector {
-        v.push((
-            "sector pair corr falls on the middle decile".to_string(),
-            s.pair_corr_mid < s.pair_corr_worst,
+        v.push(Gate::of(
+            "sector pair corr falls on the middle decile",
+            vec![Clause::open(
+                "",
+                s.pair_corr_mid,
+                NEG_INF,
+                s.pair_corr_worst - PAIR_CORR_MARGIN,
+            )],
             Mechanism,
         ));
     }
     // THE MACRO PANEL's mechanism, when it ran — `macro-2026-09-06.tsv`: the conditions index
     // builds before the peak, clear of what a decoupled series reads there (the null panel:
     // 0.49; "fires in most episodes" is not a test, a null panel fires in 0.70-0.77 of them, so
-    // the fired shares are reported), and it concentrates the big peaks. The panel's LEVELS --
-    // the firing lags, the persistences, the oracle bound, the inversion share and the vol
-    // premium -- are placement rows (`macro_placement_rows`); the warning shares, the
+    // the fired shares are reported), and it concentrates the big peaks, clear of a decoupled
+    // panel's hazard. The panel's LEVELS -- the firing lags, the persistences, the oracle bound,
+    // the inversion share, the vol premium and the hazard -- are placement rows
+    // (`macro_placement_rows`); the warning shares, the
     // implied-vol member's lag, the inversion spell length and the ivol's R^2 on forward
     // realized vol are reported, disclosed in MarketSimWorlds.md.
     // a decoupled panel grades nothing: its readings are the no-edge level, by construction
     if let Some(ms) = st.macro_panel.filter(|m| !m.sibling) {
-        v.push((
-            "macro cond builds before the peak: rank above a decoupled series' 0.49".to_string(),
-            ms.members[2].pre_peak > macro_bands::COND_PRE_PEAK_NULL,
+        v.push(Gate::of(
+            "macro cond builds before the peak: rank above a decoupled series' 0.51-0.54",
+            vec![Clause::open(
+                "",
+                ms.members[2].pre_peak,
+                macro_bands::COND_PRE_PEAK_NULL,
+                INF,
+            )],
             Mechanism,
         ));
-        v.push((
-            format!(
-                "macro cond concentrates the big peaks: a 20% peak within a quarter above {}x as likely",
-                jf(macro_bands::HAZARD_MIN, 0, 1)
-            ),
-            ms.hazard20q > macro_bands::HAZARD_MIN,
+        v.push(Gate::of(
+            "macro cond concentrates the big peaks: a 20% peak within a quarter likelier than a decoupled series' 1.0x",
+            vec![Clause::open(
+                "",
+                ms.hazard20q,
+                macro_bands::HAZARD_NULL,
+                INF,
+            )],
             Mechanism,
         ));
     }
-    v
+    for g in &v {
+        for c in &g.clauses {
+            seen(&g.name, c, g.class, g.band);
+        }
+    }
+    v.into_iter()
+        .map(|g| {
+            let ok = g.clauses.iter().all(Clause::holds);
+            (g.name, ok, g.class)
+        })
+        .collect()
 }
 
 /// Whether an anchor-fitted band can be graded here: its driving variable inside the range the
@@ -22035,7 +22547,7 @@ const PLACEMENT_MIN_PER_ROW: usize = 10;
 /// every one of its events): no inflation-regime or growth crash, no 40% decline, fewer than three
 /// declines, no 20% decline for the post-trough rows, no crash, no calm era for the tail hedge, no
 /// 20% episode for the panel's lags. Such a history counts as no more extreme than the record.
-pub const EVENT_NAN_ROWS: [&str; 22] = [
+pub const EVENT_NAN_ROWS: [&str; 23] = [
     "bond crash per % infl",
     "bond crash at 2% infl",
     "profit decline median %",
@@ -22057,6 +22569,7 @@ pub const EVENT_NAN_ROWS: [&str; 22] = [
     "macro spread lag",
     "macro cond lag",
     "macro cond build-up",
+    "macro cond hazard",
     "satellite crash ratio",
 ];
 /// Rows whose missing reading marks a history MORE extreme than any reading: both levered legs
@@ -22210,14 +22723,20 @@ pub fn eq_depth_record_index(a: Anchors, rung: f64) -> f64 {
 /// The macro panel's graded statistics on ONE history, the path's last `years` with its panel kept
 /// (`Path::tail` keeps it): [inversion share, vol premium, spread persistence, conditions persistence,
 /// implied-vol persistence, oracle bound r2 (the largest forward-60 R^2 of the four measured
-/// members), spread lag, conditions lag, conditions build-up], each as the gates read the pooled
-/// panel. NaN without a panel; the lags and the build-up NaN where the history has no 20% episode
-/// (or the member never fires).
+/// members), spread lag, conditions lag, conditions build-up, the quarter-horizon 20% hazard],
+/// each as the gates read the pooled panel. NaN without a panel; the lags, the build-up and the
+/// hazard NaN where the history has no 20% episode (or the member never fires).
 #[must_use]
-pub fn macro_history_read(p: &Path, years: usize) -> [f64; 9] {
+pub fn macro_history_read(p: &Path, years: usize) -> [f64; 10] {
     let c = p.tail(years);
     let Some(r) = macro_path_read(&c) else {
-        return [f64::NAN; 9];
+        return [f64::NAN; 10];
+    };
+    let hz = &r.hazards[0];
+    let hazard = if hz.hit_all > 0 && hz.n_top > 0 {
+        (hz.hit_top as f64 / hz.n_top as f64) / (hz.hit_all as f64 / hz.n_all as f64)
+    } else {
+        f64::NAN
     };
     let lag = |j: usize| {
         let l: Vec<f64> = r.members[j]
@@ -22240,6 +22759,7 @@ pub fn macro_history_read(p: &Path, years: usize) -> [f64; 9] {
         lag(0),
         lag(2),
         pctile(&r.members[2].6, 0.5),
+        hazard,
     ]
 }
 
@@ -22248,8 +22768,9 @@ pub fn macro_history_read(p: &Path, years: usize) -> [f64; 9] {
 /// premium is VIX against CRSP (36 years); the index-relative rows read the set's index window
 /// (CRSP 1990-2026, 36 years; QQQ 1999-2026, 27 years). Records from macro-2026-09-06.tsv, CRSP for
 /// the S&P set and QQQ for the Nasdaq set; `macro_tests` re-derives every one from the fixture.
+/// The hazard's mechanism bound reads the null (`macro_bands::HAZARD_NULL`); its level is here.
 #[must_use]
-pub fn macro_placement_rows(a: Anchors) -> [(&'static str, usize, usize, f64); 9] {
+pub fn macro_placement_rows(a: Anchors) -> [(&'static str, usize, usize, f64); 10] {
     let nasdaq = a.name == NASDAQ_ANCHORS.name;
     let rel_h = if nasdaq { 27 } else { 36 };
     [
@@ -22281,6 +22802,12 @@ pub fn macro_placement_rows(a: Anchors) -> [(&'static str, usize, usize, f64); 9
             8,
             rel_h,
             if nasdaq { 0.8179 } else { 0.9429 },
+        ),
+        (
+            "macro cond hazard",
+            9,
+            rel_h,
+            if nasdaq { 1.4399 } else { 2.7228 },
         ),
     ]
 }
@@ -22508,7 +23035,7 @@ fn macro_row_histories(
     }
     let nasdaq = a.name == NASDAQ_ANCHORS.name;
     let macro_rows = macro_placement_rows(a);
-    let mut reads: std::collections::BTreeMap<usize, Vec<[f64; 9]>> =
+    let mut reads: std::collections::BTreeMap<usize, Vec<[f64; 10]>> =
         std::collections::BTreeMap::new();
     for &(_, _, h, _) in &macro_rows {
         reads
@@ -26594,9 +27121,10 @@ fn run_strategy_sweep(
             jf(st.tail_floor_pct, 0, 1)
         );
         println!(
-            "  bond vol {}%  crash at 2% infl {}  per % infl {}  corr {}/{}  bond spiral {}% of sessions",
+            "  bond vol {}%  crash at 2% infl {} (net of drift {})  per % infl {}  corr {}/{}  bond spiral {}% of sessions",
             jf(st.bond_vol * 100.0, 0, 1),
             jfs(st.bond_growth, 1),
+            jfs(st.bond_growth_net, 1),
             jfs(st.bond_infl, 1),
             jfs(st.corr_calm, 2),
             jfs(st.corr_infl, 2),
@@ -30258,6 +30786,7 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ),
         (&["jumpResp"][..], "declineVol", w.decline_vol, 0.0),
         (&["expAnchor"][..], "yieldAnchor", w.yield_anchor, 0.0),
+        (&["cycleYears"][..], "cycleVol", w.cycle_vol, 0.0),
         (&["termVol"][..], "termPress", w.term_press, 0.0),
         (&["declineVol", "jumpResp"][..], "declineVolHalf", half, 5.0),
         (
@@ -31375,6 +31904,7 @@ pub const OPTIONAL_WORLD_KEYS: &[(&str, &str)] = &[
     ("declineVolAttack", "0"),
     ("yieldAnchor", "0"),
     ("termPress", "0"),
+    ("cycleVol", "0"),
 ];
 
 /// `-worldset F -worldindex K` runs member K of an exported archive. Pre-scanned as `-atrelease`
@@ -31455,6 +31985,8 @@ struct SeedRead {
     /// dump
     ledger: Vec<HistoryRow>,
     bounds: Vec<Vec<String>>,
+    /// every gate's clauses at this read, for the margin over the reads (`margins`)
+    clauses: Vec<GateClause>,
     shown: Vec<&'static str>,
     gate_req: Vec<GateClass>,
 }
@@ -31534,37 +32066,230 @@ struct Membership {
     placement: Placement,
     histories: usize,
     bad: Vec<Vec<String>>,
+    margins: Vec<Margin>,
 }
 
 fn membership(reads: &[SeedRead]) -> Membership {
     let rows: Vec<&[HistoryRow]> = reads.iter().map(|r| r.hrows.as_slice()).collect();
     let pooled = pooled_history_rows(&rows);
     let histories = pooled.first().map_or(0, |r| r.reads.len());
+    let clauses: Vec<&[GateClause]> = reads.iter().map(|r| r.clauses.as_slice()).collect();
+    let margins = margins(&clauses);
+    // from MARGIN_MIN_READS the margin alone decides the bounds; under it, every read must pass
+    let margined = reads.len() >= MARGIN_MIN_READS;
     let bad = (0..GateClass::ALL.len())
         .map(|i| {
-            reads
-                .iter()
-                .flat_map(|r| {
-                    r.bounds[i]
-                        .iter()
-                        .map(move |f| format!("seed {}: {f}", r.seed))
-                })
-                .collect()
+            if margined {
+                margins
+                    .iter()
+                    .filter(|m| !m.ok && m.class == GateClass::ALL[i])
+                    .map(|m| format!("margin: {}", m.named()))
+                    .collect()
+            } else {
+                reads
+                    .iter()
+                    .flat_map(|r| {
+                        r.bounds[i]
+                            .iter()
+                            .map(move |f| format!("seed {}: {f}", r.seed))
+                    })
+                    .collect()
+            }
         })
         .collect();
     Membership {
         placement: placement(&pooled, PLACEMENT_ALPHA),
         histories,
         bad,
+        margins,
+    }
+}
+
+/// THE MARGIN's tail: a member's reads must predict its next read outside a bound at most this
+/// often, so a world in a set fails a bound on under 0.5% of the reads a consumer takes.
+pub const MARGIN_TAIL: f64 = 0.005;
+
+/// The fewest reads the margin is read from. The reads estimate their own spread, and four cannot
+/// price a 0.5% tail: the prediction asks 6.53 sds there, refusing worlds that sit three to four
+/// sds clear and fail a bound on 0.02% of reads (the 0.25.1 Nasdaq recipe's valuation-spread row,
+/// 3.6 sds over 40 reads). 3.04 at 16 reads, 2.74 at the set check's 40.
+pub const MARGIN_MIN_READS: usize = 16;
+
+/// P(|T| < t) on Student's t with `nu` degrees of freedom, `nu` >= 1: Abramowitz & Stegun
+/// 26.7.3 (odd) and 26.7.4 (even), finite sums in the angle `atan(t / sqrt(nu))`.
+fn student_t_central(t: f64, nu: usize) -> f64 {
+    let th = (t / (nu as f64).sqrt()).atan();
+    let (s, c) = (th.sin(), th.cos());
+    let c2 = c * c;
+    let mut term = 1.0;
+    let mut sum = 0.0;
+    if nu % 2 == 1 {
+        for k in 0..(nu - 1) / 2 {
+            if k > 0 {
+                term *= c2 * (2 * k) as f64 / (2 * k + 1) as f64;
+            }
+            sum += term;
+        }
+        2.0 / std::f64::consts::PI * (th + s * c * sum)
+    } else {
+        for k in 0..nu / 2 {
+            if k > 0 {
+                term *= c2 * (2 * k - 1) as f64 / (2 * k) as f64;
+            }
+            sum += term;
+        }
+        s * sum
+    }
+}
+
+/// Student's t quantile at `p` in (0.5, 1) on `nu` >= 1 degrees of freedom, by bisection on the
+/// angle `atan(t / sqrt(nu))` over (0, pi/2), where the central probability is monotone.
+#[must_use]
+pub fn student_t_quantile(p: f64, nu: usize) -> f64 {
+    let want = 2.0 * p - 1.0;
+    let (mut lo, mut hi) = (0.0_f64, std::f64::consts::FRAC_PI_2);
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if mid <= lo || mid >= hi {
+            break;
+        }
+        if student_t_central((nu as f64).sqrt() * mid.tan(), nu) < want {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (nu as f64).sqrt() * (0.5 * (lo + hi)).tan()
+}
+
+/// THE MARGIN over `n` >= 2 reads, in the reads' own sds: Student's t prediction,
+/// t(1 - `MARGIN_TAIL`, n - 1) sqrt(1 + 1/n), the clearance a next read keeps above zero with
+/// probability 1 - `MARGIN_TAIL` when the reads' mean is that many of their sds. 6.53 at four reads.
+#[must_use]
+pub fn margin_need(n: usize) -> f64 {
+    student_t_quantile(1.0 - MARGIN_TAIL, n - 1) * (1.0 + 1.0 / n as f64).sqrt()
+}
+
+/// One clause's margin over a member's reads: its clearances' mean and sd, the sds the mean
+/// stands at, and whether that clears `margin_need`.
+#[derive(Clone, Debug)]
+pub struct Margin {
+    pub gate: String,
+    pub label: &'static str,
+    pub class: GateClass,
+    pub mean: f64,
+    pub sd: f64,
+    pub need: f64,
+    pub ok: bool,
+}
+
+impl Margin {
+    /// the mean clearance in sds; infinite where every read reads the same
+    #[must_use]
+    pub fn sds(&self) -> f64 {
+        if self.sd > 0.0 {
+            self.mean / self.sd
+        } else {
+            f64::INFINITY
+        }
+    }
+
+    fn named(&self) -> String {
+        if self.label.is_empty() {
+            self.gate.clone()
+        } else {
+            format!("{} [{}]", self.gate, self.label)
+        }
+    }
+}
+
+/// THE MARGIN on every clause of `reads` (a member's reads, each its clauses in gate order,
+/// `gate_clauses_at`): a bound a member sits on passes four reads of four two times in three when
+/// it fails one read in ten, so the reads' clearances must predict the next read inside
+/// (`margin_need`). A read outside the bound counts with its negative clearance: the margin is the
+/// one test, where failing any of 40 reads would refuse a world at the 0.5% tail 18% of the time.
+/// A clause with no reading on a read fails. Empty under `MARGIN_MIN_READS`.
+///
+/// # Panics
+/// If the reads' gates differ: they are one world's, read at different seeds.
+#[must_use]
+pub fn margins(reads: &[&[GateClause]]) -> Vec<Margin> {
+    let n = reads.len();
+    if n < MARGIN_MIN_READS {
+        return Vec::new();
+    }
+    let need = margin_need(n);
+    let first = reads[0];
+    assert!(
+        reads.iter().all(|r| r.len() == first.len()
+            && r.iter()
+                .zip(first)
+                .all(|(a, b)| a.gate == b.gate && a.clause.label == b.clause.label)),
+        "the reads' gates differ"
+    );
+    (0..first.len())
+        .map(|j| {
+            let c: Vec<f64> = reads.iter().map(|r| r[j].clause.clearance()).collect();
+            let mean = c.iter().sum::<f64>() / n as f64;
+            let sd =
+                (c.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1) as f64).sqrt();
+            let read = c.iter().all(|x| !x.is_nan());
+            Margin {
+                gate: first[j].gate.clone(),
+                label: first[j].clause.label,
+                class: first[j].class,
+                mean,
+                sd,
+                need,
+                ok: read && (mean >= need * sd || mean == f64::INFINITY),
+            }
+        })
+        .collect()
+}
+
+/// The margin over `n` reads as the membership prints it: the need, each class's closest clause,
+/// and every clause short of the need as `THIN`.
+fn print_margins(margins: &[Margin], n: usize) {
+    println!();
+    println!(
+        "  the margin: each clause's mean clearance over the {n} reads at least {} of their sds (Student's t, the next read outside its bound {}% of the time)",
+        jf(margin_need(n), 0, 2),
+        jf(MARGIN_TAIL * 100.0, 0, 1)
+    );
+    for cls in GateClass::ALL {
+        let closest = margins
+            .iter()
+            .filter(|g| g.class == cls)
+            .min_by(|a, b| a.sds().total_cmp(&b.sds()));
+        if let Some(g) = closest {
+            println!(
+                "    {:<9} closest {}: mean {} sd {} ({} sds)",
+                cls.label(),
+                g.named(),
+                jf(g.mean, 0, 4),
+                jf(g.sd, 0, 4),
+                jf(g.sds(), 0, 2)
+            );
+        }
+    }
+    for g in margins.iter().filter(|g| !g.ok) {
+        println!(
+            "    THIN  {}: mean {} sd {} ({} sds)",
+            g.named(),
+            jf(g.mean, 0, 4),
+            jf(g.sd, 0, 4),
+            jf(g.sds(), 0, 2)
+        );
     }
 }
 
 /// THE VERDICT OVER SEVERAL READS (`-validate -seeds`), the set loop's and the recipe judge's:
 /// each read printed as `-validate` prints it, then the membership over all of them -- each read's
-/// bound classes, and the record placed once among every read's histories pooled. The exit code
-/// follows `-gate` as a single read's does, a class failing where any read fails its bounds, and
-/// fidelity where the pooled placement fails or is undecided. With `-historyrows` the pooled rows
-/// are written.
+/// bound classes, from `MARGIN_MIN_READS` reads each clause's margin (`margins`), and the record
+/// placed once among every read's histories pooled. The exit code follows `-gate` as a single
+/// read's does, a class failing where any read fails its bounds (under `MARGIN_MIN_READS` reads)
+/// or a clause its margin (from there), and fidelity where the pooled placement fails or is
+/// undecided. With `-historyrows` the pooled rows are written.
 fn run_seeds(args: &[String], seeds: &[u64], rows_file: &str) {
     let reads: Vec<SeedRead> = seeds
         .iter()
@@ -31603,11 +32328,17 @@ fn run_seeds(args: &[String], seeds: &[u64], rows_file: &str) {
     }
     let pass = |b: bool| if b { "PASS" } else { "FAIL" };
     let names: Vec<String> = seeds.iter().map(u64::to_string).collect();
+    let margined = reads.len() >= MARGIN_MIN_READS;
     println!();
     println!(
-        "membership over {} reads (seeds {}): the bounds on every read, the placement once over their pooled histories",
+        "membership over {} reads (seeds {}): {}, the placement once over their pooled histories",
         reads.len(),
-        names.join(",")
+        names.join(","),
+        if margined {
+            "the bounds by the margin over the reads"
+        } else {
+            "the bounds on every read"
+        }
     );
     for r in &reads {
         println!(
@@ -31617,6 +32348,9 @@ fn run_seeds(args: &[String], seeds: &[u64], rows_file: &str) {
             pass(r.bounds[1].is_empty()),
             pass(r.bounds[2].is_empty())
         );
+    }
+    if margined {
+        print_margins(&m.margins, reads.len());
     }
     println!();
     println!(
@@ -31632,14 +32366,19 @@ fn run_seeds(args: &[String], seeds: &[u64], rows_file: &str) {
     };
     println!();
     println!(
-        "membership over {} reads ({} histories): conformal p {} {verdict} at {}; realism {} mechanism {} fidelity {} on every read",
+        "membership over {} reads ({} histories): conformal p {} {verdict} at {}; realism {} mechanism {} fidelity {} {}",
         reads.len(),
         m.histories,
         jf(m.placement.p, 0, 4),
         jf(PLACEMENT_ALPHA, 0, 2),
         pass(m.bad[0].is_empty()),
         pass(m.bad[1].is_empty()),
-        pass(m.bad[2].is_empty())
+        pass(m.bad[2].is_empty()),
+        if margined {
+            "by the margin"
+        } else {
+            "on every read"
+        }
     );
     let mut bad = m.bad;
     bad[2].extend(m.placement.failures());
@@ -31955,6 +32694,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut bust_amp = dw.bust_amp;
     let mut cycle_sd = dw.cycle_sd;
     let mut cycle_years = dw.cycle_years;
+    let mut cycle_vol = dw.cycle_vol;
     let mut belief_leak = dw.belief_leak;
     let mut slow_share = dw.slow_share;
     let mut slow_vol = dw.slow_vol;
@@ -32214,6 +32954,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-bustamp" => bust_amp = req_f64(&mut it, "-bustamp"),
             "-cyclesd" => cycle_sd = req_f64(&mut it, "-cyclesd"),
             "-cycleyears" => cycle_years = req_f64(&mut it, "-cycleyears"),
+            "-cyclevol" => cycle_vol = req_f64(&mut it, "-cyclevol"),
             "-beliefleak" => belief_leak = req_f64(&mut it, "-beliefleak"),
             "-slowshare" => slow_share = req_f64(&mut it, "-slowshare"),
             "-slowvol" => slow_vol = req_f64(&mut it, "-slowvol"),
@@ -32507,6 +33248,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         bust_amp,
         cycle_sd,
         cycle_years,
+        cycle_vol,
         belief_leak,
         slow_share,
         slow_vol,
@@ -33019,9 +33761,10 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         st.v_count, st.mid_count, st.u_count
     );
     println!(
-        "  bond refuge            vol {}% (24y windows)   crash at 2% infl {}   per % infl {}",
+        "  bond refuge            vol {}% (24y windows)   crash at 2% infl {} (net of drift {})   per % infl {}",
         jf(st.bond_vol * 100.0, 0, 1),
         jfs(st.bond_growth, 1),
+        jfs(st.bond_growth_net, 1),
         jfs(st.bond_infl, 1)
     );
     println!(
@@ -33522,6 +34265,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
                 hrows,
                 ledger,
                 bounds,
+                clauses: gate_clauses_at(anchors, &verdict_st, &verdict_banded),
                 shown,
                 gate_req,
             });
@@ -33823,16 +34567,16 @@ mod bubble_ramp_tests {
     }
 }
 
-/// THE LEDGER ROWS (`LEDGER_ROWS`, `ledgerrows-2026-10-22.tsv`): the shipped records re-derived from
+/// THE LEDGER ROWS (`LEDGER_ROWS`, `ledgerrows-2026-11-01.tsv`): the shipped records re-derived from
 /// the fixture; the surface's reader at the production pair is `vol_exit_of`'s to the bit; the
-/// parts, the coupling, the declines and the ruin rule on series built to show them; and the rows
-/// never reach the placement.
+/// parts, the coupling, the declines, the vol process and the ruin rule on series built to show
+/// them; and the rows never reach the placement.
 #[cfg(test)]
 mod ledger_row_tests {
     use super::*;
 
     fn fixture() -> Vec<Vec<String>> {
-        std::fs::read_to_string("../test-data/equity-anchors/ledgerrows-2026-10-22.tsv")
+        std::fs::read_to_string("../test-data/equity-anchors/ledgerrows-2026-11-01.tsv")
             .expect("fixture")
             .lines()
             .filter(|l| !(l.starts_with('#') || l.trim().is_empty()))
@@ -33857,11 +34601,11 @@ mod ledger_row_tests {
                 let num = |i: usize| r[i].parse::<f64>().expect("number");
                 assert_eq!(r[1], LEDGER_ROWS[k], "{set}: row order");
                 assert_eq!(rec.record[k].to_bits(), num(ri).to_bits(), "{set} {}", r[1]);
-                let banded = LEDGER_FAMILIES[2].contains(&k) || LEDGER_FAMILIES[4].contains(&k);
+                let banded = [2, 4, 6].iter().any(|&f| LEDGER_FAMILIES[f].contains(&k));
                 assert_eq!(
                     rec.bands.iter().any(|b| b.name == LEDGER_ROWS[k]),
                     banded,
-                    "{set} {}: the coupling and the reversion are the banded rows",
+                    "{set} {}: the coupling, the innovation and level, and the reversion are the banded rows",
                     r[1]
                 );
                 if let Some(b) = rec.bands.iter().find(|b| b.name == LEDGER_ROWS[k]) {
@@ -34075,10 +34819,71 @@ mod ledger_row_tests {
             Some(ledger_records(a).expect("records").bands[2].band())
         );
         assert_eq!(
-            rows[28].record_band,
-            Some(ledger_records(a).expect("records").bands[3].band()),
+            rows[35].record_band,
+            Some(ledger_records(a).expect("records").bands[8].band()),
             "the one-day reversion is judged by its band"
         );
+        assert_eq!(
+            rows[28].record_band,
+            Some(ledger_records(a).expect("records").bands[3].band()),
+            "the innovation's tail is judged by its band"
+        );
+        assert!(
+            rows[33].record_band.is_none() && rows[33].pctile.is_some(),
+            "the level's persistence is judged by where the record falls"
+        );
+    }
+
+    /// THE VOL PROCESS's reader on a series built to show it: 24 blocks of 21 sessions alternating
+    /// +-a, a 1% on the even blocks and 2.5% on the odd, so lv alternates between two levels ln 2.5
+    /// apart (a doubling on every even-to-odd step, 12 of the 23), its demeaned autocorrelation
+    /// -23/24 at one block and +1/2 at twelve, its sd ln(2.5)/2 x sqrt(24/23); within a block the
+    /// trailing sd is the block's own, so |z| stays under 1 and both tails read 0; no session
+    /// reaches 5%. Doubling the series moves none of the first four rows nor the persistence.
+    #[test]
+    fn the_vol_process_reads_an_alternating_series_exactly() {
+        let r: Vec<f64> = (0..24 * 21)
+            .map(|i| {
+                let a = if (i / 21) % 2 == 0 { 0.01 } else { 0.025 };
+                if i % 2 == 0 { a } else { -a }
+            })
+            .collect();
+        let x = vol_process_of(&r);
+        assert_eq!(x[0].to_bits(), 0.0f64.to_bits(), "no |z| beyond 3");
+        assert_eq!(x[1].to_bits(), 0.0f64.to_bits(), "no |z| beyond 4");
+        let d = 0.5 * (0.025f64 / 0.01).ln();
+        assert!(
+            (x[2] - d * (24.0 / 23.0f64).sqrt()).abs() < 1e-12,
+            "log vol sd {}",
+            x[2]
+        );
+        assert_eq!(
+            x[3].to_bits(),
+            (100.0 * 12.0 / 23.0f64).to_bits(),
+            "12 doublings of 23 steps"
+        );
+        assert_eq!(x[4].to_bits(), 0.0f64.to_bits(), "no session beyond 5%");
+        assert!((x[5] + 23.0 / 24.0).abs() < 1e-12, "autocorr 1m {}", x[5]);
+        assert!((x[6] - 0.5).abs() < 1e-12, "autocorr 12m {}", x[6]);
+        let thrice: Vec<f64> = r.iter().map(|v| 3.0 * v).collect();
+        let y = vol_process_of(&thrice);
+        for k in [0, 1, 2, 3, 5, 6] {
+            assert!((x[k] - y[k]).abs() < 1e-12, "row {k} is scale-free");
+        }
+        assert_eq!(
+            y[4].to_bits(),
+            (100.0 * 252.0 / (504.0 / 252.0f64)).to_bits(),
+            "every odd block's session beyond 5%"
+        );
+        let short = vol_process_of(&r[..20]);
+        assert!(
+            short.iter().enumerate().all(|(k, v)| k == 4 || v.is_nan()),
+            "too short reads NaN but the count"
+        );
+        let one = &r[..21];
+        let o = vol_process_of(one);
+        assert!(o[0].is_nan() && o[2].is_nan() && o[3].is_nan() && o[5].is_nan());
+        assert_eq!(o[4].to_bits(), 0.0f64.to_bits());
     }
 
     /// The model's histories: the one-day reversion read on each path's last `lag1_sessions`
@@ -34194,6 +34999,133 @@ mod seeds_tests {
         let a = vec![row("x", &[1.0], 0.5)];
         let b = vec![row("x", &[2.0], 0.6)];
         drop(pooled_history_rows(&[&a, &b]));
+    }
+
+    #[test]
+    fn the_t_quantile_is_students() {
+        // the tables' t(0.995, nu), and the normal's 2.5758 in the limit
+        for (nu, t) in [
+            (1, 63.656_74),
+            (2, 9.924_843),
+            (3, 5.840_909),
+            (7, 3.499_483),
+            (15, 2.946_713),
+            (39, 2.707_913),
+        ] {
+            let got = student_t_quantile(0.995, nu);
+            assert!(
+                (got - t).abs() < 1e-5 * t,
+                "t(0.995, {nu}) {got} against {t}"
+            );
+        }
+        assert!((student_t_quantile(0.995, 2000) - 2.578_290).abs() < 1e-5);
+        assert!((margin_need(4) - 6.530_335).abs() < 1e-5);
+        assert!((margin_need(16) - 3.037_402).abs() < 1e-5);
+        assert!((margin_need(40) - 2.741_553).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_clause_holds_as_the_gate_compared_and_clears_by_its_nearer_bound() {
+        let open = Clause::open("", 0.3, 0.1, 0.4);
+        assert!(open.holds() && (open.clearance() - 0.1).abs() < 1e-12);
+        assert!(!Clause::open("", 0.1, 0.1, 0.4).holds());
+        assert!(Clause::closed("", 0.1, 0.1, 0.4).holds());
+        assert!(!Clause::open("", f64::NAN, 0.1, 0.4).holds());
+        // an infinite bound is no bound
+        let floor = Clause::open("", f64::INFINITY, 3.0, f64::INFINITY);
+        assert!(floor.holds());
+        assert!(Clause::open("", -2.0, f64::NEG_INFINITY, 0.02).holds());
+        assert!((Clause::open("", -2.0, f64::NEG_INFINITY, 0.02).clearance() - 2.02).abs() < 1e-12);
+        assert!(Clause::open("", 0.5, 0.6, f64::INFINITY).clearance() < 0.0);
+        // no reading, or no bound to read it against, is no clearance
+        assert!(
+            Clause::open("", f64::NAN, 3.0, f64::INFINITY)
+                .clearance()
+                .is_nan()
+        );
+        assert!(
+            Clause::open("", 0.5, f64::NAN, f64::INFINITY)
+                .clearance()
+                .is_nan()
+        );
+    }
+
+    fn clauses(clearances: &[f64]) -> Vec<Vec<GateClause>> {
+        clearances
+            .iter()
+            .map(|&c| {
+                vec![GateClause {
+                    gate: "g".to_string(),
+                    clause: Clause::open("", 1.0 + c, 1.0, f64::INFINITY),
+                    class: GateClass::Mechanism,
+                }]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_margin_refuses_a_bound_a_member_sits_on_and_needs_its_reads() {
+        // 16 reads a unit either side of a clearance of 2: the next read fails one time in 44
+        let near: Vec<f64> = (0..16)
+            .map(|k| 2.0 + if k % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        let r = clauses(&near);
+        let rs: Vec<&[GateClause]> = r.iter().map(Vec::as_slice).collect();
+        let m = margins(&rs);
+        assert_eq!(m.len(), 1);
+        assert!(!m[0].ok && (m[0].sds() - 2.0 / (16.0_f64 / 15.0).sqrt()).abs() < 1e-9);
+        // four sds clear passes
+        let far: Vec<f64> = near.iter().map(|x| x + 2.2).collect();
+        let r = clauses(&far);
+        let rs: Vec<&[GateClause]> = r.iter().map(Vec::as_slice).collect();
+        assert!(margins(&rs)[0].ok);
+        // a read outside the bound counts with its negative clearance: 40 reads 3.4 sds clear pass
+        // with one of them outside, which failing any read would refuse
+        let mut one_out: Vec<f64> = (0..40)
+            .map(|k| if k % 2 == 0 { 5.2 } else { 3.2 })
+            .collect();
+        one_out[3] = -0.1;
+        let r = clauses(&one_out);
+        let rs: Vec<&[GateClause]> = r.iter().map(Vec::as_slice).collect();
+        let m = margins(&rs);
+        assert!(
+            m[0].ok && (m[0].sds() - 3.40).abs() < 0.01,
+            "{:.3} sds",
+            m[0].sds()
+        );
+        // a read with no reading fails the clause
+        let mut gone = far.clone();
+        gone[3] = f64::NAN;
+        let r = clauses(&gone);
+        let rs: Vec<&[GateClause]> = r.iter().map(Vec::as_slice).collect();
+        assert!(!margins(&rs)[0].ok);
+        // under the fewest reads the margin is not read
+        let r = clauses(&[0.01, 0.02, 0.01, 0.02]);
+        let rs: Vec<&[GateClause]> = r.iter().map(Vec::as_slice).collect();
+        assert!(margins(&rs).is_empty());
+    }
+
+    #[test]
+    fn every_gate_reports_its_clauses_and_passes_when_they_all_hold() {
+        let mut w = default_world();
+        w.macro_panel = 1;
+        let st = measure(&sim_paths(&w, 6, 100, DEFAULT_SEED), 100);
+        let a = anchors_named("sp500");
+        let none = std::collections::HashMap::new();
+        let checks = gate_checks_at(a, &st, &none);
+        let cl = gate_clauses_at(a, &st, &none);
+        for (name, ok, cls) in &checks {
+            let mine: Vec<&GateClause> = cl.iter().filter(|c| &c.gate == name).collect();
+            assert!(!mine.is_empty(), "{name} reports no clause");
+            assert!(mine.iter().all(|c| c.class == *cls));
+            assert_eq!(*ok, mine.iter().all(|c| c.clause.holds()), "{name}");
+        }
+        // the bands on one reading are the five `band_check` grades
+        let bands: Vec<String> = gate_bands_at(a, &st, &none)
+            .into_iter()
+            .map(|b| b.name)
+            .collect();
+        assert_eq!(bands.len(), 5, "{bands:?}");
     }
 
     /// A `-historyrows` dump read back: each row of `like`'s readings in history order and its
@@ -39101,6 +40033,40 @@ mod bond_crash_tests {
         );
     }
 
+    /// The net points read a bond's move over a decline less the bond's own drift: a bond that
+    /// only accrues reads zero whatever it accrues, where the gross points read the accrual.
+    #[test]
+    fn net_crash_points_remove_the_bonds_drift() {
+        let n = 4 * DAYS_PER_YEAR;
+        let half = DAYS_PER_YEAR / 2;
+        // a 30% decline over each year's first half, regained by the year's end
+        let price: Vec<f64> = (0..n)
+            .map(|t| {
+                let k = t % DAYS_PER_YEAR;
+                if k < half {
+                    100.0 - 30.0 * k as f64 / half as f64
+                } else {
+                    70.0 + 30.0 * (k - half) as f64 / half as f64
+                }
+            })
+            .collect();
+        let mu = 0.05 / DAYS_PER_YEAR as f64;
+        let bond: Vec<f64> = (0..n).map(|t| (mu * t as f64).exp()).collect();
+        let cpi: Vec<f64> = (0..n)
+            .map(|t| (0.02 * t as f64 / DAYS_PER_YEAR as f64).exp())
+            .collect();
+        let eps = episodes(&price, 15.0);
+        let gross = crash_points(&bond, &cpi, &eps);
+        let net = crash_points_net(&bond, &cpi, &eps);
+        // the first year's trough has no inflation reading
+        assert_eq!((gross.len(), net.len()), (3, 3));
+        for (g, v) in gross.iter().zip(&net) {
+            assert_eq!(g[0], v[0]);
+            assert!((g[1] - mu * half as f64 * 100.0).abs() < 1e-9, "{}", g[1]);
+            assert!(v[1].abs() < 1e-9, "{}", v[1]);
+        }
+    }
+
     /// A HISTORY'S READING is `measure` on that history alone, bit for bit: what a sampler reads
     /// as `measure(&[p.head(h)], h)` and what the graded rows' histories hold.
     #[test]
@@ -42291,6 +43257,7 @@ mod macro_panel_tests {
                 rel("BAA10Y", "spread", "lag20_63"),
                 rel("NFCILEVERAGE", "cond", "lag20_63"),
                 rel("NFCILEVERAGE", "cond", "prepeak20_63"),
+                rel("NFCILEVERAGE", "cond", "hazard20_63"),
             ];
             for ((name, _, _, record), w) in macro_placement_rows(a).iter().zip(want) {
                 assert_eq!(
@@ -42395,6 +43362,16 @@ mod macro_panel_tests {
                 )
             );
             assert_eq!(
+                rec("macro cond hazard"),
+                value(
+                    &rs,
+                    set,
+                    &format!("NFCILEVERAGE/{idx}"),
+                    "cond",
+                    "hazard20_63"
+                )
+            );
+            assert_eq!(
                 rec("macro spread persistence"),
                 value(&rs, "shared", "BAA10Y", "spread", "ac20")
             );
@@ -42420,17 +43397,20 @@ mod macro_panel_tests {
             pres.iter().all(|&p| p > 0.8),
             "the record's leverage index builds before every reference's peaks"
         );
-        // the hazard: the references' minimum quarter-horizon 20% hazard, floored to 0.1
+        // the hazard: every reference's quarter-horizon 20% hazard clear of the null's bound
         let hz: Vec<f64> = refs
             .iter()
             .map(|(s, r)| value(&rs, s, &format!("NFCILEVERAGE/{r}"), "cond", "hazard20_63"))
             .collect();
-        let hz_min = hz.iter().copied().fold(f64::INFINITY, f64::min);
-        assert_eq!(macro_bands::HAZARD_MIN, (hz_min * 10.0).floor() / 10.0);
         assert!(
             hz.iter().all(|&h| h > 1.4)
                 && hz.iter().copied().fold(f64::NEG_INFINITY, f64::max) > 2.5,
             "leverage concentrates the big peaks on every reference"
+        );
+        let hz_min = hz.iter().copied().fold(f64::INFINITY, f64::min);
+        assert!(
+            hz_min > macro_bands::HAZARD_NULL,
+            "every reference clear of the null's bound"
         );
         // the record's conditions index leads the peak on three of the four references
         let leads = refs
@@ -42495,8 +43475,8 @@ mod macro_panel_tests {
                 .iter()
                 .filter(|r| panel_row(r.name))
                 .count(),
-            9,
-            "and its nine placement rows"
+            10,
+            "and its ten placement rows"
         );
         for (v, w0) in releases() {
             assert!(w0.macro_null == 0, "release {v}");

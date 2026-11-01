@@ -140,6 +140,11 @@ wedge flip, never observed, would desynchronise the stream after it (see
 `numpy_rng_parity.rs`). Making them deterministic would end the NumPy match where
 `exp_det`'s ~2 ulp differ from C's; the decision is twin identity against NumPy identity.
 
+The membership's margin is a reader of the same kind: its Student's t quantile
+(`student_t_quantile` / `studentTQuantile`) bisects on the platform `atan`, `sin`, `cos` and
+`tan`, so the twins' need may differ in the last ulp. It prints at two decimals, and a margin
+verdict can differ only where a clause's mean clearance meets the need to that ulp.
+
 ## A table's ORDER can be a parity surface
 
 `-calibrate` draws one uniform per searchable dial from a single stream, in the order the

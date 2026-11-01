@@ -193,13 +193,13 @@ class MacroPanelSuite extends FunSuite:
     assume(rs.nonEmpty, s"$Fixture absent")
     def at4(x: Double) = math.round(x * 10000.0) / 10000.0
     val refs = Vector(("sp500", "CRSP"), ("sp500", "SPY"), ("nasdaq", "NDX"), ("nasdaq", "QQQ"))
-    // the mechanism's two constants: engaged clear of the null panel, and the references' minimum
-    // quarter-horizon 20% hazard floored to 0.1
+    // the mechanism's two constants, each engaged clear of the null panel: every reference's
+    // build-up and quarter-horizon 20% hazard clear of them
     assert(refs.forall((s, r) => value(rs, s, s"NFCILEVERAGE/$r", "cond", "prepeak20_63") > 0.8),
       "the record's leverage index builds before every reference's peaks")
     val hz = refs.map((s, r) => value(rs, s, s"NFCILEVERAGE/$r", "cond", "hazard20_63"))
-    assertEquals(MarketSim.MacroBands.HazardMin, math.floor(hz.min * 10.0) / 10.0)
-    assert(hz.forall(_ > 1.4) && hz.max > 2.5, "leverage concentrates the big peaks on every reference")
+    assert(hz.forall(h => h > 1.4 && h > MarketSim.MacroBands.HazardNull) && hz.max > 2.5,
+      "leverage concentrates the big peaks on every reference")
     assert(refs.count((s, r) => value(rs, s, s"NFCILEVERAGE/$r", "cond", "lag20_63") < 0.0) >= 3)
     // the placement rows' records: the shape rows are US-wide, the index-relative rows read the
     // set's own index (CRSP for the S&P, QQQ for the Nasdaq)
@@ -217,6 +217,7 @@ class MacroPanelSuite extends FunSuite:
       assertEqualsDouble(rec("macro spread lag"), at4(value(rs, set, s"BAA10Y/$ref", "spread", "lag20_63")), 1e-12, s"$set spread lag")
       assertEqualsDouble(rec("macro cond lag"), at4(value(rs, set, s"NFCILEVERAGE/$ref", "cond", "lag20_63")), 1e-12, s"$set cond lag")
       assertEqualsDouble(rec("macro cond build-up"), at4(value(rs, set, s"NFCILEVERAGE/$ref", "cond", "prepeak20_63")), 1e-12, s"$set build-up")
+      assertEqualsDouble(rec("macro cond hazard"), at4(value(rs, set, s"NFCILEVERAGE/$ref", "cond", "hazard20_63")), 1e-12, s"$set hazard")
   }
 
   test("the null panel is a sibling path's: the same price, a decoupled panel, and no macro rows") {

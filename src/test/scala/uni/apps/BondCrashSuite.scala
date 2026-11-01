@@ -95,6 +95,29 @@ class BondCrashSuite extends FunSuite:
     assert(MarketSim.crashFit(Vector((1.0, 1.0), (1.0, 2.0), (1.0, 3.0))).forall(_.isNaN))
   }
 
+  test("the net points remove the bond's drift") {
+    // a 30% decline over each year's first half, regained by the year's end; the first year's
+    // trough has no inflation reading
+    val dpy  = MarketSim.DaysPerYear
+    val half = dpy / 2
+    val n    = 4 * dpy
+    val price = Array.tabulate(n) { t =>
+      val k = t % dpy
+      if k < half then 100.0 - 30.0 * k / half else 70.0 + 30.0 * (k - half) / half
+    }
+    val mu    = 0.05 / dpy
+    val bond  = Array.tabulate(n)(t => math.exp(mu * t))
+    val cpi   = Array.tabulate(n)(t => math.exp(0.02 * t / dpy))
+    val eps   = MarketSim.episodes(price, 15.0)
+    val gross = MarketSim.crashPoints(bond, cpi, eps)
+    val net   = MarketSim.crashPointsNet(bond, cpi, eps)
+    assertEquals((gross.length, net.length), (3, 3))
+    for ((gx, g), (vx, v)) <- gross.zip(net) do
+      assertEquals(gx, vx)
+      assert(math.abs(g - mu * half * 100.0) < 1e-9, g.toString)
+      assert(math.abs(v) < 1e-9, v.toString)
+  }
+
   test("a history's crash reading is measure on it alone, bit for bit") {
     val w = MarketSim.namedWorld("0.24.6-sp500").map(_._1).getOrElse(fail("recipe"))
     val h = MarketSim.SP500Anchors.bondCrashYears

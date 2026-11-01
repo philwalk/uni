@@ -300,9 +300,10 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 `worstRow` are that objective's readings. Every member of the three older sets starts at fair
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
-was searched under it. **The 0.25.1 sets** are the two to draw from now: `0.25.1-sp500.json` (59 members) and
+was searched under it. **The 0.25.1 sets** are the two to draw from now: `0.25.1-sp500.json` (56 members) and
 `0.25.1-nasdaq.json` (37), member 0 the recipe itself, every member one the set loop admitted under
-the membership rule on four fresh seeds at 200 × 100, and scored against the 0.25.0 sets under the
+the membership rule on four fresh seeds at 200 × 100 that clears the margin on 40 more, its
+`coverageWeight` over those members, and scored against the 0.25.0 sets under the
 release rule (the CHANGELOG has the numbers and the set misses). The 0.25.0 sets were judged before the
 satellite's tail beta and the long bond's cut of the beta state, which the files carry at the
 set's values unjudged, so the sets are remade under them by the sampler; the 0.24.6 sets (and the
@@ -320,8 +321,16 @@ copula on the worlds' single histories), one per quantile of the sample's drift,
 The membership test is
 the verdict's own read on four fresh seeds at 200 paths × 100 years with every derived series and
 the macro panel graded (`-validate -seeds 1,2,3,4`): realism, mechanism or a hand band fail a member
-on any one seed (a world inside every bound fails one on under 0.5% of its reads), and the placement is one test over the four reads' pooled 800 histories, passing
-above 0.10 (an undecided pooled placement fails it). Pooling holds the test at 0.10 at any number of
+on any one seed, and the placement is one test over the four reads' pooled 800 histories, passing
+above 0.10 (an undecided pooled placement fails it). Four reads cannot see a bound a member sits on
+(a world failing one read in ten passes four of four two times in three), so each member is then
+read on 40 fresh seeds (`-seeds 5,...,44`) and must clear every bound by THE MARGIN: each clause's
+mean clearance over the reads, a read outside its bound counting negative, at least 2.74 of their
+sds, Student's t prediction of the next read, so a member fails a bound on under 0.5% of a
+consumer's reads. The margin is the one test there: failing any of 40 reads would refuse a world at
+that tail 18% of the time. The verdict reads it from 16 reads up; at four it would ask 6.53 sds and
+refuse worlds failing a bound on 0.02% of reads.
+Pooling holds the test at 0.10 at any number of
 reads, because the record and every history are exchangeable. The reads share one record, so four
 separate passes reject a typical history 18–21% of the time, and Fisher's combination of the four
 p's 17–19%; pooled, 10% (the sets before 0.24.5 predate the channels' grading and the placement;
@@ -1182,10 +1191,12 @@ agree, as on the up-day share, the miss is the model's.
 
 A world is a member of a calibration set when the record is a typical single history of it, over
 every graded row at once. `-validate` prints the test under `placement`; `-validate -seeds S1,S2,...`
-prints each seed's read, then the bounds per read and one placement over the reads' pooled
-histories, ending `membership over N reads (H histories): conformal p P PASS at 0.10; realism PASS
-mechanism PASS fidelity PASS on every read` (fidelity there is the hand bands; its exit code follows
-`-gate`, so gate on that line or pass `-gate all`):
+prints each seed's read, then the bounds per read, from 16 reads the margin (each class's closest
+clause in its reads' sds, and every clause short of it as `THIN`), and one placement over the
+reads' pooled histories, ending `membership over N reads (H histories): conformal p P PASS at 0.10;
+realism PASS mechanism PASS fidelity PASS on every read` (`by the margin` from 16 reads, where the
+margin alone decides the classes; fidelity there is the hand bands; its exit code follows `-gate`,
+so gate on that line or pass `-gate all`):
 
 ```
   placement (the calibrated membership rule): is the record a typical single history of this world?
@@ -1380,7 +1391,7 @@ with it.
 | `-recessreprice` | the share of each recession step, and of the recovery's, the price takes the same session as the fundamental; the rest is a gap the value channel trades through the step, so the decline arrives as the market's own legs and rallies and the spiral can amplify it. 1 is the smooth repricing; searched | 1 |
 | `-recessbase` | THE RECESSION'S CALM ONSET: added to the stress index in the onset hazard, so a recession can begin in a calm market and the stress arrives through the slide (`-recessvol`, `-recessnews`) rather than before it. The record's long declines open quietly: the first quarter of a 15-30 month decline carries a fifth of the fall, the last quarter half. 0 is off; searched | 0 |
 | `-recessshape` | THE RECESSION'S PROFILE: the slide's sessions take shares of `-recesssize` growing as (t/T)^k, a slow start and a steep end; `-recessvol`'s multiplier follows the same share, so the turbulence peaks where the fall is steepest. 0 is the even slide; searched | 0 |
-| `-recesscredit` | THE RECESSION'S CREDIT ONSET: added to the onset hazard's stress index, this x the credit growth gap the credit regime's onset reads (its excess over 0.5 sds, positive part), so a recession follows a credit expansion (2000, 2007). A calm onset with no macro antecedent dilutes the conditions index's concentration of 20% peaks (1.84x to 1.45x against the 1.4x gate); started by credit, the concentration holds. Inert where the credit stock is not evolved. 0 is off; searched | 0 |
+| `-recesscredit` | THE RECESSION'S CREDIT ONSET: added to the onset hazard's stress index, this x the credit growth gap the credit regime's onset reads (its excess over 0.5 sds, positive part), so a recession follows a credit expansion (2000, 2007). A calm onset with no macro antecedent dilutes the conditions index's concentration of 20% peaks (1.84x to 1.45x against the record's 2.0-2.7x); started by credit, the concentration holds. Inert where the credit stock is not evolved. 0 is off; searched | 0 |
 | `-recessinfl` | THE RECESSION'S INFLATION ONSET: the same for inflation pressure above the regime edge, in units of the edge, so a recession follows tightening into inflation (1973, 2022). At 3 the bond's loss in inflation-regime crashes reads a third of the record's; searched | 0 |
 | `-recessrecmult` | the recovery leg's length as a multiple of `-recesslen`: at 1 the share is regained over the decline's own length, the record's V (1933, 2009), which turns the slide-and-regain into a reversal inside the year. Searched | 2 |
 | `-overshoot` | THE OVERSHOOT: the share of the spiral's amplification of a session's flow and noise that is transient — liquidity moved the price further than the order warranted, and the excess is given back over the following sessions at `-overshootrate` a session. Inside the record's declines the daily path mean-reverts (variance ratio 0.75 at 250 days, 1954-2026); the model's trended (1.68) because the asymmetric recovery freezes the buy-back in a drawdown. The overshoot is the churn a slow decline is made of, and leaves the asymmetric recovery in place (switching that off instead misses both wings). 0 is off; searched | 0 |
@@ -1679,7 +1690,11 @@ market's 17 episodes (`crash-response-1962-2026-10-05.tsv`), +5.5 and −1.5 ove
 Nasdaq set (`crash-response-1962-hitec-2026-10-06.tsv`), every episode kept, not split into growth
 and inflation regimes by a CPI rule, which read the 1980–82 disinflation rally as a growth episode
 and left the row's window to set the mix of eras. The model reads the same fit on its own CPI; the
-ensemble's reading is one fit over the episodes pooled across its paths. They are single-history
+ensemble's reading is one fit over the episodes pooled across its paths. The mechanism row `bonds
+rally in growth shocks` reads the fit net of the bond's drift (each decline's move less the path's
+mean session log move over the decline's sessions) and passes above 0.5; the gross response at 2%
+is carry over the decline on a bond with no link to the equity (5.6 on the S&P recipe's world with
+every link off), so the mechanism is read off the net and the level off the gross. They are single-history
 rows: the record must fall inside the joint band of the world's 64-year histories that hold a fit
 (three declines, two of them seen under inflation at least 0.0003 points apart, the CPI record's
 resolution). TLT's +7.1 at 2% and −6.1 per point over its six episodes
@@ -2114,8 +2129,8 @@ default gate ensemble, which is also what an emitted path's `channels.macro` car
 
 | row | record, S&P (CRSP / SPY) | model, `0.24.0-macro` | record, Nasdaq (NDX / QQQ) | model, `0.24.0-nasdaq` |
 |---|---|---|---|---|
-| conditions HAZARD (mechanism): a 20% peak within the next quarter, with the index in its top decile, as a multiple of the unconditional chance; within a year and for 10% dips reported | 2.72 / 2.20; 1.24 / 1.18; 1.63 / 1.26 | **1.68**; 1.39; 1.35 | 2.04 / 1.44; 0.79 / 0.40; 1.10 / 0.90 | **1.47**; 1.23; 1.14 |
-| conditions BUILD-UP: mean trailing rank over the quarter before the peak (mechanism: clear of a decoupled 0.48; fidelity: the record's level 0.82–1.00) | 0.94 / 0.94 | 0.92 | 0.92 / 0.82 | 0.84 |
+| conditions HAZARD (mechanism: clear of a decoupled 1.00; placement: the record's level, CRSP for the S&P, QQQ for the Nasdaq): a 20% peak within the next quarter, with the index in its top decile, as a multiple of the unconditional chance; within a year and for 10% dips reported | 2.72 / 2.20; 1.24 / 1.18; 1.63 / 1.26 | **1.68**; 1.39; 1.35 | 2.04 / 1.44; 0.79 / 0.40; 1.10 / 0.90 | **1.47**; 1.23; 1.14 |
+| conditions BUILD-UP: mean trailing rank over the quarter before the peak (mechanism: above 0.60, clear of a decoupled series' 0.51–0.54 ±0.02 a read; fidelity: the record's level 0.82–1.00) | 0.94 / 0.94 | 0.92 | 0.92 / 0.82 | 0.84 |
 | build-up (reported): spread, implied vol, slope's share inverted | 0.60 / 0.16, 0.41 / 0.41, 0 / 0 | 0.45, 0.64, 0.00 | 0.16 / 0.16, 0.42 / 0.44, 0 / 0 | 0.48, 0.66, 0.00 |
 | firing lag, sessions (fidelity): spread, conditions | +7 / +7, −48 / −44 | −6, −63 | +16 / +16, −49 / +101 | −14, −63 |
 | firing lag (reported): implied vol, slope | +12 / −12, −37 / −36 | −33, never | +6 / −12, −38 / −37 | −34, never |
@@ -2143,10 +2158,13 @@ median 11 weeks, the record's 15; the index fires 32% of the time against 26%) �
 stress, and the spiral's gain rises with the stock's growth over its trailing year, the
 Schularick–Taylor reading: credit growth is what precedes the crisis. Read on the emitted
 `macroCond` with the record's own statistics, the model's index is in its top decile at 0.51 of
-its 20% peaks (the record: five of six), its median pre-peak rank is 0.93, and the two rows
-grade it — mechanism, the quarter hazard above 1.4× (the four references' floor; the model reads
-1.68 on the S&P and 1.47 on the Nasdaq, a decoupled panel 0.94), and fidelity, the build-up at
-the record's level (0.92 and 0.84 against 0.82–1.00). The gap that remains — 1.7× against the
+its 20% peaks (the record: five of six), its median pre-peak rank is 0.93, and three rows
+grade it — mechanism, the quarter hazard above 1.1×, clear of a decoupled panel's 1.00 (±0.023 a
+read at 200 × 100; the model reads 1.68 on the S&P and 1.47 on the Nasdaq); placement, the
+hazard's level among the world's own histories against the set's record (CRSP's 2.72 over 36
+years, QQQ's 1.44 over 27; the 0.25.1 recipes place the S&P record at their 92nd–96th
+percentile and the Nasdaq's at the 46th–57th); and the build-up at the record's level (0.92 and
+0.84 against 0.82–1.00). The gap that remains — 1.7× against the
 record's 2.0–2.7× — is the half of the model's 20% declines that still start from jumps,
 disasters and valuation unwinds at any point of the cycle. The firing lags, which are
 speed-invariant, hold on both worlds: the record's conditions index leads the peak by about two
@@ -2431,10 +2449,10 @@ the worlds to pin in place of the 0.24.5 recipes.
 under the one-expectation form (`-yieldanchor` 0.73 / 0.63) and the bond's vol regime (`-termpress` 1,
 `-termvol` the calm era's innovation), the rate and bond side re-solved around them (on the Nasdaq the vol
 feedback and the leverage gain too) and every dial that read
-no worse at the 0.25.0 value returned to it; 38.5 and 34.4 on the judge's seeds against the 0.25.0 recipes'
-45.8 and 42.8 (the Nasdaq's with its era row reported), membership p 0.93 / 0.91. Each set is the members
-one round of the loop admitted around its recipe, 59 and 37, both significantly better than the 0.25.0
-sets and neither with a set miss (the CHANGELOG has the numbers).
+no worse at the 0.25.0 value returned to it; 39.2 and 34.4 on the judge's seeds against the 0.25.0 recipes'
+46.5 and 42.8 (the Nasdaq's with its era row reported), membership p 0.94 / 0.91. Each set is the members
+one round of the loop admitted around its recipe that clear the margin, 56 and 37, both significantly
+better than the 0.25.0 sets and neither with a set miss (the CHANGELOG has the numbers).
 
 **`0.25.0-sp500` and `0.25.0-nasdaq`** are each member 0 of its `0.25.0` set, a world admitted
 under the membership rule with every class passing on each of four fresh seeds at 200 × 100. The

@@ -5757,7 +5757,12 @@ mod noise_tests {
         assert_eq!(whole.feasible, check.feasible);
         assert_eq!(whole.gate_fail, check.gate_fail);
         let st = one_read(&w, anchors, paths, years, s, &staged);
-        if check.stage_fail.as_ref().is_some_and(Vec::is_empty) {
+        // under `STAGE_MIN_FAILS` prefix failures the staged read is the whole read
+        if check
+            .stage_fail
+            .as_ref()
+            .is_some_and(|f| f.len() < STAGE_MIN_FAILS)
+        {
             assert_eq!(whole.score.to_bits(), st.score.to_bits());
             assert_eq!(whole.gate_fail, st.gate_fail);
         } else {

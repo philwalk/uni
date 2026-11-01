@@ -62,6 +62,69 @@ class VerdictReadingsSuite extends FunSuite:
     assert(!has("satellite") && !has("macro spread lag") && !has("macro vol premium"))
   }
 
+  test("every gate reports its clauses and passes when they all hold") {
+    val g  = MarketSim.gateChecksAt(a, st, Map.empty)
+    val cl = MarketSim.gateClausesAt(a, st, Map.empty)
+    for (name, ok, cls) <- g do
+      val mine = cl.filter(_.gate == name)
+      assert(mine.nonEmpty, s"$name reports no clause")
+      assert(mine.forall(_.cls == cls), name)
+      assertEquals(ok, mine.forall(_.clause.holds), name)
+    // the bands on one reading are the five `bandCheck` grades
+    assertEquals(MarketSim.gateBandsAt(a, st, Map.empty).length, 5)
+  }
+
+  test("a clause holds as the gate compared and clears by its nearer bound") {
+    import MarketSim.Clause
+    val open = Clause.open("", 0.3, 0.1, 0.4)
+    assert(open.holds && math.abs(open.clearance - 0.1) < 1e-12)
+    assert(!Clause.open("", 0.1, 0.1, 0.4).holds)
+    assert(Clause.closed("", 0.1, 0.1, 0.4).holds)
+    assert(!Clause.open("", Double.NaN, 0.1, 0.4).holds)
+    // an infinite bound is no bound
+    assert(Clause.open("", Double.PositiveInfinity, 3.0, Double.PositiveInfinity).holds)
+    assert(Clause.open("", -2.0, Double.NegativeInfinity, 0.02).holds)
+    assert(math.abs(Clause.open("", -2.0, Double.NegativeInfinity, 0.02).clearance - 2.02) < 1e-12)
+    assert(Clause.open("", 0.5, 0.6, Double.PositiveInfinity).clearance < 0.0)
+    // no reading, or no bound to read it against, is no clearance
+    assert(Clause.open("", Double.NaN, 3.0, Double.PositiveInfinity).clearance.isNaN)
+    assert(Clause.open("", 0.5, Double.NaN, Double.PositiveInfinity).clearance.isNaN)
+  }
+
+  test("the t quantile is Student's") {
+    // the tables' t(0.995, nu), and the margin it sets at four, 16 and 40 reads
+    for (nu, t) <- Vector((1, 63.65674), (2, 9.924843), (3, 5.840909), (7, 3.499483), (15, 2.946713),
+                          (39, 2.707913)) do
+      val got = MarketSim.studentTQuantile(0.995, nu)
+      assert(math.abs(got - t) < 1e-5 * t, s"t(0.995, $nu) $got against $t")
+    assert(math.abs(MarketSim.studentTQuantile(0.995, 2000) - 2.578290) < 1e-5)
+    assert(math.abs(MarketSim.marginNeed(4) - 6.530335) < 1e-5)
+    assert(math.abs(MarketSim.marginNeed(16) - 3.037402) < 1e-5)
+    assert(math.abs(MarketSim.marginNeed(40) - 2.741553) < 1e-5)
+  }
+
+  test("the margin refuses a bound a member sits on and needs its reads") {
+    def clauses(cs: Seq[Double]): Vector[Vector[MarketSim.GateClause]] =
+      cs.toVector.map(c => Vector(MarketSim.GateClause("g",
+        MarketSim.Clause.open("", 1.0 + c, 1.0, Double.PositiveInfinity), MarketSim.GateClass.Mechanism)))
+    // 16 reads a unit either side of a clearance of 2: the next read fails one time in 44
+    val near = (0 until 16).map(k => 2.0 + (if k % 2 == 0 then 1.0 else -1.0))
+    val m    = MarketSim.margins(clauses(near))
+    assertEquals(m.length, 1)
+    assert(!m.head.ok && math.abs(m.head.sds - 2.0 / math.sqrt(16.0 / 15.0)) < 1e-9)
+    // four sds clear passes
+    assert(MarketSim.margins(clauses(near.map(_ + 2.2))).head.ok)
+    // a read outside the bound counts with its negative clearance: 40 reads 3.4 sds clear pass
+    // with one of them outside, which failing any read would refuse
+    val oneOut = (0 until 40).map(k => if k % 2 == 0 then 5.2 else 3.2).updated(3, -0.1)
+    val o      = MarketSim.margins(clauses(oneOut)).head
+    assert(o.ok && math.abs(o.sds - 3.40) < 0.01, f"${o.sds}%.3f sds")
+    // a read with no reading fails the clause
+    assert(!MarketSim.margins(clauses(near.map(_ + 2.2).updated(3, Double.NaN))).head.ok)
+    // under the fewest reads the margin is not read
+    assert(MarketSim.margins(clauses(Vector(0.01, 0.02, 0.01, 0.02))).isEmpty)
+  }
+
   test("bandedOf keeps exactly the rows that carry a record band") {
     val rows = MarketSim.fidelityRows(a, st, None, 27, 8, MarketSim.DefaultSeed, world)
     val b    = MarketSim.bandedOf(rows)

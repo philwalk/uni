@@ -2633,15 +2633,16 @@ object MarketSim:
     * `0.25.1-sp500`: the 0.25.0 S&P recipe under the one-expectation form (`yieldAnchor` 0.73, where
     * the record's link of 0.11 sits) and the bond's vol regime (`termPress` 1, `termVol` the calm
     * era's innovation), the rate and bond side re-solved around them and every dial that read no
-    * worse at the 0.25.0 value returned to it.  On the ledger with the real yield's inflation link
-    * and the ex-post real rate's negative share and tenth percentile graded: 38.5 against the 0.25.0
-    * recipe's 45.8 on the judge's seeds, membership p 0.93, every class passing on every read.
+    * worse at the 0.25.0 value returned to it.  On the ledger with the real yield's inflation link,
+    * the ex-post real rate's negative share and tenth percentile and the conditions index's hazard
+    * graded: 39.2 against the 0.25.0 recipe's 46.5 on the judge's seeds, membership p 0.94, every
+    * class passing on every read and by the margin on 40 more.
     *
     * `0.25.1-nasdaq`: as the S&P's: `yieldAnchor` 0.63 and `termPress` 1, the rate and bond side
     * re-solved around them, on the Nasdaq's own era the breakeven premium's innovation too, and every
     * dial that read no worse at the 0.25.0 value returned to it.  34.4 against the 0.25.0 recipe's
     * 42.8 on the judge's seeds with `bond stress share %` reported (`NasdaqEraRows`), membership
-    * p 0.91, every class passing on every read. */
+    * p 0.91, every class passing on every read and by the margin on 40 more. */
   val Recipes0251: Vector[(String, World, String)] =
     def base(name: String): World =
       Recipes0250.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
@@ -3272,9 +3273,31 @@ object MarketSim:
   /** THE SPREAD STATIONARITY ROW's band (see `gapSpreadOf`): the pooled valuation gap's sd over a
     * path's first decade may differ from its sd over the later half by at most this share.  With
     * the 3-year warm-up both recipes passed the mean row and read -0.16 to -0.42 here (the gap
-    * starts at the fundamental, with no spread); with `BurnIn`'s 28 years they read -0.07 to
-    * +0.15 at 60 paths and -0.03 to +0.10 at 200, on four seeds each. */
-  val GapSpreadBand = 0.20
+    * starts at the fundamental, with no spread); with `BurnIn`'s 28 years a stationary world reads 0
+    * with a read sd of 0.05-0.09 at 200 x 100 (the noisiest 0.25.1 member 0.095), so the band holds
+    * the noisiest member by the margin (3.3 sds) and the margin still refuses a -0.16 drift (1.8 sds
+    * inside). */
+  val GapSpreadBand = 0.25
+  /** THE BOND RALLY ROW's floor on `WorldStats.bondGrowthNet`: a bond unrelated to the equity (each
+    * path's declines read against a sibling path's bond) reads -0.05 to 0.18, +-0.10 a read at 200 x
+    * 100 on the 0.25.1 recipes with and without their links, and the floor sits 3 of those sds above
+    * the highest.  The gross response (`bondGrowth`) carries the bond's carry over the decline, 1.6 to
+    * 5.6 on the same unrelated bonds, and is the placement row's reading. */
+  val BondRallyNetFloor = 0.5
+  /** THE CORRELATION FLIP ROW's rise: the stock-bond correlation in inflation regimes above the
+    * calm's by at least this.  The two unlinked legs read +0.03 / +0.05 (+-0.003 a read), the
+    * regimes' common inflation; the members read it to +-0.01, and the level is the placement row
+    * `stock-bond corr vs inflation seen`. */
+  val CorrFlipMin = 0.10
+  /** THE OPEN's mechanism margin: the worst sessions' overnight gap share above all sessions' by at
+    * least this.  The share's difference reads 0 +-0.005 (S&P) / +-0.008 (Nasdaq) a read at 200 x
+    * 100 without the mechanism, by construction of the regression share; the members' medians read
+    * 0.07 / 0.10. */
+  val OvernightWorstMargin = 0.015
+  /** THE PAIR CORRELATION rows' margin (sector and basket): the worst decile's pair correlation above
+    * the middle decile's by at least this.  The difference reads 0 +-0.013 a read at 200 x 100
+    * without the mechanism; the members read 0.38 and more. */
+  val PairCorrMargin = 0.05
 
   /** DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner
     * Taylor to r^12 on the reduced argument, and 2^k built from raw exponent bits.  Every
@@ -6654,6 +6677,17 @@ object MarketSim:
     if series.isEmpty then Vector.empty
     else eps.flatMap(ep => crashSeen(cpi, ep).map(x => (x, math.log(series(ep.trough) / series(ep.peak)) * 100.0)))
 
+  /** `crashPoints` net of `series`' drift: each decline's log move less the series' mean session
+    * log move over the whole path times the decline's sessions, in percent.  A series unrelated to
+    * the equity reads zero here whatever it accrues, where the gross move reads its carry over the
+    * decline (5.6 on the S&P recipe's no-link world, 2.9 on the Nasdaq's). */
+  def crashPointsNet(series: Array[Double], cpi: Array[Double], eps: Vector[Episode]): Vector[(Double, Double)] =
+    if series.length < 2 then Vector.empty
+    else
+      val mu = math.log(series.last / series.head) / (series.length - 1)
+      eps.flatMap(ep => crashSeen(cpi, ep).map(x =>
+        (x, (math.log(series(ep.trough) / series(ep.peak)) - mu * (ep.trough - ep.peak)) * 100.0)))
+
   /** Inflation seen (yoy, pp) closer than this is one rate: a constant rate carries ~1e-13 of
     * noise. */
   val SeenTol: Double = 1e-9
@@ -8152,6 +8186,9 @@ object MarketSim:
                               trendShare: Double, yearsPerPath: Double,
                               trendPinned: Double, targetSat: Double,
                               bondVol: Double, bondGrowth: Double, bondInfl: Double,
+                              // the bond's response at `CrashSeenRef` net of its drift (`crashPointsNet`):
+                              // the mechanism row's reading, where `bondGrowth` is the placement row's
+                              bondGrowthNet: Double,
                               // THE 10-YEAR LEG's readings (`World.bond10`), NaN when the leg is off: its
                               // annualised RMS volatility over the whole path, its crash fit (the response
                               // at `CrashSeenRef`, the slope per point), read as the bond's is
@@ -8264,7 +8301,7 @@ object MarketSim:
       * share.  The macro panel's, which reads the bond's stress through the spread, the caller sets
       * (`tpReread`). */
     def withBondsFrom(b: WorldStats): WorldStats =
-      copy(bondVol = b.bondVol, bondGrowth = b.bondGrowth, bondInfl = b.bondInfl,
+      copy(bondVol = b.bondVol, bondGrowth = b.bondGrowth, bondInfl = b.bondInfl, bondGrowthNet = b.bondGrowthNet,
            bond10Vol = b.bond10Vol, bond10Growth = b.bond10Growth, bond10Infl = b.bond10Infl,
            bond10Excess = b.bond10Excess, realRows = b.realRows, realReported = b.realReported,
            stockBond = b.stockBond, stockBondReported = b.stockBondReported,
@@ -8498,6 +8535,7 @@ object MarketSim:
     retAc1: Double, annRet: Double, divYield: Double,
     bondVol: Vector[Double],
     bondCrash: Vector[(Double, Double)],   // the bond's move over each episode against the inflation seen (`crashPoints`)
+    bondCrashNet: Vector[(Double, Double)], // the same net of the bond's drift (`crashPointsNet`)
     // the 10-year leg's readings, NaN / empty when the leg is off
     ddB10: (Double, Double, Double), bond10Vol: Double, bond10Crash: Vector[(Double, Double)],
     bond10Excess: Double,
@@ -8666,6 +8704,7 @@ object MarketSim:
           val segs = if nw < 1 then Vector(rb) else (0 until nw).toVector.map(k => rb.slice(k * w, (k + 1) * w))
           segs.map(seg => math.sqrt(MatD(seg).power(2).mean * DaysPerYear)),
       bondCrash = if br then crashPoints(sp.bond, sp.cpi, eps) else Vector.empty,
+      bondCrashNet = if br then crashPointsNet(sp.bond, sp.cpi, eps) else Vector.empty,
       ddB10 = if sp.bond10.isEmpty || !b10 then nan3 else depthShares(sp.bond10),
       bond10Vol =
         if sp.bond10.isEmpty || !b10 then Double.NaN
@@ -8733,8 +8772,9 @@ object MarketSim:
     val eps    = per.flatMap(_.episodes)
     val shapes = eps.map(_.shape).filter(x => !x.isNaN)
     // the crash fits over the episodes pooled across the paths, in path then episode order
-    val bondFit   = crashFit(per.flatMap(_.bondCrash))
-    val bond10Fit = crashFit(per.flatMap(_.bond10Crash))
+    val bondFit    = crashFit(per.flatMap(_.bondCrash))
+    val bondNetFit = crashFit(per.flatMap(_.bondCrashNet))
+    val bond10Fit  = crashFit(per.flatMap(_.bond10Crash))
     val days   = sims.map(_.price.length.toLong).sum.toDouble
     // POOLED, not a median of per-path shares: most paths hold no tail session at all, so a median
     // would read 0 forever and the check built on it could not fail.
@@ -8793,7 +8833,7 @@ object MarketSim:
       trendPinned = sims.map(_.trendPinned).sum / sims.size,
       targetSat = sims.map(_.targetSat).sum / sims.size,
       bondVol = med(per.flatMap(_.bondVol)),
-      bondGrowth = bondFit(0), bondInfl = bondFit(1),
+      bondGrowth = bondFit(0), bondInfl = bondFit(1), bondGrowthNet = bondNetFit(0),
       bond10Vol = med(per.map(_.bond10Vol)),
       bond10Excess = med(per.map(_.bond10Excess)),
       bond10Growth = bond10Fit(0), bond10Infl = bond10Fit(1),
@@ -8906,7 +8946,7 @@ object MarketSim:
     * table's in every class.  The loss's gate penalty reads its own ensemble (`gateChecks`). */
   def gateChecksAt(a: Anchors, st: WorldStats,
                    banded: Map[String, Double]): Vector[(String, Boolean, GateClass)] =
-    gateChecksWith(a, st, banded, (_, _, _, _) => ())
+    gateChecksWith(a, st, banded)
 
   /** THE GATES THAT GRADE A TABLE READING (`gateChecksAt`'s `banded`), by the name each prints
     * ahead of its band.  Every other gate reads `st` alone, so it fails at the table's readings
@@ -8927,25 +8967,65 @@ object MarketSim:
     * counts (`clustering` with its ac20 floor, `crash rate` with its one episode, the mechanism
     * rows) is not here; `gateChecksAt` still grades it. */
   def gateBandsAt(a: Anchors, st: WorldStats, banded: Map[String, Double]): Vector[GateBand] =
-    val out = Vector.newBuilder[GateBand]
-    gateChecksWith(a, st, banded, (name, reading, band, cls) => out += GateBand(name, reading, band, cls))
-    out.result()
+    gateGates(a, st, banded).filter(_.band).map: g =>
+      val c = g.clauses.head
+      GateBand(g.name, c.reading, (c.lo, c.hi), g.cls)
 
-  /** `gateChecksAt`, telling `seen` each band gate's name, reading, band and class as it grades it. */
-  private def gateChecksWith(a: Anchors, st: WorldStats, banded: Map[String, Double],
-                             seen: (String, Double, (Double, Double), GateClass) => Unit)
+  /** One clause of a gate: a reading and the interval it must sit in, open unless `closed`.  An
+    * infinite bound is no bound: the clause is one-sided. */
+  final case class Clause(label: String, reading: Double, lo: Double, hi: Double, closed: Boolean):
+    /** inside its interval; a NaN reading never is */
+    def holds: Boolean =
+      val x     = reading
+      val above = lo == Double.NegativeInfinity || (if closed then lo <= x else lo < x)
+      val below = hi == Double.PositiveInfinity || (if closed then x <= hi else x < hi)
+      above && below
+    /** the reading's distance inside its nearer bound, negative outside; NaN where the reading or
+      * a bound it is read against is */
+    def clearance: Double =
+      val fromLo = if lo == Double.NegativeInfinity then Double.PositiveInfinity else reading - lo
+      val toHi   = if hi == Double.PositiveInfinity then Double.PositiveInfinity else hi - reading
+      if fromLo.isNaN || toHi.isNaN then Double.NaN
+      else if fromLo < toHi then fromLo
+      else toHi
+
+  object Clause:
+    def open(label: String, reading: Double, lo: Double, hi: Double): Clause =
+      Clause(label, reading, lo, hi, closed = false)
+    def closed(label: String, reading: Double, lo: Double, hi: Double): Clause =
+      Clause(label, reading, lo, hi, closed = true)
+
+  /** A gate as its clauses: it passes when every clause holds.  `band` marks a band on one reading
+    * (`bandCheck`), the gates `gateBandsAt` reports. */
+  final case class Gate(name: String, clauses: Vector[Clause], cls: GateClass, band: Boolean = false):
+    def ok: Boolean = clauses.forall(_.holds)
+
+  /** One clause of a gate `gateChecksAt` grades, as `gateClausesAt` reports it. */
+  final case class GateClause(gate: String, clause: Clause, cls: GateClass)
+
+  /** Every clause of every gate `gateChecksAt` grades, in gate order: what the membership's margin
+    * reads (`margins`). */
+  def gateClausesAt(a: Anchors, st: WorldStats, banded: Map[String, Double]): Vector[GateClause] =
+    gateGates(a, st, banded).flatMap(g => g.clauses.map(c => GateClause(g.name, c, g.cls)))
+
+  /** `gateChecksAt` from the gates' clauses. */
+  private def gateChecksWith(a: Anchors, st: WorldStats, banded: Map[String, Double])
       : Vector[(String, Boolean, GateClass)] =
+    gateGates(a, st, banded).map(g => (g.name, g.ok, g.cls))
+
+  /** Every gate `gateChecksAt` grades, in gate order, as its clauses. */
+  private def gateGates(a: Anchors, st: WorldStats, banded: Map[String, Double]): Vector[Gate] =
     import GateClass.*
-    // every band gate below goes through these two, so `seen` hears each in gate order
+    val Inf    = Double.PositiveInfinity
+    val NegInf = Double.NegativeInfinity
     def bandCheck(name: String, got: Double, lo: Double, hi: Double, cls: GateClass,
-                  dp: Int = 2, unit: String = ""): (String, Boolean, GateClass) =
-      val g = MarketSim.bandCheck(name, got, lo, hi, cls, dp, unit)
-      seen(g._1, got, (lo, hi), cls)
-      g
+                  dp: Int = 2, unit: String = ""): Gate =
+      MarketSim.bandCheck(name, got, lo, hi, cls, dp, unit)
     def lv(name: String, verdict: Double): Double = banded.getOrElse(name, verdict)
     val vol = lv("equity vol %", st.vol * 100.0)
     val ac1 = lv("clustering lag 1", st.ac1)
     val ac20 = lv("clustering lag 20", st.ac20)
+    val shapeFloor = math.max(1, st.nShapes / 10).toDouble
     val base = Vector(
       // MEASURED, not assumed.  8-25% was the S&P's shape and it asserted of 17 of the 35 real
       // equity instruments in `test-data/equity-anchors` that they are not markets -- QQQ (26.9%),
@@ -8970,15 +9050,18 @@ object MarketSim:
       // but `test-data/equity-anchors` carries no kurtosis column.  The FIDELITY target is
       // untouched at 28.0 / 9.55: that is the row that answers "is this THIS market".
       bandCheck("kurtosis",         lv("kurtosis", st.kurt), RealismKurt._1, RealismKurt._2, Realism, dp = 0),
-      (f"clustering ${RealismAc1._1}%.2f-${RealismAc1._2}%.2f",
-        ac1 > RealismAc1._1 && ac1 < RealismAc1._2 && ac20 > 0.03, Realism),
+      Gate(f"clustering ${RealismAc1._1}%.2f-${RealismAc1._2}%.2f",
+        Vector(Clause.open("lag 1", ac1, RealismAc1._1, RealismAc1._2), Clause.open("lag 20", ac20, 0.03, Inf)),
+        Realism),
       // Widened from 8-45 for the same reason as the volatility band above: 45 excluded two of
       // the 35 real instruments (EWA, EWW), which read 49.4 and 46.6 over the clean w1996 window
       // against a cross-section range of 13.2-49.4.  A band that calls a real market unreal is
       // not a realism check.
-      (f"crash rate ${RealismCrashes._1}%.0f-${RealismCrashes._2}%.0f/century", st.epPerPath >= 1.0 && {
-          val pc = lv("crashes/century", st.epPerPath * 100.0 / st.yearsPerPath)
-          pc >= RealismCrashes._1 && pc <= RealismCrashes._2 }, Realism),
+      Gate(f"crash rate ${RealismCrashes._1}%.0f-${RealismCrashes._2}%.0f/century",
+        Vector(Clause.closed("episodes a path", st.epPerPath, 1.0, Inf),
+               Clause.closed("a century", lv("crashes/century", st.epPerPath * 100.0 / st.yearsPerPath),
+                             RealismCrashes._1, RealismCrashes._2)),
+        Realism),
       // max(1, _) is load-bearing.  nShapes / 10 is INTEGER division, so below ten shapes both
       // clauses read ">= 0" and the check passes with NEITHER shape present -- measured at
       // -drift 0.9, which produced V=0, balanced=1, U=0 and passed a check named "both
@@ -8986,51 +9069,56 @@ object MarketSim:
       // shape evidence is weakest and the check matters most.  Requiring at least one of each
       // makes too-few-shapes FAIL: a run that has not demonstrated both shapes has not
       // demonstrated both shapes, and a gate that passes on no evidence reads as verification.
-      ("both recovery shapes",      st.nShapes > 0
-                                     && st.vCount >= math.max(1, st.nShapes / 10)
-                                     && st.uCount >= math.max(1, st.nShapes / 10), Realism),
-      ("no runaway drift",          st.annRet.abs < 30.0, Realism),
+      Gate("both recovery shapes",
+        Vector(Clause.open("shapes", st.nShapes.toDouble, 0.0, Inf),
+               Clause.closed("V shapes", st.vCount.toDouble, shapeFloor, Inf),
+               Clause.closed("U shapes", st.uCount.toDouble, shapeFloor, Inf)), Realism),
+      Gate("no runaway drift",          Vector(Clause.open("", st.annRet, -30.0, 30.0)), Realism),
       // 0.02% ~ one clamped session per 20 path-years.  The old bound (0.5%) would have passed a
       // world where the clamp was already reshaping kurtosis by a third.
-      ("clamp rarely binds",        st.clampPct < 0.02, Realism),
+      Gate("clamp rarely binds",        Vector(Clause.open("", st.clampPct, NegInf, 0.02)), Realism),
       // THE DENOMINATOR IS THE POINT.  `clampPct` measures the guard against ALL sessions, where it
       // is negligible by construction and passes in worlds whose worst sessions are ENTIRELY its
       // doing.  This measures it against the tail it actually touches.  Both are kept: one says the
       // guard is not distorting the body, the other that it is not authoring the tail.
-      ("clamp shapes no tail",      st.tailFloorPct < 2.0, Realism),
+      Gate("clamp shapes no tail",      Vector(Clause.open("", st.tailFloorPct, NegInf, 2.0)), Realism),
       // RELATIVE to duration, not absolute.  The old 7-20% band was TLT's: of eight real funds it
       // admitted one, and asserted of the US Aggregate (4.24%) that it is not a market.  0.5-2.5
       // per year of duration admits every fund measured, high yield at 2.001 included, and still
       // catches a bond whose volatility bears no relation to what it is.
       bandCheck("bond vol", st.bondVolPerYear, 0.5, 2.5, Realism, dp = 1, unit = "x duration"),
-      ("bonds rally in growth shocks",    st.bondGrowth > 3.0, Mechanism),
-      ("bonds lose more the higher the inflation seen", st.bondInfl < -0.5, Mechanism),
-      ("corr flips positive under inflation",
-          !st.corrInfl.isNaN && !st.corrCalm.isNaN &&
-          st.corrInfl > st.corrCalm + 0.15 && st.corrInfl > 0.0 && st.corrCalm < 0.35, Mechanism),
+      // net of the bond's drift: the gross response is carry over the decline on a bond with no link
+      // to the equity (`BondRallyNetFloor`); the gross level is the placement row
+      Gate("bonds rally in growth shocks", Vector(Clause.open("", st.bondGrowthNet, BondRallyNetFloor, Inf)), Mechanism),
+      Gate("bonds lose more the higher the inflation seen",
+        Vector(Clause.open("", st.bondInfl, NegInf, -0.5)), Mechanism),
+      Gate("corr flips positive under inflation",
+        Vector(Clause.open("above the calm's by 0.10", st.corrInfl, st.corrCalm + CorrFlipMin, Inf),
+               Clause.open("positive", st.corrInfl, 0.0, Inf),
+               Clause.open("calm under 0.35", st.corrCalm, NegInf, 0.35)), Mechanism),
       // The bond spiral's share of sessions is a placed row (`BondStressRow`), no longer a gate.
       // Two-sided like the spiral's: the channel must strike, and disasters that arrive more than
       // a few times a century are not disasters -- they are a second volatility regime wearing the
       // name.  An off-world (rate 0) fails this row, which is what a mechanism row MEANS.
-      ("macro disasters strike, not every decade",
-        st.disPerCentury > 0.05 && st.disPerCentury < 4.0, Mechanism),
+      Gate("macro disasters strike, not every decade",
+        Vector(Clause.open("", st.disPerCentury, 0.05, 4.0)), Mechanism),
       // The valuation cycle's engagement row.  The floor fails a world without the mechanism (the
       // disaster-only default read 0.095); the ceiling is the unmoored guard -- a dispersion past
       // 0.70 means perceived fair has lost the fundamental (the -beliefshare domain refuses >= 1
       // for the same reason at the CLI).
-      ("valuation cycle engages, not unmoored",
-        st.valDisp > 0.13 && st.valDisp < 0.70, Mechanism),
+      Gate("valuation cycle engages, not unmoored",
+        Vector(Clause.open("", st.valDisp, 0.13, 0.70)), Mechanism),
       // THE STATIONARITY ROW (item 27): the paths must be stationary from the first session --
       // the valuation gap's pooled mean may not drift between a path's first decade and its later
       // half.  A world whose slow valuation state starts off its own law (the fair-value start
       // every world had before the cycle) fails it, which is what a mechanism row MEANS.
-      ("valuation stationary from the first session",
-        !st.gapDrift.isNaN && math.abs(st.gapDrift) < GapDriftBand, Mechanism),
+      Gate("valuation stationary from the first session",
+        Vector(Clause.open("", st.gapDrift, -GapDriftBand, GapDriftBand)), Mechanism),
       // and its SPREAD: a gap started at the fundamental has the right mean long before it has the
       // right spread, and every mechanism that reads the gap's level against its own history --
       // the bust swing -- runs quiet until it does
-      ("valuation spread stationary from the first session",
-        !st.gapSpreadDrift.isNaN && math.abs(st.gapSpreadDrift) < GapSpreadBand, Mechanism),
+      Gate("valuation spread stationary from the first session",
+        Vector(Clause.open("", st.gapSpreadDrift, -GapSpreadBand, GapSpreadBand)), Mechanism),
       bandCheck("inflation",        st.inflAnn, 1.0, 6.0, Realism, dp = 0, unit = "%/yr"),
       // The LEVEL of a graded row (equity vol, typical-year vol, return per vol, the depth
       // rungs, bond depth, bond vol per duration) is no longer a gate: the placement
@@ -9055,7 +9143,8 @@ object MarketSim:
     // THE OPEN's mechanism, when it ran: the record's worst sessions open with more of the day
     // already gone; its overnight share is a placement row (`BarRows`).
     val openBands = st.open.toVector.map: os =>
-      ("overnight gap share rises on the worst sessions", os.worstGapShare > os.allGapShare, Mechanism)
+      Gate("overnight gap share rises on the worst sessions",
+        Vector(Clause.open("", os.worstGapShare, os.allGapShare + OvernightWorstMargin, Inf)), Mechanism)
     // THE BASKET, graded only against a client's ruler (`-basketruler`, `BasketRuler.bands`): its
     // names' vol ratio and gaps over the graded names' ranges, the aggregate's corr, beta and vol
     // ratio on the index, pair corr and idio share over their ranges, tail coincidence, and the
@@ -9065,17 +9154,19 @@ object MarketSim:
     val basketBands = (st.basket, a.basketRuler) match
       case (Some(b), Some(r)) =>
         r.bands.zip(b.graded).map((bd, got) => bandCheck(bd.row, got, bd.lo, bd.hi, Fidelity)) :+
-          (BasketMechanismRow, b.pairCorrWorst > b.pairCorrMid, Mechanism)
+          Gate(BasketMechanismRow, Vector(Clause.open("", b.pairCorrWorst, b.pairCorrMid + PairCorrMargin, Inf)), Mechanism)
       case _ => Vector.empty
     // THE SECTOR CHANNEL's mechanism, when it ran: pairwise correlation on the market's middle
     // decile below its worst decile's; its levels are placement rows (`SectorRows`).
     val sectorBands = st.sector.toVector.map: s =>
-      ("sector pair corr falls on the middle decile", s.pairCorrMid < s.pairCorrWorst, Mechanism)
+      Gate("sector pair corr falls on the middle decile",
+        Vector(Clause.open("", s.pairCorrMid, NegInf, s.pairCorrWorst - PairCorrMargin)), Mechanism)
     // THE MACRO PANEL's mechanism, when it ran -- `macro-2026-09-06.tsv`: the conditions index
     // BUILDS before the peak (its mean trailing rank over the quarter before a 20% peak clear of
-    // what a decoupled series reads there, the null panel's 0.49) and concentrates the big peaks.
-    // "Fires in most episodes" is not a test -- a null panel fires in 0.70-0.77 of them -- so the
-    // fired shares are reported.  The levels, lags and persistences are placement rows
+    // what a decoupled series reads there, the null panel's 0.49) and concentrates the big peaks,
+    // clear of a decoupled panel's hazard.  "Fires in most episodes" is not a test -- a null
+    // panel fires in 0.70-0.77 of them -- so the fired shares are reported.  The levels, lags,
+    // persistences and the hazard are placement rows
     // (`macroPlacementRows`); every WARNING SHARE, the spread's and the implied vol's build-up,
     // the implied-vol member's lag, the slope's, the inversion spell length and the ivol's R^2
     // against forward realized vol are reported, each disclosed in MarketSimWorlds.md.
@@ -9084,10 +9175,10 @@ object MarketSim:
       // a decoupled panel grades nothing: its readings are the no-edge level, by construction
       case Some(ms) if ms.sibling => Vector.empty
       case Some(ms) =>
-        Vector(("macro cond builds before the peak: rank above a decoupled series' 0.49",
-                ms.members(2).prePeak > MacroBands.CondPrePeakNull, Mechanism),
-               (f"macro cond concentrates the big peaks: a 20%% peak within a quarter above ${MacroBands.HazardMin}%.1fx as likely",
-                ms.hazard20q > MacroBands.HazardMin, Mechanism))
+        Vector(Gate("macro cond builds before the peak: rank above a decoupled series' 0.51-0.54",
+                 Vector(Clause.open("", ms.members(2).prePeak, MacroBands.CondPrePeakNull, Inf)), Mechanism),
+               Gate("macro cond concentrates the big peaks: a 20% peak within a quarter likelier than a decoupled series' 1.0x",
+                 Vector(Clause.open("", ms.hazard20q, MacroBands.HazardNull, Inf)), Mechanism))
     base ++ openBands ++ basketBands ++ sectorBands ++ macroBands
 
   /** Whether an anchor-fitted band can be graded here: its driving variable inside the range the
@@ -9136,9 +9227,9 @@ object MarketSim:
     * came through here: `clustering` also enforces an ac20 floor and `crash rate` also requires at
     * least one episode.  Both are two-sided with visible bounds; what they are not is one clause. */
   def bandCheck(name: String, got: Double, lo: Double, hi: Double, cls: GateClass,
-                dp: Int = 2, unit: String = ""): (String, Boolean, GateClass) =
+                dp: Int = 2, unit: String = ""): Gate =
     val fmt = s"%.${dp}f"
-    (s"$name ${fmt.format(lo)}-${fmt.format(hi)}$unit", got > lo && got < hi, cls)
+    Gate(s"$name ${fmt.format(lo)}-${fmt.format(hi)}$unit", Vector(Clause.open("", got, lo, hi)), cls, band = true)
 
   def vrOf(st: WorldStats, q: Int): Double = q match
     case 20  => st.vr20
@@ -10180,12 +10271,15 @@ object MarketSim:
     * `MarketSimWorlds.md`.  `amplifier-2026-09-07.tsv` carries the record's profiles. */
 
   object MacroBands:
-    val CondPrePeakNull = 0.55       // engaged: clear of the null panel's 0.49 (+-0.02 on 500
-                                     // episodes); the model read 0.63 before the leverage
-                                     // cycle and reads 0.92 with it
-    val HazardMin = 1.4              // the quarter-horizon 20% hazard: the four references'
-                                     // minimum (QQQ 1.45) floored to 0.1; CRSP 2.7, SPY 2.2, NDX
-                                     // 2.0; a decoupled series 1.0
+    val CondPrePeakNull = 0.60       // engaged: clear of a decoupled panel's build-up, 0.54 (S&P)
+                                     // / 0.51 (Nasdaq) +-0.02 a read at 200 x 100 on the 0.25.1
+                                     // recipes (`-macronull 1`, 40 reads each); the model read
+                                     // 0.63 before the leverage cycle and reads 0.83-0.96 with it
+    val HazardNull = 1.1             // engaged: the quarter-horizon 20% hazard clear of a decoupled
+                                     // panel's 1.00 (+-0.023 a read at 200 x 100 on both 0.25.1
+                                     // recipes, 80 reads, none above 1.07). The level is a
+                                     // placement row (`macro cond hazard`: CRSP 2.72 for the S&P
+                                     // set, QQQ 1.44 for the Nasdaq's)
 
   def anchorsNamed(spec: String): Anchors = spec match
     case "sp500" | "sp" | "spx" => SP500Anchors
@@ -11612,7 +11706,7 @@ object MarketSim:
     * the one-day reversion (`lag1Demeaned` of the daily log returns, ruled 2026-10-23), read on the
     * record after `UnlagCut` alone, where the lag correction leaves no lag-1 to read, and on each
     * history of that many sessions (`LedgerRecords.lag1Sessions`).  The records in
-    * `ledgerrows-2026-10-22.tsv`. */
+    * `ledgerrows-2026-11-01.tsv`. */
   val LedgerRows: Vector[String] = Vector(
     "vol-exit 1x edge 1.0/1.5 pts/yr", "vol-exit 3x edge 1.0/1.5 pts/yr",
     "vol-exit 1x edge 1.0/2.0 pts/yr", "vol-exit 3x edge 1.0/2.0 pts/yr",
@@ -11626,13 +11720,17 @@ object MarketSim:
     "vol-exit avoided a spell 3x pts", "vol-exit missed a spell 3x pts",
     "vol-exit whipsaw spells %", "vol-exit cash earned pts/yr", "vol-exit held crash pts/yr",
     "vol coupling monthly corr", "vol coupling quarterly corr", "up-day vol slope in falls",
-    "declines 10%+ a century", "return lag-1 autocorr")
+    "declines 10%+ a century", "z beyond 3 sds %", "z beyond 4 sds %", "log vol sd",
+    "vol doubling months %", "sessions beyond 5% a century", "log vol autocorr 1m",
+    "log vol autocorr 12m", "return lag-1 autocorr")
   /** The ledger rows' families, as `LedgerRows` lays them out: the surface, the parts, the
-    * coupling, the declines, the one-day reversion. */
-  val LedgerFamilies: Vector[Range] = Vector(0 until 14, 14 until 24, 24 until 27, 27 until 28, 28 until 29)
+    * coupling, the declines, the vol process's innovation and level, the level's persistence, the
+    * one-day reversion. */
+  val LedgerFamilies: Vector[Range] =
+    Vector(0 until 14, 14 until 24, 24 until 27, 27 until 28, 28 until 33, 33 until 35, 35 until 36)
   /** The ledger rows read on the volatility-state window (`ledgerReadingsOf`): all but the one-day
     * reversion. */
-  val LedgerStateRows: Int = 28
+  val LedgerStateRows: Int = 35
   /** THE EXIT'S SURFACE: (hold below, cash at) besides the production pair, as decimals of the
     * trailing sd. */
   val VolExitGrid: Vector[(Double, Double)] = Vector(
@@ -11801,11 +11899,48 @@ object MarketSim:
       i += 1
     100.0 * ddSpans(px, 0.10).length / (r.length.toDouble / DaysPerYear)
 
+  /** THE VOL PROCESS (`LedgerRows`' fifth and sixth families, 2026-11-01): the return decomposed
+    * into a volatility level and a standardized innovation, each graded on its own, so that a world
+    * cannot buy the level's persistence with the innovation's size or hide a tail count under one
+    * kurtosis.  On the window's daily log returns: the innovation z_t = r_t / s_t, s_t the sample sd
+    * (n - 1) of the 21 sessions before t (a zero sd leaves the session out), the share of sessions
+    * beyond 3 and beyond 4 sds; the level lv over whole non-overlapping 21-session blocks from the
+    * window's first session, the coupling's log rms (0.5 ln of the block's mean squared return), its
+    * sample sd and the share of blocks whose lv rose ln 2 or more over the block before; the sessions
+    * with |r| above 5% per 252; then the level's persistence, lv's demeaned autocorrelation at 1 and
+    * 12 blocks, its own family judged by where the record falls among the model's histories.  NaN
+    * where a reading has no sessions or blocks to read.  The Rust twin's `vol_process_of`. */
+  private[apps] def volProcessOf(r: Array[Double]): Vector[Double] =
+    val w = 21
+    val z: Vector[Double] = (w until r.length).iterator.flatMap { t =>
+      val x    = r.slice(t - w, t)
+      val mean = foldSum(x.iterator) / w
+      val v    = foldSum(x.iterator.map(u => (u - mean) * (u - mean))) / (w - 1)
+      val sd   = math.sqrt(v)
+      if sd > 0.0 then Some(r(t) / sd) else None
+    }.toVector
+    def zTail(k: Double): Double =
+      if z.isEmpty then Double.NaN else 100.0 * z.count(u => math.abs(u) > k) / z.length
+    val lv: Vector[Double] = r.grouped(w).filter(_.length == w)
+      .map(b => 0.5 * lnDet(math.max(foldSum(b.iterator.map(u => u * u)), 1e-300) / b.length)).toVector
+    val n    = lv.length
+    val m    = if n == 0 then Double.NaN else foldSum(lv.iterator) / n
+    val den  = foldSum(lv.iterator.map(u => (u - m) * (u - m)))
+    val lvSd = if n < 2 then Double.NaN else math.sqrt(den / (n - 1))
+    def ac(lag: Int): Double =
+      if n <= lag + 1 || den <= 0.0 then Double.NaN
+      else foldSum((0 until n - lag).iterator.map(i => (lv(i) - m) * (lv(i + lag) - m))) / den
+    val doubling =
+      if n < 2 then Double.NaN else 100.0 * lv.sliding(2).count(p => p(1) - p(0) >= 0.6931471805599453) / (n - 1)
+    val big =
+      if r.isEmpty then Double.NaN else 100.0 * r.count(u => math.abs(u) > 0.05) / (r.length.toDouble / DaysPerYear)
+    Vector(zTail(3.0), zTail(4.0), lvSd, doubling, big, ac(1), ac(12))
+
   /** The ledger rows read on the volatility-state window (`LedgerStateRows`) on one record or path's
     * volatility-state sessions. */
   def ledgerReadingsOf(d: IndexedSeq[VolStateDay]): Vector[Double] =
     val r = d.iterator.map(_.logRet).toArray
-    volExitLedgerOf(d.map(_.exit)) ++ volCouplingOf(r) :+ declinesOf(r)
+    (volExitLedgerOf(d.map(_.exit)) ++ volCouplingOf(r) :+ declinesOf(r)) ++ volProcessOf(r)
 
   /** `ledgerReadingsOf` on one-year-block resamples of a record's sessions, each session's inputs
     * kept together: the blocks and stream `volStateResamples` draws. */
@@ -11959,10 +12094,11 @@ object MarketSim:
                           blockYears: Option[Int] = None): Vector[Vector[Double]] =
     blockResamplesOf(r, DaysPerYear * blockYears.getOrElse(1), resamples, seed, x => Vector(ledgerLag1Of(x)))
 
-  /** THE LEDGER ROWS' RECORDS (`ledgerrows-2026-10-22.tsv`): a set's reading of every `LedgerRows`
+  /** THE LEDGER ROWS' RECORDS (`ledgerrows-2026-11-01.tsv`): a set's reading of every `LedgerRows`
     * row, and the banded rows' resamples and joint bands, which they are judged by (`model@`): the
-    * coupling's and the one-day reversion's; the surface, the parts and the declines are judged by
-    * where the record falls among the model's histories (`record@`).  `lag1Sessions` is the record's
+    * coupling's, the vol process's innovation and level and the one-day reversion's; the surface, the
+    * parts, the declines and the level's persistence are judged by where the record falls among the
+    * model's histories (`record@`).  `lag1Sessions` is the record's
     * session count after `UnlagCut`, the length the model's histories of the reversion are read at. */
   final case class LedgerRecords(record: Vector[Double], bands: Vector[RecordBand], lag1Sessions: Int)
 
@@ -11970,7 +12106,8 @@ object MarketSim:
     Vector(-1.493742, 7.835167, -1.731010, 4.423257, -1.598227, 1.655211, -0.003868, 10.233504,
            1.144072, 8.408481, 1.057782, 9.765416, 0.673300, 6.302301, 50.038610, 15.615003,
            45.000000, 13.078909, 13.325448, 52.052475, 34.565455, 63.888889, 0.671685, -1.601635,
-           -0.285806, -0.377615, -1.579370, 69.402368, -0.056147),
+           -0.285806, -0.377615, -1.579370, 69.402368, 1.340024, 0.336385, 0.442641, 3.707995,
+           252.624621, 0.680897, 0.283904, -0.056147),
     Vector(
       RecordBand("vol coupling monthly corr", -0.285806,
         Vector(-0.438744, -0.349199, -0.321547, -0.306346, -0.295727, -0.287780, -0.280582, -0.274135, -0.268252, -0.262672, -0.257282, -0.251589, -0.246370, -0.240769, -0.234748, -0.228774, -0.222070, -0.214887, -0.206354, -0.195977, -0.180039, -0.150391, -0.068181),
@@ -11981,6 +12118,21 @@ object MarketSim:
       RecordBand("up-day vol slope in falls", -1.579370,
         Vector(-4.142454, -3.185229, -2.728707, -2.500032, -2.347623, -2.227873, -2.122946, -2.024354, -1.940513, -1.859024, -1.783975, -1.710522, -1.638951, -1.560622, -1.482953, -1.402102, -1.308978, -1.205392, -1.083140, -0.927072, -0.696901, -0.273189, 0.926234),
         0.490925, (-3.198647, -0.253055)),
+      RecordBand("z beyond 3 sds %", 1.340024,
+        Vector(1.042241, 1.202162, 1.257307, 1.290394, 1.312452, 1.328995, 1.340024, 1.356568, 1.367597, 1.378626, 1.389655, 1.400684, 1.411713, 1.422742, 1.433771, 1.450314, 1.461343, 1.477887, 1.494430, 1.516488, 1.549575, 1.615749, 1.819786),
+        0.493825, (1.185618, 1.632293)),
+      RecordBand("z beyond 4 sds %", 0.336385,
+        Vector(0.209551, 0.270211, 0.297783, 0.308812, 0.319841, 0.330870, 0.336385, 0.341899, 0.347414, 0.352928, 0.358443, 0.363957, 0.369472, 0.374986, 0.380501, 0.386015, 0.391530, 0.397044, 0.408073, 0.419102, 0.435646, 0.463218, 0.534907),
+        0.493825, (0.264696, 0.474247)),
+      RecordBand("log vol sd", 0.442641,
+        Vector(0.348557, 0.381266, 0.397878, 0.407178, 0.413413, 0.418644, 0.423055, 0.427082, 0.430856, 0.434201, 0.437498, 0.440873, 0.444227, 0.447493, 0.451150, 0.454735, 0.458626, 0.463173, 0.468332, 0.475040, 0.484889, 0.504135, 0.549782),
+        0.493825, (0.377036, 0.508596)),
+      RecordBand("vol doubling months %", 3.707995,
+        Vector(1.506373, 2.433372, 2.780997, 2.896871, 3.128621, 3.244496, 3.244496, 3.360371, 3.476246, 3.476246, 3.592121, 3.707995, 3.707995, 3.823870, 3.939745, 3.939745, 4.055620, 4.171495, 4.287370, 4.403244, 4.634994, 5.098494, 6.373117),
+        0.493825, (2.317497, 5.214368)),
+      RecordBand("sessions beyond 5% a century", 252.624621,
+        Vector(66.626274, 115.207932, 145.744974, 165.177637, 180.446158, 192.938584, 202.654916, 212.371248, 222.087579, 230.415863, 240.132195, 249.848527, 259.564858, 267.893142, 278.997521, 290.101900, 302.594327, 316.474800, 333.131369, 355.340127, 390.041311, 456.667585, 617.681080),
+        0.493825, (106.879647, 474.712200)),
       RecordBand("return lag-1 autocorr", -0.056147,
         Vector(-0.181306, -0.122250, -0.099846, -0.089013, -0.081936, -0.076538, -0.072299, -0.068200, -0.064835, -0.061613, -0.058604, -0.055522, -0.052715, -0.049603, -0.046449, -0.043351, -0.040064, -0.036547, -0.032618, -0.027821, -0.020635, -0.009416, 0.016560),
         0.475025, (-0.110044, -0.015576))),
@@ -11990,7 +12142,8 @@ object MarketSim:
     Vector(-1.387045, -0.112506, -1.381921, -1.352275, -0.516015, -0.112060, -0.322592, 2.174119,
            -0.216482, 0.698917, -0.302807, 0.922389, 0.237333, 1.701461, 25.069084, 5.311153,
            45.000000, 9.827473, 12.007971, 36.010443, 32.145166, 66.666667, 0.181760, -1.457118,
-           -0.410259, -0.530453, -3.383634, 38.942546, -0.078768),
+           -0.410259, -0.530453, -3.383634, 38.942546, 1.442148, 0.370207, 0.455485, 3.716609,
+           84.839119, 0.657588, 0.238687, -0.078768),
     Vector(
       RecordBand("vol coupling monthly corr", -0.410259,
         Vector(-0.514408, -0.458895, -0.432567, -0.418702, -0.409166, -0.401332, -0.394956, -0.388631, -0.383192, -0.377522, -0.372199, -0.367235, -0.362233, -0.357082, -0.351696, -0.345887, -0.339617, -0.332519, -0.324695, -0.314595, -0.298006, -0.268016, -0.190260),
@@ -12001,6 +12154,21 @@ object MarketSim:
       RecordBand("up-day vol slope in falls", -3.383634,
         Vector(-7.297616, -5.385237, -4.841922, -4.556410, -4.361529, -4.209143, -4.069942, -3.948954, -3.843271, -3.738918, -3.634705, -3.531373, -3.426819, -3.323035, -3.211507, -3.093969, -2.969576, -2.821593, -2.651311, -2.439685, -2.121119, -1.434719, 0.332838),
         0.490825, (-5.414428, -1.398985)),
+      RecordBand("z beyond 3 sds %", 1.442148,
+        Vector(1.121671, 1.304011, 1.359266, 1.392419, 1.408995, 1.425572, 1.436623, 1.453199, 1.458725, 1.469776, 1.480827, 1.491878, 1.502929, 1.513979, 1.525030, 1.536081, 1.547132, 1.563709, 1.574760, 1.596862, 1.624489, 1.685269, 1.806829),
+        0.494025, (1.287435, 1.696320)),
+      RecordBand("z beyond 4 sds %", 0.370207,
+        Vector(0.243121, 0.298376, 0.326003, 0.342579, 0.353630, 0.359156, 0.370207, 0.375732, 0.381258, 0.386783, 0.392309, 0.397834, 0.403359, 0.408885, 0.414410, 0.419936, 0.425461, 0.436512, 0.442038, 0.453089, 0.469665, 0.502818, 0.591226),
+        0.494025, (0.292850, 0.508343)),
+      RecordBand("log vol sd", 0.455485,
+        Vector(0.373895, 0.398931, 0.414187, 0.422970, 0.428558, 0.433259, 0.437271, 0.440874, 0.444230, 0.447344, 0.450434, 0.453627, 0.456695, 0.459879, 0.463076, 0.466514, 0.470342, 0.474518, 0.479499, 0.485953, 0.495213, 0.512827, 0.554929),
+        0.494025, (0.394486, 0.518640)),
+      RecordBand("vol doubling months %", 3.716609,
+        Vector(1.858304, 3.019744, 3.368177, 3.600465, 3.716609, 3.832753, 3.948897, 4.065041, 4.065041, 4.181185, 4.297329, 4.413473, 4.413473, 4.529617, 4.645761, 4.761905, 4.761905, 4.878049, 4.994193, 5.226481, 5.458769, 5.923345, 7.084785),
+        0.494025, (2.903600, 6.039489)),
+      RecordBand("sessions beyond 5% a century", 84.839119,
+        Vector(13.908052, 30.597715, 43.114962, 50.068988, 55.632209, 59.804625, 63.977041, 68.149456, 70.931067, 75.103483, 79.275898, 83.448314, 86.229924, 90.402340, 94.574756, 98.747171, 104.310392, 109.873613, 116.827639, 126.563276, 140.471328, 166.896628, 251.735747),
+        0.494025, (27.816105, 176.632264)),
       RecordBand("return lag-1 autocorr", -0.078768,
         Vector(-0.212521, -0.156709, -0.133466, -0.120490, -0.112126, -0.105297, -0.099191, -0.094093, -0.089413, -0.085101, -0.080744, -0.076783, -0.072544, -0.068239, -0.063678, -0.058796, -0.053612, -0.047885, -0.041730, -0.034152, -0.024196, -0.008531, 0.022291),
         0.475025, (-0.143689, -0.016222))),
@@ -14256,7 +14424,7 @@ object MarketSim:
               f"crashes/path ${st.epPerPath}%.1f  depth ${st.depthMed}%.1f%%  censored ${st.censored}%d  " +
               f"trend share ${st.trendShare}%.2f  clamp ${st.clampPct}%.3f%% " +
               f"(tail ${st.tailFloorPct}%.1f%%)")
-      println(f"  bond vol ${st.bondVol * 100}%.1f%%  crash at 2%% infl ${pm(st.bondGrowth, 0, 1)}%s  per %% infl ${pm(st.bondInfl, 0, 1)}%s  " +
+      println(f"  bond vol ${st.bondVol * 100}%.1f%%  crash at 2%% infl ${pm(st.bondGrowth, 0, 1)}%s (net of drift ${pm(st.bondGrowthNet, 0, 1)}%s)  per %% infl ${pm(st.bondInfl, 0, 1)}%s  " +
               f"corr ${pm(st.corrCalm, 0, 2)}%s/${pm(st.corrInfl, 0, 2)}%s  bond spiral ${st.pctBondStress * 100}%.1f%% of sessions")
       println(f"  ${"rule"}%-34s ${"ret/yr"}%8s ${"worst5%"}%8s ${"maxDD"}%7s ${"realDD"}%7s ${"ruin"}%5s " +
               f"${"vsFlat g"}%9s ${"vsFlat n"}%9s ${"swr"}%6s ${"churn"}%6s ${"slip x"}%7s ${"beats ref"}%9s")
@@ -14961,7 +15129,7 @@ object MarketSim:
     "decline gap p90 y long", "decline length p50 y", "decline length p50 y long",
     "decline length max y", "decline length max y long", "tail hedge corr", "post-trough rate %",
     "post-trough floor share %", "median depth %", "worst crash %", "macro spread lag",
-    "macro cond lag", "macro cond build-up", "satellite crash ratio",
+    "macro cond lag", "macro cond build-up", "macro cond hazard", "satellite crash ratio",
     // no profit decline of 10%+ in the history, or none regained
     "profit decline median %", "profit decline p75 %", "profit decline fall months",
     "profit decline regain months")
@@ -15044,26 +15212,30 @@ object MarketSim:
   /** The macro panel's graded statistics on ONE history, the path's last `years` with its panel
     * kept (`Path.tail` keeps it): inversion share, vol premium, spread persistence, conditions
     * persistence, implied-vol persistence, oracle bound r2 (the largest forward-60 R^2 of the four
-    * measured members), spread lag, conditions lag, conditions build-up, each as the gates read
-    * the pooled panel.  NaN without a panel; the lags and the build-up NaN where the history has
-    * no 20% episode (or the member never fires). */
+    * measured members), spread lag, conditions lag, conditions build-up, the quarter-horizon 20%
+    * hazard, each as the gates read the pooled panel.  NaN without a panel; the lags, the build-up
+    * and the hazard NaN where the history has no 20% episode (or the member never fires). */
   def macroHistoryRead(p: Path, years: Int): Vector[Double] =
     val c = p.tail(years)
-    if c.macroPanel.isEmpty then Vector.fill(9)(Double.NaN)
+    if c.macroPanel.isEmpty then Vector.fill(10)(Double.NaN)
     else
       val r       = macroPathRead(c)
       val members = r._1
       def lag(j: Int): Double = pctile(members(j)._4.flatMap(_.lag.map(_.toDouble)), 0.5)
       val oracle = members.take(4).map(_._3).filter(!_.isNaN).foldLeft(Double.NegativeInfinity)(math.max)
+      val (hitTop, nTop, hitAll, nAll) = r._6(0)
+      val hazard =
+        if hitAll > 0 && nTop > 0 then (hitTop.toDouble / nTop) / (hitAll.toDouble / nAll) else Double.NaN
       Vector(r._2, r._4, members(0)._2, members(2)._2, members(3)._2, oracle, lag(0), lag(2),
-             pctile(members(2)._7, 0.5))
+             pctile(members(2)._7, 0.5), hazard)
 
   /** The macro panel's rows as the placement reads them: name, index into `macroHistoryRead`,
     * record horizon in years, record.  The panel's own series are FRED 1990-2026 (37 years); the
     * vol premium is VIX against CRSP (36 years); the index-relative rows read the set's index
     * window (CRSP 1990-2026, 36 years; QQQ 1999-2026, 27 years).  Records from
     * macro-2026-09-06.tsv, CRSP for the S&P set and QQQ for the Nasdaq set; `MacroPanelSuite`
-    * re-derives every one from the fixture. */
+    * re-derives every one from the fixture.  The hazard's mechanism bound reads the null
+    * (`MacroBands.HazardNull`); its level is here. */
   def macroPlacementRows(a: Anchors): Vector[(String, Int, Int, Double)] =
     val nasdaq = a.name == NasdaqAnchors.name
     val relH   = if nasdaq then 27 else 36
@@ -15076,7 +15248,8 @@ object MarketSim:
       ("macro oracle bound r2", 5, relH, if nasdaq then 0.0126 else 0.0140),
       ("macro spread lag", 6, relH, if nasdaq then 16.0 else 7.0),
       ("macro cond lag", 7, relH, if nasdaq then 101.0 else -48.0),
-      ("macro cond build-up", 8, relH, if nasdaq then 0.8179 else 0.9429))
+      ("macro cond build-up", 8, relH, if nasdaq then 0.8179 else 0.9429),
+      ("macro cond hazard", 9, relH, if nasdaq then 1.4399 else 2.7228))
 
   /** Every graded row's reading on each single history of `sims` at its record's horizon, with
     * its record: the banded and extreme rows from `horizonReadings` (the same vectors the
@@ -17686,11 +17859,96 @@ $body
 
   /** One read of `-validate -seeds` (`runMain` keeping it): its history rows, its ledger rows'
     * histories with their records (`ledgerHistoriesRecorded`), for the pooled dump, each class's
-    * failures on its bounds (the placement's not among them), the rows its verdict printed, and the
-    * classes the run requires. */
+    * failures on its bounds (the placement's not among them), every gate's clauses for the margin
+    * over the reads (`margins`), the rows its verdict printed, and the classes the run requires. */
   private final case class SeedRead(seed: Long, hrows: Vector[HistoryRow], ledger: Vector[HistoryRow],
-                                    bounds: Map[GateClass, Vector[String]], shown: Set[String],
-                                    gateReq: Set[GateClass])
+                                    bounds: Map[GateClass, Vector[String]], clauses: Vector[GateClause],
+                                    shown: Set[String], gateReq: Set[GateClass])
+
+  /** THE MARGIN's tail: a member's reads must predict its next read outside a bound at most this
+    * often, so a world in a set fails a bound on under 0.5% of the reads a consumer takes. */
+  val MarginTail: Double = 0.005
+
+  /** The fewest reads the margin is read from.  The reads estimate their own spread, and four
+    * cannot price a 0.5% tail: the prediction asks 6.53 sds there, refusing worlds that sit three
+    * to four sds clear and fail a bound on 0.02% of reads (the 0.25.1 Nasdaq recipe's
+    * valuation-spread row, 3.6 sds over 40 reads).  3.04 at 16 reads, 2.74 at the set check's 40. */
+  val MarginMinReads: Int = 16
+
+  /** P(|T| < t) on Student's t with `nu` >= 1 degrees of freedom: Abramowitz & Stegun 26.7.3 (odd)
+    * and 26.7.4 (even), finite sums in the angle `atan(t / sqrt(nu))`. */
+  private def studentTCentral(t: Double, nu: Int): Double =
+    val th = math.atan(t / math.sqrt(nu.toDouble))
+    val s  = math.sin(th)
+    val c  = math.cos(th)
+    val c2 = c * c
+    var term = 1.0
+    var sum  = 0.0
+    if nu % 2 == 1 then
+      for k <- 0 until (nu - 1) / 2 do
+        if k > 0 then term *= c2 * (2 * k).toDouble / (2 * k + 1).toDouble
+        sum += term
+      2.0 / math.Pi * (th + s * c * sum)
+    else
+      for k <- 0 until nu / 2 do
+        if k > 0 then term *= c2 * (2 * k - 1).toDouble / (2 * k).toDouble
+        sum += term
+      s * sum
+
+  /** Student's t quantile at `p` in (0.5, 1) on `nu` >= 1 degrees of freedom, by bisection on the
+    * angle `atan(t / sqrt(nu))` over (0, pi/2), where the central probability is monotone. */
+  def studentTQuantile(p: Double, nu: Int): Double =
+    val want = 2.0 * p - 1.0
+    val rn   = math.sqrt(nu.toDouble)
+    var lo   = 0.0
+    var hi   = math.Pi / 2.0
+    var i    = 0
+    var done = false
+    while i < 200 && !done do
+      val mid = 0.5 * (lo + hi)
+      if mid <= lo || mid >= hi then done = true
+      else if studentTCentral(rn * math.tan(mid), nu) < want then lo = mid
+      else hi = mid
+      i += 1
+    rn * math.tan(0.5 * (lo + hi))
+
+  /** THE MARGIN over `n` >= 2 reads, in the reads' own sds: Student's t prediction,
+    * t(1 - `MarginTail`, n - 1) sqrt(1 + 1/n), the clearance a next read keeps above zero with
+    * probability 1 - `MarginTail` when the reads' mean is that many of their sds.  6.53 at four
+    * reads. */
+  def marginNeed(n: Int): Double = studentTQuantile(1.0 - MarginTail, n - 1) * math.sqrt(1.0 + 1.0 / n)
+
+  /** One clause's margin over a member's reads: its clearances' mean and sd, and whether the mean
+    * clears `marginNeed` of those sds. */
+  final case class Margin(gate: String, label: String, cls: GateClass, mean: Double, sd: Double,
+                          need: Double, ok: Boolean):
+    /** the mean clearance in sds; infinite where every read reads the same */
+    def sds: Double = if sd > 0.0 then mean / sd else Double.PositiveInfinity
+    def named: String = if label.isEmpty then gate else s"$gate [$label]"
+
+  /** THE MARGIN on every clause of `reads` (a member's reads, each its clauses in gate order,
+    * `gateClausesAt`): a bound a member sits on passes four reads of four two times in three when
+    * it fails one read in ten, so the reads' clearances must predict the next read inside
+    * (`marginNeed`).  A read outside the bound counts with its negative clearance: the margin is
+    * the one test, where failing any of 40 reads would refuse a world at the 0.5% tail 18% of the
+    * time.  A clause with no reading on a read fails.  Empty under `MarginMinReads`. */
+  def margins(reads: Vector[Vector[GateClause]]): Vector[Margin] =
+    val n = reads.length
+    if n < MarginMinReads then Vector.empty
+    else
+      val need  = marginNeed(n)
+      val first = reads.head
+      require(reads.forall(r => r.length == first.length &&
+                r.zip(first).forall((a, b) => a.gate == b.gate && a.clause.label == b.clause.label)),
+              "the reads' gates differ")
+      first.indices.toVector.map { j =>
+        val c    = reads.map(_(j).clause.clearance)
+        val mean = c.sum / n
+        val sd   = math.sqrt(c.map(x => (x - mean) * (x - mean)).sum / (n - 1))
+        val read = c.forall(!_.isNaN)
+        Margin(first(j).gate, first(j).clause.label, first(j).cls, mean, sd, need,
+               read && (mean >= need * sd || mean == Double.PositiveInfinity))
+      }
 
   /** `-validate -seeds S1,S2,...`: the seeds, the arguments each read runs on (`-seeds` and
     * `-historyrows` taken out) and the file the pooled rows go to (`-historyrows`, empty without
@@ -17738,12 +17996,29 @@ $body
                "change them with -gate")
       System.exit(1)
 
+  /** The margin over `n` reads as the membership prints it: the need, each class's closest clause,
+    * and every clause short of the need as `THIN`. */
+  private def printMargins(ms: Vector[Margin], n: Int): Unit =
+    println()
+    println(f"  the margin: each clause's mean clearance over the $n%d reads at least " +
+            f"${marginNeed(n)}%.2f of their sds (Student's t, the next read outside its bound " +
+            f"${MarginTail * 100.0}%.1f%% of the time)")
+    for cls <- GateClass.values do
+      ms.filter(_.cls == cls).sortBy(_.sds)(using Ordering.Double.TotalOrdering).headOption.foreach { g =>
+        println(f"    ${cls.toString.toLowerCase}%-9s closest ${g.named}%s: mean ${g.mean}%.4f sd ${g.sd}%.4f " +
+                f"(${g.sds}%.2f sds)")
+      }
+    ms.filter(!_.ok).foreach { g =>
+      println(f"    THIN  ${g.named}%s: mean ${g.mean}%.4f sd ${g.sd}%.4f (${g.sds}%.2f sds)")
+    }
+
   /** THE VERDICT OVER SEVERAL READS (`-validate -seeds`), the set loop's and the recipe judge's:
     * each read printed as `-validate` prints it, then the membership over all of them -- each
-    * read's bound classes, and the record placed once among every read's histories pooled.  The
-    * exit code follows `-gate` as a single read's does, a class failing where any read fails its
-    * bounds, and fidelity where the pooled placement fails or is undecided.  With `-historyrows`
-    * the pooled rows are written. */
+    * read's bound classes, from `MarginMinReads` reads each clause's margin (`margins`), and the
+    * record placed once among every read's histories pooled.  The exit code follows `-gate` as a
+    * single read's does, a class failing where any read fails its bounds (under `MarginMinReads`
+    * reads) or a clause its margin (from there), and fidelity where the pooled placement fails or
+    * is undecided.  With `-historyrows` the pooled rows are written. */
   private def runSeeds(args: Vector[String], seeds: Vector[Long], rowsFile: String): Unit =
     val reads = seeds.zipWithIndex.map { (s, k) =>
       println(s"== read ${k + 1} of ${seeds.length}: seed $s")
@@ -17753,7 +18028,12 @@ $body
     val t0 = System.nanoTime
     val pooled = pooledHistoryRows(reads.map(_.hrows))
     val histories = pooled.headOption.fold(0)(_.reads.length)
-    val bad = GateClass.values.map(c => c -> reads.flatMap(r => r.bounds(c).map(f => s"seed ${r.seed}: $f"))).toMap
+    val ms        = margins(reads.map(_.clauses))
+    // from MarginMinReads the margin alone decides the bounds; under it, every read must pass
+    val margined  = reads.length >= MarginMinReads
+    val bad = GateClass.values.map(c => c -> (
+      if margined then ms.filter(m => !m.ok && m.cls == c).map(m => s"margin: ${m.named}")
+      else reads.flatMap(r => r.bounds(c).map(f => s"seed ${r.seed}: $f")))).toMap
     val pl = placement(pooled, PlacementAlpha)
     eprintln(f"placed the record among $histories%d histories in ${(System.nanoTime - t0) / 1e9}%.2f s")
     if rowsFile.nonEmpty then
@@ -17762,13 +18042,15 @@ $body
       eprintln(s"wrote ${dump.length} history rows x $histories pooled histories to $rowsFile")
     def pass(b: Boolean) = if b then "PASS" else "FAIL"
     println()
-    println(s"membership over ${reads.length} reads (seeds ${seeds.mkString(",")}): the bounds on every " +
-            "read, the placement once over their pooled histories")
+    println(s"membership over ${reads.length} reads (seeds ${seeds.mkString(",")}): " +
+            (if margined then "the bounds by the margin over the reads" else "the bounds on every read") +
+            ", the placement once over their pooled histories")
     reads.foreach { r =>
       println(f"  seed ${r.seed}%-12d realism ${pass(r.bounds(GateClass.Realism).isEmpty)}%s   " +
               f"mechanism ${pass(r.bounds(GateClass.Mechanism).isEmpty)}%s   " +
               f"fidelity bands ${pass(r.bounds(GateClass.Fidelity).isEmpty)}%s")
     }
+    if margined then printMargins(ms, reads.length)
     println()
     println(s"  the record among the ${reads.length} reads' $histories histories pooled:")
     printPlacement(pl, PlacementAlpha, reads.head.shown)
@@ -17780,7 +18062,7 @@ $body
     println(f"membership over ${reads.length}%d reads ($histories%d histories): conformal p ${pl.p}%.4f " +
             f"$verdict%s at $PlacementAlpha%.2f; realism ${pass(bad(GateClass.Realism).isEmpty)}%s " +
             f"mechanism ${pass(bad(GateClass.Mechanism).isEmpty)}%s fidelity ${pass(bad(GateClass.Fidelity).isEmpty)}%s " +
-            "on every read")
+            (if margined then "by the margin" else "on every read"))
     exitOnRequired(bad.updated(GateClass.Fidelity, bad(GateClass.Fidelity) ++ pl.failures), reads.head.gateReq)
 
   /** The command line over `args`.  Under `-validate -seeds` (`keep`) a read returns what the
@@ -18618,7 +18900,7 @@ $body
     println(f"  drawdowns of 15%%+      ${st.nEpisodes}%d, ${st.epPerPath}%.1f per path; ${st.censored}%d unrecovered at path end (included in depth)")
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")
     println(f"  recovery shape         V ${st.vCount}%d   balanced ${st.midCount}%d   U ${st.uCount}%d")
-    println(f"  bond refuge            vol ${st.bondVol * 100}%.1f%% (24y windows)   crash at 2%% infl ${pm(st.bondGrowth, 0, 1)}%s   per %% infl ${pm(st.bondInfl, 0, 1)}%s")
+    println(f"  bond refuge            vol ${st.bondVol * 100}%.1f%% (24y windows)   crash at 2%% infl ${pm(st.bondGrowth, 0, 1)}%s (net of drift ${pm(st.bondGrowthNet, 0, 1)}%s)   per %% infl ${pm(st.bondInfl, 0, 1)}%s")
     println(f"    TLT 2002-2026          crash at 2%% infl ${pm(BondTltRecord._1, 0, 1)}%s   per %% infl ${pm(BondTltRecord._2, 0, 1)}%s   (SPY's 6 declines of 15%%+; reported, not graded)")
     if st.bond10 > 0.0 then
       println(f"  10-year leg            duration ${st.bond10}%.1f   vol ${st.bond10Vol * 100}%.1f%% (${st.bond10Vol * 100 / st.bond10}%.3f per year of duration)   crash at 2%% infl ${pm(st.bond10Growth, 0, 1)}%s   per %% infl ${pm(st.bond10Infl, 0, 1)}%s   depth vs vol ${st.bond10DepthVsVol}%.3f   excess return ${pm(st.bond10Excess, 0, 2)}%s pts/yr")
@@ -18792,7 +19074,9 @@ $body
         println(una.mkString("      no anchor: ", ", ", ""))
       // the classes on the bounds alone, before the placement's failures join fidelity: what a read
       // of `-seeds` brings to the membership over every read
-      if keep then Some(SeedRead(seed, hrows, keptLedger, badBase, shown, gateReq))
+      if keep then
+        Some(SeedRead(seed, hrows, keptLedger, badBase, gateClausesAt(anchors, verdictSt, verdictBanded),
+                      shown, gateReq))
       else
         // exit code follows the classes this run declared it requires, nothing more
         exitOnRequired(bad, gateReq)

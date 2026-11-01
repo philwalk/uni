@@ -27,7 +27,7 @@ against 0.24 without the tie and the record's 0.45. Searched (0–4), written on
 bit-identical. The row's level (0.66 on 1962–2026) is one event, the 1979 shift of the vol regime
 after seventeen calm years, and no multiplier on the pressure reaches it without losing the bond
 vol rows: the S&P recipe reads 0.18 against the 0.25.0 recipe's 0.15, and the S&P set leaves the
-record at the 97th percentile of its pooled histories, where the 0.25.0 set had it.
+record at the 97.5th percentile of its pooled histories, the 0.25.0 set's 97.2nd.
 
 **The era rule reaches the bond stress share.** The Nasdaq set reports `bond stress share %`
 instead of grading it: on its 1999–2026 rate window the record reads 0.06 from one four-session
@@ -35,20 +35,82 @@ episode, too thin to band, as the S&P set reports the TIPS era's breakeven rows.
 it on the 64-year record. A set's era rows leave its search objective, its membership units and its
 band gates together (`fit_targets`); `-validate` lists them under the rows reported, not graded.
 
+**The leverage hazard: engagement a mechanism row, the level a placement row.** `macro cond
+concentrates the big peaks` passes above 1.1×, clear of a decoupled panel's 1.00 (±0.023 a read at
+200 × 100), in place of the four references' smallest hazard floored to 1.4×: a level bound in the
+mechanism class failed worlds whose leverage plainly concentrates the big peaks, a world at QQQ's
+own 1.44 on one read in thirty. The level is the placement row `macro cond hazard`, each
+history's quarter-horizon hazard against the set's record (CRSP's 2.72 over 36 years, QQQ's 1.44 over
+27), a history without a 20% peak lacking the record's event. The S&P recipe places the record at
+the 92nd–96th percentile of its histories, the Nasdaq's at the 46th–57th.
+
+**The margin.** Four reads of four pass a world that fails a bound on one read in ten two times in
+three, so a set's members are now also read on 40 fresh seeds and must clear every bound by the
+margin: each clause's mean clearance over the reads, a read outside its bound counting negative, at
+least 2.74 of their sds, Student's t prediction of the next read, so a member fails a bound on under
+0.5% of a consumer's reads. Every gate is its clauses, each a reading and the interval it must sit
+in, with its verdict unchanged. From 16 reads `-validate -seeds` decides the classes by the margin
+alone (failing any of 40 reads would refuse a world at the 0.5% tail 18% of the time; at four
+reads the margin would ask 6.53 sds), prints each class's closest clause and every clause short of
+it (`THIN`), and ends `membership over N reads` with `by the margin`.
+
+**The mechanism bounds audited.** Every mechanism bound sits clear of what the world reads without
+the mechanism, by three sds of that reading's noise at 200 × 100, or holds the noisiest member by
+the margin. `bonds rally in growth shocks` reads the bond's move over the equity's 15% declines net
+of the bond's own drift (its mean session log move over the path times the decline's sessions) and
+passes above 0.5: the gross move is carry over the decline on a bond with no link to the equity
+(5.6 on the S&P recipe's world with every link off, 2.9 on the Nasdaq's, against the old floor of
+3.0), while a bond read against a sibling path's declines nets −0.05 to 0.18 ±0.10. The gross level
+stays the placement row `bond crash at 2% infl`; `-validate` prints both. The correlation flip's
+rise above the calm correlation is 0.10 (was 0.15; the unlinked legs read 0.03 / 0.05 ±0.003, and
+the level is the placement row). The worst sessions' overnight gap share must exceed all sessions'
+by 0.015 (null 0 ±0.005 / ±0.008 a read), and the sector's and basket's worst-decile pair
+correlation the middle decile's by 0.05 (null 0 ±0.013). The conditions index's build-up passes
+above 0.60 (was 0.55; a decoupled panel reads 0.54 / 0.51 ±0.02, on which the old bound sat). The
+valuation spread's stationarity band is ±0.25 (was ±0.20; a stationary world's read sd runs to
+0.095, which the old band made a 3% failure rate per read). Sound as they stood: the inflation
+slope (−0.5; the unlinked legs −0.15 / −0.29 ±0.07), the disasters, the hazard, the valuation
+cycle's engagement and the gap's stationarity.
+
+**The vol process in the ledger.** Seven ledger rows (`ledgerrows-2026-11-01.tsv`, replacing
+`ledgerrows-2026-10-22.tsv`; the 29 earlier rows unchanged) grade the daily return decomposed
+into a standardized innovation and a volatility level, each on its own, so that a world cannot buy
+the level's persistence with the innovation's size or hide a tail count under one kurtosis: the
+0.25.1 S&P recipe reads the record's kurtosis (20.3 against 20.5, the largest session's statistic)
+with 113 sessions a century beyond 5% against the record's 85 and three times its 10%+ sessions. The
+innovation z is the session's log return over the sample sd of the 21 sessions before it:
+`z beyond 3 sds %` and `z beyond 4 sds %`. The level is the coupling's log rms over whole 21-session
+blocks: `log vol sd`, `vol doubling months %` (blocks whose level rose ln 2 or more over the block
+before) and `sessions beyond 5% a century`, one family with the innovation's two, judged by the
+record's one-year-block band; `log vol autocorr 1m` and `log vol autocorr 12m` their own family
+judged by where the record falls among the model's histories, since a one-year block resample
+breaks the blocks' order and its band is the no-persistence null. What they read on the 0.25.1
+recipes at 200 paths by 100 years (record in parentheses): S&P `z beyond 3 sds %` 1.25 (1.44),
+`vol doubling months %` 3.0 (3.7), `log vol sd` 0.42 (0.46), `log vol autocorr 12m` 0.15 (0.24);
+Nasdaq `z beyond 4 sds %` 0.19 (0.34), `z beyond 3 sds %` 1.00 (1.34), `vol doubling months %` 2.1
+(3.7), `sessions beyond 5% a century` 367 (253), `log vol sd` 0.43 (0.44). The model's large
+sessions arrive where the level is already high; the record's arrive more often from calm. Both
+twins; `record_bands -ledgerrows` writes the family; the ledger table (`tmp/rulers/ledger-rows.tsv`)
+carries the rows' scales, votes and knees from `record_bands -scales`. Ledger scores are not
+comparable across this change: re-score, the rows being seven more.
+
 **The 0.25.1 recipes and sets.** `0.25.1-sp500` and `0.25.1-nasdaq` are the 0.25.0 recipes under
 the one-expectation form (`-yieldanchor` 0.73 / 0.63) and the vol regime (`-termpress` 1),
 re-solved around them: on both, the expectation's anchoring, the calm vol, the CPI noise exponent,
 the policy rule's growth weight, the rate's mean and the refuge; on the S&P the term premium and the
 bond's news and slow legs; on the Nasdaq the breakeven premium's innovation, the yield's beta, the
 vol feedback and the leverage gain. Every dial that read no worse at the 0.25.0 value returned to
-it. On the judge's seeds 38.5 against the 0.25.0 S&P recipe's 45.8, and 34.4 against the 0.25.0
-Nasdaq recipe's 42.8 with the era row reported; membership p 0.93 / 0.91, every class passing on
-every read. Each recipe is member 0 of its set, and each set is the members one round of the loop
-admitted around its recipe; both score significantly better than the 0.25.0 sets under the release
-rule: `0.25.1-sp500.json` (59 members) 54.30 to 50.90, −3.40 [−4.18, −2.60], and
-`0.25.1-nasdaq.json` (37) 59.33 to 56.32, −3.01 [−4.57, −1.57]. Neither has a set miss; each
-outgoing set had one, the real yield's inflation link at 0.1% and 0.3%. They are the worlds to pin
-in place of the 0.25.0 recipes.
+it. On the judge's seeds 39.2 against the 0.25.0 S&P recipe's 46.5, and 34.4 against the 0.25.0
+Nasdaq recipe's 42.8 with the era row reported; membership p 0.94 / 0.91, every class passing on
+every read, and by the margin on 40 more (the closest clause, the valuation spread's stationarity,
+5.6 and 4.8 sds clear). Each recipe is member 0 of its set, and each set is the members one round
+of the loop admitted around its recipe that clear the margin under the audited bounds (the S&P
+loop's three short of it: two on the overnight margin, one on the net rally); both score
+significantly better than the 0.25.0 sets under the release rule, the hazard row among the rows:
+`0.25.1-sp500.json` (56 members) 55.36 to 51.97, −3.39 [−4.38, −2.50], and `0.25.1-nasdaq.json`
+(37) 59.55 to 56.55, −3.00 [−4.57, −1.56]. Each outgoing set had one set miss, the real yield's
+inflation link at 0.1% and 0.3%; neither new set has one. They are the worlds to pin in place of
+the 0.25.0 recipes.
 
 ## v0.25.0 — 2026-10-29
 
