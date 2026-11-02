@@ -11498,7 +11498,7 @@ pub fn vol_exit_resamples(
 /// ruled 2026-10-23), read on the record after `UNLAG_CUT` alone, where the lag correction leaves
 /// no lag-1 to read, and on each history of that many sessions (`LedgerRecords::lag1_sessions`).
 /// The records in `ledgerrows-2026-11-01.tsv`.
-pub const LEDGER_ROWS: [&str; 36] = [
+pub const LEDGER_ROWS: [&str; 38] = [
     "vol-exit 1x edge 1.0/1.5 pts/yr",
     "vol-exit 3x edge 1.0/1.5 pts/yr",
     "vol-exit 1x edge 1.0/2.0 pts/yr",
@@ -11534,16 +11534,26 @@ pub const LEDGER_ROWS: [&str; 36] = [
     "sessions beyond 5% a century",
     "log vol autocorr 1m",
     "log vol autocorr 12m",
+    "z beyond 3 sds calm/high",
+    "vol state p99 %",
     "return lag-1 autocorr",
 ];
 /// The ledger rows' families, as `LEDGER_ROWS` lays them out: the surface, the parts, the coupling,
-/// the declines, the vol process's innovation and level, the level's persistence, the one-day
-/// reversion.
-pub const LEDGER_FAMILIES: [std::ops::Range<usize>; 7] =
-    [0..14, 14..24, 24..27, 27..28, 28..33, 33..35, 35..36];
+/// the declines, the vol process's innovation and level, the level's persistence, the state
+/// profile, the one-day reversion.
+pub const LEDGER_FAMILIES: [std::ops::Range<usize>; 8] = [
+    0..14,
+    14..24,
+    24..27,
+    27..28,
+    28..33,
+    33..35,
+    35..37,
+    37..38,
+];
 /// The ledger rows read on the volatility-state window (`ledger_readings_of`): all but the
 /// one-day reversion.
-pub const LEDGER_STATE_ROWS: usize = 35;
+pub const LEDGER_STATE_ROWS: usize = 37;
 /// THE EXIT'S SURFACE: (hold below, cash at) besides the production pair, as decimals of the
 /// trailing sd.
 pub const VOL_EXIT_GRID: [(f64, f64); 7] = [
@@ -11882,6 +11892,41 @@ fn vol_process_of(r: &[f64]) -> [f64; 7] {
     ]
 }
 
+/// THE STATE PROFILE (`LEDGER_ROWS`' seventh family, 2026-11-02): where the innovation's large
+/// sessions fall in the vol state, and how high the state runs. On `vol_process_of`'s z and
+/// trailing sd (s_t the sample sd of the 21 sessions before t, a zero sd leaving the session
+/// out), the sessions ranked by s_t, ties in session order: the share beyond 3 sds among the
+/// lowest three tenths over the share among the highest three tenths, each count plus a half so
+/// a high group without one still reads (the record's 3.1 — its surprises are relatively largest
+/// in calm months; a model whose surprises scale with the state reads 2.2); and the 99th
+/// percentile of s_t by nearest rank, annualised in percent (the record's 45; a model whose
+/// crises run hotter reads 53 on the same state distribution below it). Neither is visible to the
+/// unconditional tail rows. NaN under ten sessions.
+fn vol_state_profile_of(r: &[f64]) -> [f64; 2] {
+    const W: usize = 21;
+    let mut sz: Vec<(f64, f64)> = Vec::with_capacity(r.len());
+    for t in W..r.len() {
+        let x = &r[t - W..t];
+        let mean = scala_sum(x.iter().copied()) / W as f64;
+        let var = scala_sum(x.iter().map(|v| (v - mean) * (v - mean))) / (W - 1) as f64;
+        let sd = var.sqrt();
+        if sd > 0.0 {
+            sz.push((sd, r[t] / sd));
+        }
+    }
+    let m = sz.len();
+    if m < 10 {
+        return [f64::NAN, f64::NAN];
+    }
+    let mut order: Vec<usize> = (0..m).collect();
+    order.sort_by(|&a, &b| sz[a].0.total_cmp(&sz[b].0));
+    let g = 3 * m / 10;
+    let beyond = |ix: &[usize]| ix.iter().filter(|&&i| sz[i].1.abs() > 3.0).count() as f64 + 0.5;
+    let ratio = beyond(&order[..g]) / beyond(&order[m - g..]);
+    let p99 = sz[order[(99 * m).div_ceil(100) - 1]].0 * (DAYS_PER_YEAR as f64).sqrt() * 100.0;
+    [ratio, p99]
+}
+
 /// The ledger rows read on the volatility-state window (`LEDGER_STATE_ROWS`) on one record or
 /// path's volatility-state sessions.
 #[must_use]
@@ -11893,6 +11938,7 @@ pub fn ledger_readings_of(d: &[VolStateDay]) -> [f64; LEDGER_STATE_ROWS] {
     out[24..27].copy_from_slice(&vol_coupling_of(&r));
     out[27] = declines_of(&r);
     out[28..35].copy_from_slice(&vol_process_of(&r));
+    out[35..37].copy_from_slice(&vol_state_profile_of(&r));
     out
 }
 
@@ -11961,16 +12007,16 @@ pub fn ledger_lag1_resamples(
     block_resamples(r, block_years, resamples, seed, |x| [ledger_lag1_of(x)])
 }
 
-/// THE LEDGER ROWS' RECORDS (`ledgerrows-2026-11-01.tsv`): a set's reading of every `LEDGER_ROWS`
+/// THE LEDGER ROWS' RECORDS (`ledgerrows-2026-11-02.tsv`): a set's reading of every `LEDGER_ROWS`
 /// row, and the banded rows' resamples and joint bands, which they are judged by (`model@`): the
-/// coupling's, the vol process's innovation and level and the one-day reversion's; the surface,
-/// the parts, the declines and the level's persistence are judged by where the record falls among
-/// the model's histories (`record@`).
+/// coupling's, the vol process's innovation and level, the state profile's and the one-day
+/// reversion's; the surface, the parts, the declines and the level's persistence are judged by
+/// where the record falls among the model's histories (`record@`).
 /// `lag1_sessions` is the record's session count after `UNLAG_CUT`, the length the model's
 /// histories of the reversion are read at.
 pub struct LedgerRecords {
-    pub record: [f64; 36],
-    pub bands: [RecordBand; 9],
+    pub record: [f64; 38],
+    pub bands: [RecordBand; 11],
     pub lag1_sessions: usize,
 }
 
@@ -11980,7 +12026,7 @@ const NASDAQ_LEDGER: LedgerRecords = LedgerRecords {
         1.144072, 8.408481, 1.057782, 9.765416, 0.673300, 6.302301, 50.038610, 15.615003,
         45.000000, 13.078909, 13.325448, 52.052475, 34.565455, 63.888889, 0.671685, -1.601635,
         -0.285806, -0.377615, -1.579370, 69.402368, 1.340024, 0.336385, 0.442641, 3.707995,
-        252.624621, 0.680897, 0.283904, -0.056147,
+        252.624621, 0.680897, 0.283904, 2.956044, 68.378600, -0.056147,
     ],
     bands: [
         RecordBand {
@@ -12076,6 +12122,29 @@ const NASDAQ_LEDGER: LedgerRecords = LedgerRecords {
             joint: (106.879647, 474.712200),
         },
         RecordBand {
+            name: "z beyond 3 sds calm/high",
+            record: 2.956044,
+            q: [
+                1.715232, 2.104000, 2.327434, 2.449541, 2.541284, 2.614679, 2.685393, 2.747573,
+                2.810526, 2.868132, 2.924051, 2.979381, 3.043011, 3.105263, 3.168675, 3.241758,
+                3.315789, 3.408602, 3.527473, 3.675325, 3.933333, 4.462687, 6.396226,
+            ],
+            joint_c: 0.487025,
+            joint: (2.132743, 4.380282),
+        },
+        RecordBand {
+            name: "vol state p99 %",
+            record: 68.378600,
+            q: [
+                40.143578, 47.365891, 51.442709, 54.638218, 56.395357, 57.755826, 59.005220,
+                60.375470, 63.101719, 64.909508, 65.609357, 67.005173, 68.378600, 68.916566,
+                69.505861, 70.326396, 71.677017, 73.048513, 74.053435, 74.798767, 77.336628,
+                79.525775, 89.253497,
+            ],
+            joint_c: 0.487025,
+            joint: (48.016578, 79.308504),
+        },
+        RecordBand {
             name: "return lag-1 autocorr",
             record: -0.056147,
             q: [
@@ -12097,7 +12166,7 @@ const SP500_LEDGER: LedgerRecords = LedgerRecords {
         -0.216482, 0.698917, -0.302807, 0.922389, 0.237333, 1.701461, 25.069084, 5.311153,
         45.000000, 9.827473, 12.007971, 36.010443, 32.145166, 66.666667, 0.181760, -1.457118,
         -0.410259, -0.530453, -3.383634, 38.942546, 1.442148, 0.370207, 0.455485, 3.716609,
-        84.839119, 0.657588, 0.238687, -0.078768,
+        84.839119, 0.657588, 0.238687, 3.089888, 44.921773, -0.078768,
     ],
     bands: [
         RecordBand {
@@ -12191,6 +12260,29 @@ const SP500_LEDGER: LedgerRecords = LedgerRecords {
             ],
             joint_c: 0.494025,
             joint: (27.816105, 176.632264),
+        },
+        RecordBand {
+            name: "z beyond 3 sds calm/high",
+            record: 3.089888,
+            q: [
+                1.696296, 2.097744, 2.321101, 2.459459, 2.557522, 2.643564, 2.714286, 2.784946,
+                2.849462, 2.913978, 2.978947, 3.044944, 3.114943, 3.189474, 3.263736, 3.351648,
+                3.441558, 3.549451, 3.691358, 3.867470, 4.138462, 4.762712, 7.046512,
+            ],
+            joint_c: 0.486650,
+            joint: (2.136000, 4.672131),
+        },
+        RecordBand {
+            name: "vol state p99 %",
+            record: 44.921773,
+            q: [
+                30.733887, 35.097391, 37.104677, 38.751942, 39.706089, 40.533885, 40.783606,
+                41.291229, 42.096203, 42.742470, 43.087646, 44.260515, 45.121930, 45.497676,
+                46.947711, 48.235502, 49.350873, 50.258986, 52.860976, 57.203370, 66.667410,
+                73.627851, 84.088667,
+            ],
+            joint_c: 0.486650,
+            joint: (35.353097, 72.089508),
         },
         RecordBand {
             name: "return lag-1 autocorr",
@@ -34576,7 +34668,7 @@ mod bubble_ramp_tests {
     }
 }
 
-/// THE LEDGER ROWS (`LEDGER_ROWS`, `ledgerrows-2026-11-01.tsv`): the shipped records re-derived from
+/// THE LEDGER ROWS (`LEDGER_ROWS`, `ledgerrows-2026-11-02.tsv`): the shipped records re-derived from
 /// the fixture; the surface's reader at the production pair is `vol_exit_of`'s to the bit; the
 /// parts, the coupling, the declines, the vol process and the ruin rule on series built to show
 /// them; and the rows never reach the placement.
@@ -34585,7 +34677,7 @@ mod ledger_row_tests {
     use super::*;
 
     fn fixture() -> Vec<Vec<String>> {
-        std::fs::read_to_string("../test-data/equity-anchors/ledgerrows-2026-11-01.tsv")
+        std::fs::read_to_string("../test-data/equity-anchors/ledgerrows-2026-11-02.tsv")
             .expect("fixture")
             .lines()
             .filter(|l| !(l.starts_with('#') || l.trim().is_empty()))
@@ -34610,11 +34702,13 @@ mod ledger_row_tests {
                 let num = |i: usize| r[i].parse::<f64>().expect("number");
                 assert_eq!(r[1], LEDGER_ROWS[k], "{set}: row order");
                 assert_eq!(rec.record[k].to_bits(), num(ri).to_bits(), "{set} {}", r[1]);
-                let banded = [2, 4, 6].iter().any(|&f| LEDGER_FAMILIES[f].contains(&k));
+                let banded = [2, 4, 6, 7]
+                    .iter()
+                    .any(|&f| LEDGER_FAMILIES[f].contains(&k));
                 assert_eq!(
                     rec.bands.iter().any(|b| b.name == LEDGER_ROWS[k]),
                     banded,
-                    "{set} {}: the coupling, the innovation and level, and the reversion are the banded rows",
+                    "{set} {}: the coupling, the innovation and level, the state profile and the reversion are the banded rows",
                     r[1]
                 );
                 if let Some(b) = rec.bands.iter().find(|b| b.name == LEDGER_ROWS[k]) {
@@ -34893,6 +34987,56 @@ mod ledger_row_tests {
         let o = vol_process_of(one);
         assert!(o[0].is_nan() && o[2].is_nan() && o[3].is_nan() && o[5].is_nan());
         assert_eq!(o[4].to_bits(), 0.0f64.to_bits());
+    }
+
+    /// THE STATE PROFILE's reader: 4000 sessions alternating +-1% then +-3% from session 2000, so
+    /// the trailing sd is a calm or a wild constant (3979 sessions with one, the lowest and
+    /// highest three tenths 1193 each, calm ones first by session, wild ones last) and |z| stays
+    /// under 1 but at a spike. A 10% spike at session 500 is the one 3-sd session in the calm
+    /// group (ratio (1 + 0.5) / (0 + 0.5) = 3); a 30% spike at 3500 the one in the wild group
+    /// (1/3 alone, 1 with both); the 21 sessions after a spike carry an inflated sd and fall in
+    /// neither group. The 99th percentile by nearest rank is a wild session's sd (the 40th
+    /// highest, below the 21 inflated by the wild spike), annualised.
+    #[test]
+    fn the_state_profile_reads_spikes_by_their_state() {
+        let base = |i: usize| {
+            let a = if i < 2000 { 0.01 } else { 0.03 };
+            if i.is_multiple_of(2) { a } else { -a }
+        };
+        let mut r: Vec<f64> = (0..4000).map(base).collect();
+        let calm = {
+            let mut s = r.clone();
+            s[500] = 0.10;
+            vol_state_profile_of(&s)
+        };
+        r[3500] = 0.30;
+        let wild = vol_state_profile_of(&r);
+        r[500] = 0.10;
+        let both = vol_state_profile_of(&r);
+        assert_eq!(
+            calm[0].to_bits(),
+            3.0f64.to_bits(),
+            "calm spike {}",
+            calm[0]
+        );
+        assert_eq!(
+            wild[0].to_bits(),
+            (1.0f64 / 3.0).to_bits(),
+            "wild spike {}",
+            wild[0]
+        );
+        assert_eq!(both[0].to_bits(), 1.0f64.to_bits(), "both {}", both[0]);
+        // 21 alternating +-a: eleven of one sign and ten of the other
+        let a = 0.03f64;
+        let mean = a / 21.0;
+        let var = (11.0 * (a - mean) * (a - mean) + 10.0 * (a + mean) * (a + mean)) / 20.0;
+        let want = var.sqrt() * 252f64.sqrt() * 100.0;
+        assert!(
+            (both[1] - want).abs() < 1e-9,
+            "p99 {} against {want}",
+            both[1]
+        );
+        assert!(vol_state_profile_of(&r[..25]).iter().all(|v| v.is_nan()));
     }
 
     /// The model's histories: the one-day reversion read on each path's last `lag1_sessions`

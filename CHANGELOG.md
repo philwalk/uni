@@ -72,7 +72,7 @@ valuation spread's stationarity band is ±0.25 (was ±0.20; a stationary world's
 slope (−0.5; the unlinked legs −0.15 / −0.29 ±0.07), the disasters, the hazard, the valuation
 cycle's engagement and the gap's stationarity.
 
-**The vol process in the ledger.** Seven ledger rows (`ledgerrows-2026-11-01.tsv`, replacing
+**The vol process in the ledger.** Seven ledger rows (`ledgerrows-2026-11-02.tsv`, replacing
 `ledgerrows-2026-10-22.tsv`; the 29 earlier rows unchanged) grade the daily return decomposed
 into a standardized innovation and a volatility level, each on its own, so that a world cannot buy
 the level's persistence with the innovation's size or hide a tail count under one kurtosis: the
@@ -93,6 +93,18 @@ sessions arrive where the level is already high; the record's arrive more often 
 twins; `record_bands -ledgerrows` writes the family; the ledger table (`tmp/rulers/ledger-rows.tsv`)
 carries the rows' scales, votes and knees from `record_bands -scales`. Ledger scores are not
 comparable across this change: re-score, the rows being seven more.
+
+**The state profile in the ledger.** Two more rows, their own banded family in the same fixture,
+read where the innovation's large sessions fall in the vol state and how high the state runs,
+which the unconditional tail rows cannot see: `z beyond 3 sds calm/high`, the sessions ranked by
+the trailing 21-session sd, the share beyond 3 sds among the lowest three tenths over the share
+among the highest three tenths (each count plus a half); and `vol state p99 %`, the trailing sd's
+99th percentile by nearest rank, annualised. The record's large sessions are relatively largest
+in calm months (S&P 3.1, Nasdaq 3.0) and its state tops out at 45% on the S&P (68 on the long
+tech record); the 0.25.1 S&P recipe reads 2.2 and 53, its surprises scaling with the state and its
+crises running hotter on the same state distribution below them, a shape no dial was moved for
+because no row read it. Rust only: the Scala twin carries the vol-process rows and not these,
+so it does not read a 38-row ledger. Ledger scores are not comparable across this change either.
 
 **The cycle's increment in the vol state (`-cyclevol`).** The valuation cycle's daily innovation
 was a constant-sd Gaussian component of the return, 0.33% a session and 9% of the daily variance

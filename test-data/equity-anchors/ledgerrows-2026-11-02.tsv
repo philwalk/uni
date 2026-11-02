@@ -1,5 +1,6 @@
-# THE LEDGER ROWS (2026-10-22, PLAN row 64; the vol process added 2026-11-01): the consumer's production
-# rule, the coupling of the volatility with the price, the correction rate and the vol process, read on
+# THE LEDGER ROWS (2026-10-22, PLAN row 64; the vol process added 2026-11-01, the state profile 2026-11-02): the
+# consumer's production rule, the coupling of the volatility with the price, the correction rate, the vol
+# process and the state profile, read on
 # each set's volatility-state window the way `ledger_readings_of` reads a path. Scored by the gap ledger
 # and the search's ledger objective; NOT placement units.
 # `ledger_row_tests` re-derives the shipped literals (`ledger_records`) from this file.
@@ -45,6 +46,13 @@
 # log vol autocorr 12m            judged by where the record falls among the model's histories: a one-year
 #                                 block resample breaks the blocks' order, so the band printed here is the
 #                                 no-persistence null (the 12-block record 0.24-0.28 against -0.17..0.17)
+# z beyond 3 sds calm/high        THE STATE PROFILE: the sessions ranked by the trailing sd s_t (ties in session
+#                                 order), the share beyond 3 sds among the lowest three tenths over the share
+#                                 among the highest three tenths, each count plus a half. The record's large
+#                                 sessions are relatively largest in calm months; a model whose surprises scale
+#                                 with the state reads lower
+# vol state p99 %                 the 99th percentile of s_t by nearest rank, annualised in percent: how high
+#                                 the state runs, which the unconditional tail rows cannot see
 # return lag-1 autocorr           the demeaned lag-1 autocorrelation of daily log returns over the
 #                                 sessions after 1999-03-10 alone (the correction leaves it about zero
 #                                 before the cut); the model's on the last n sessions of each path, n
@@ -53,10 +61,11 @@
 # Banded like `volstate-2026-10-20.tsv`'s rows: 20000 one-year-block resamples (`NumPyRng`, seed
 # 20260918), each session's inputs kept together, read at `RECORD_BAND_PCTS`; jointC, jointLo and
 # jointHi a joint band at 0.05 over each family (`LEDGER_FAMILIES`: the surface, the parts, the
-# coupling, the declines, the vol process's innovation and level, the level's persistence, the one-day
-# reversion; the reversion's resamples are its own window's).
-# Only the coupling rows', the innovation-and-level family's and the reversion's bands are read
-# (`model@`); the others are judged by where the record falls among the model's histories (`record@`).
+# coupling, the declines, the vol process's innovation and level, the level's persistence, the state
+# profile, the one-day reversion; the reversion's resamples are its own window's).
+# Only the coupling rows', the innovation-and-level family's, the state profile's and the reversion's
+# bands are read (`model@`); the others are judged by where the record falls among the model's
+# histories (`record@`).
 #
 # nasdaq  the long tech record of `volstate-2026-10-20.tsv`: Ken French's daily HiTec industry through
 #         1999-03-10, then QQQ (Yahoo Finance, frozen), 1954-07-02..2026-08-20
@@ -109,6 +118,8 @@ nasdaq	vol doubling months %	HiTec+QQQ	1954-07-02..2026-08-20	18155	20000	3.7079
 nasdaq	sessions beyond 5% a century	HiTec+QQQ	1954-07-02..2026-08-20	18155	20000	252.624621	66.626274	115.207932	145.744974	165.177637	180.446158	192.938584	202.654916	212.371248	222.087579	230.415863	240.132195	249.848527	259.564858	267.893142	278.997521	290.101900	302.594327	316.474800	333.131369	355.340127	390.041311	456.667585	617.681080	0.493825	106.879647	474.712200
 nasdaq	log vol autocorr 1m	HiTec+QQQ	1954-07-02..2026-08-20	18155	20000	0.680897	0.449614	0.525354	0.559557	0.575670	0.586453	0.595307	0.602289	0.608581	0.614188	0.619496	0.624504	0.629389	0.634031	0.638962	0.643829	0.649190	0.654498	0.660824	0.667555	0.675627	0.687647	0.708411	0.752534	0.487275	0.530193	0.705502
 nasdaq	log vol autocorr 12m	HiTec+QQQ	1954-07-02..2026-08-20	18155	20000	0.283904	-0.240960	-0.154701	-0.111961	-0.089886	-0.074580	-0.062467	-0.051885	-0.042155	-0.033569	-0.024873	-0.017007	-0.008879	-0.000389	0.007880	0.015936	0.025028	0.035309	0.046388	0.059645	0.076216	0.101089	0.147057	0.287563	0.487275	-0.149708	0.140708
+nasdaq	z beyond 3 sds calm/high	HiTec+QQQ	1954-07-02..2026-08-20	18155	20000	2.956044	1.715232	2.104000	2.327434	2.449541	2.541284	2.614679	2.685393	2.747573	2.810526	2.868132	2.924051	2.979381	3.043011	3.105263	3.168675	3.241758	3.315789	3.408602	3.527473	3.675325	3.933333	4.462687	6.396226	0.487025	2.132743	4.380282
+nasdaq	vol state p99 %	HiTec+QQQ	1954-07-02..2026-08-20	18155	20000	68.378600	40.143578	47.365891	51.442709	54.638218	56.395357	57.755826	59.005220	60.375470	63.101719	64.909508	65.609357	67.005173	68.378600	68.916566	69.505861	70.326396	71.677017	73.048513	74.053435	74.798767	77.336628	79.525775	89.253497	0.487025	48.016578	79.308504
 nasdaq	return lag-1 autocorr	HiTec+QQQ	1999-03-11..2026-08-20	6904	20000	-0.056147	-0.181306	-0.122250	-0.099846	-0.089013	-0.081936	-0.076538	-0.072299	-0.068200	-0.064835	-0.061613	-0.058604	-0.055522	-0.052715	-0.049603	-0.046449	-0.043351	-0.040064	-0.036547	-0.032618	-0.027821	-0.020635	-0.009416	0.016560	0.475025	-0.110044	-0.015576
 sp500	vol-exit 1x edge 1.0/1.5 pts/yr	CRSP	1954-07-02..2026-06-30	18119	20000	-1.387045	-5.160281	-3.507197	-2.865954	-2.517716	-2.296416	-2.118268	-1.956360	-1.819881	-1.695148	-1.574975	-1.457412	-1.344348	-1.231620	-1.115146	-0.993611	-0.871733	-0.729549	-0.569054	-0.378958	-0.151261	0.190563	0.923216	2.896549	0.494775	-3.730086	1.219187
 sp500	vol-exit 3x edge 1.0/1.5 pts/yr	CRSP	1954-07-02..2026-06-30	18119	20000	-0.112506	-10.999944	-6.806863	-4.916720	-3.953518	-3.247807	-2.675893	-2.211703	-1.769988	-1.369325	-0.992341	-0.604210	-0.208441	0.163934	0.564078	0.987385	1.426391	1.953683	2.491652	3.150713	4.000878	5.308748	8.049726	17.130243	0.494775	-7.462106	9.035552
@@ -145,4 +156,6 @@ sp500	vol doubling months %	CRSP	1954-07-02..2026-06-30	18119	20000	3.716609	1.8
 sp500	sessions beyond 5% a century	CRSP	1954-07-02..2026-06-30	18119	20000	84.839119	13.908052	30.597715	43.114962	50.068988	55.632209	59.804625	63.977041	68.149456	70.931067	75.103483	79.275898	83.448314	86.229924	90.402340	94.574756	98.747171	104.310392	109.873613	116.827639	126.563276	140.471328	166.896628	251.735747	0.494025	27.816105	176.632264
 sp500	log vol autocorr 1m	CRSP	1954-07-02..2026-06-30	18119	20000	0.657588	0.419351	0.510227	0.538901	0.553681	0.563413	0.571405	0.577873	0.583448	0.588691	0.593550	0.598610	0.603259	0.607836	0.612449	0.617450	0.622392	0.627537	0.633316	0.639933	0.648117	0.660516	0.681939	0.724964	0.487275	0.514937	0.679140
 sp500	log vol autocorr 12m	CRSP	1954-07-02..2026-06-30	18119	20000	0.238687	-0.225847	-0.147921	-0.104692	-0.084420	-0.070092	-0.058113	-0.047844	-0.039081	-0.030784	-0.022345	-0.015007	-0.007432	0.000025	0.007889	0.015678	0.024022	0.033359	0.043891	0.055060	0.069969	0.092596	0.132336	0.236313	0.487275	-0.142325	0.127247
+sp500	z beyond 3 sds calm/high	CRSP	1954-07-02..2026-06-30	18119	20000	3.089888	1.696296	2.097744	2.321101	2.459459	2.557522	2.643564	2.714286	2.784946	2.849462	2.913978	2.978947	3.044944	3.114943	3.189474	3.263736	3.351648	3.441558	3.549451	3.691358	3.867470	4.138462	4.762712	7.046512	0.486650	2.136000	4.672131
+sp500	vol state p99 %	CRSP	1954-07-02..2026-06-30	18119	20000	44.921773	30.733887	35.097391	37.104677	38.751942	39.706089	40.533885	40.783606	41.291229	42.096203	42.742470	43.087646	44.260515	45.121930	45.497676	46.947711	48.235502	49.350873	50.258986	52.860976	57.203370	66.667410	73.627851	84.088667	0.486650	35.353097	72.089508
 sp500	return lag-1 autocorr	CRSP	1999-03-11..2026-06-30	6868	20000	-0.078768	-0.212521	-0.156709	-0.133466	-0.120490	-0.112126	-0.105297	-0.099191	-0.094093	-0.089413	-0.085101	-0.080744	-0.076783	-0.072544	-0.068239	-0.063678	-0.058796	-0.053612	-0.047885	-0.041730	-0.034152	-0.024196	-0.008531	0.022291	0.475025	-0.143689	-0.016222
