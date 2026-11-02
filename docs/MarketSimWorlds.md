@@ -300,7 +300,7 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 `worstRow` are that objective's readings. Every member of the three older sets starts at fair
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
-was searched under it. **The 0.25.1 sets** are the two to draw from now: `0.25.1-sp500.json` (56 members) and
+was searched under it. **The 0.25.1 sets** are the two to draw from now: `0.25.1-sp500.json` (72 members) and
 `0.25.1-nasdaq.json` (37), member 0 the recipe itself, every member one the set loop admitted under
 the membership rule on four fresh seeds at 200 × 100 that clears the margin on 40 more, its
 `coverageWeight` over those members, and scored against the 0.25.0 sets under the
@@ -805,6 +805,26 @@ drag net of the cycle) found no world that improves on it without moving other r
 Nasdaq recipe re-solved under the row (`0.24.4-nasdaq`) reaches its wings through the
 growth-extrapolation term with the cycle near 0 — see its recipe paragraph.
 
+**The increment in the vol state (`-cyclevol`, 0.25.1).** The cycle's daily innovation
+`cycle_sd × sqrt(1 − phi²)` is a constant: a Gaussian component of the return with no vol state,
+0.33% a session and 9% of the daily variance on the S&P recipe (0.26% and 2.6% on the Nasdaq's).
+The ledger's vol-process rows read what that costs: the standardized return's tail thinner than the
+record's (`z beyond 3 sds %` 1.25 against 1.44, outside its band), the level's dispersion and its
+doubling months short (`log vol sd` 0.42 against 0.46, `vol doubling months %` 3.0 against 3.7).
+Lowering the amplitude restores all three and loses the wings and the dispersion the swing exists
+for (cycleSd 0.19 → 0.04: the upper wing 4.8 → 3.5 months against 7.6, the lower 1.6 → 0.9 against
+6.7). With `-cyclevol 1` the innovation is multiplied by the session's conditional diffusion sd over
+its four-year rms, so the swing's amplitude is preserved and its re-rating lands in high-vol
+sessions as the record's valuation moves do: on the S&P recipe the four rows read at the record
+(1.36, 0.465, 4.0; `z beyond 4 sds %` 0.41 against 0.37) with the wings, the dispersion and the
+stationarity row where they were; the one new band miss is `clustering lag 1` (0.33 → 0.36, band to
+0.35), which the constant-sd component had been holding down and the recipe's re-solve returns to
+its band through the spiral's stress and the jump family. Inert on the Nasdaq recipe (z 1.00 → 1.03). What it
+does not move: the sessions beyond 5% a century (the level process's tail) and the Nasdaq's
+innovation gap, which the noise and bust channels carry. The power is a convention at 1 in both
+recipes, not a searched strength: the claim is the form of the increment, and a searched strength
+would land it at a compromise.
+
 ## The sector rows — the record ruler of a sector channel
 
 A rotation rule needs sector legs that persist the way the record's industries do, and the record
@@ -1294,6 +1314,7 @@ with it.
 | `-bustamp` | THE BUST SWING: when a 0.2-log drawdown opens under a peak that stood 0.5 log or more over the gap's 20-year mean, a months-long stationary swing of this amplitude is repriced the same session in the price and in perceived fair while the unwind keeps making new lows, with the recovery drag relieved and the amplifier blind to it — the record's mania bust, NDX 2000-02: two and a half years at 53% vol in five legs and rallies. The swing never carries the price nearer than 0.10 log to the running peak (a mania's unwind never re-attains its high), the unwind ends once the high is regained, and the state is cut to 0 once it is over. Own stream; 0 is bit-identical; the S&P default keeps 0 — [below](#the-bust-swing--bustamp) | 0 |
 | `-beliefleak` | THE BELIEFS' OWN FADE toward the fundamental, per year: the belief share stays `-beliefshare` at the daily scale and falls to share × mu/(mu + L) in the long run, which is what holds the residual gap stationary at a high share (0.2 on the default: drift −0.52 → −0.06, the variance-ratio profile untouched). 0 is bit-identical — [below](#the-valuation-cycle-as-a-state--cyclesd) | 0.2 |
 | `-cyclesd` / `-cycleyears` | THE VALUATION CYCLE AS A STATE: a slow stationary AR(1) in perceived fair with stationary sd S (log) and half-life Y (years), started from its own law so paths begin stationary, its move repriced the same session in the price; the beliefs track the gap net of it. Own stream; 0 is bit-identical — [below](#the-valuation-cycle-as-a-state--cyclesd) | 0.1 / 15 |
+| `-cyclevol` | THE CYCLE'S INCREMENT IN THE VOL STATE: the cycle's daily innovation times the session's conditional diffusion sd (the session sigma's factors × the spiral's amplification) over its four-year rms, to this power. At 1 the multiplier's mean square is 1, so the swing's stationary sd is preserved and the cycle re-rates in the vol state the rest of the return arrives in; the 0.25.1 recipes' convention. A constant-sd increment (0) is a Gaussian floor under the vol level, a third of a percent a session and 9% of the daily variance on the S&P recipe: it thins the standardized return's tail and damps the level's month-to-month doubling. A probe dial (set, never searched); written only when on; 0 is bit-identical — [below](#the-valuation-cycle-as-a-state--cyclesd) | 0 (off); 1 in the 0.25.1 recipes |
 | `-noiseasym` | the item-12 cascade: the diffusive noise times exp(g − Var g), g a cascade of the session's own diffusive draw — a fast attack into a decay at `-noiseasymphi`, capped by `-noiseasymcap`. Ships at 0: at every setting that closes part of what is left, something graded gives way — [below](#the-vol-response-to-a-fall) | 0 |
 | `-levpersist` | the leverage kick's own memory: at P the kick raises the following sessions too, through weights that sum to 1, so only the shape of the response moves. Closes the clustering hump and puts lag-1 clustering on the record's 0.298, at the cost of the lag-1 leverage correlation — [below](#the-vol-response-to-a-fall) | 0 |
 | `-stressscale` | THE AMPLIFIER's gain scale: the spiral's excess gain multiplied by (depth / 17.4)^E, so a thinner market's liquidity event is not proportionally larger than the reference world's. The record's crash count is volatility-flat across a fresh-start cross-section (`amplifier-2026-09-07.tsv`) where the model's `depth` sweep reads 1.8; the default world is unchanged at any E, and `0.24.0-nasdaq` runs at 0.5 | 0 |
@@ -2450,9 +2471,14 @@ under the one-expectation form (`-yieldanchor` 0.73 / 0.63) and the bond's vol r
 `-termvol` the calm era's innovation), the rate and bond side re-solved around them (on the Nasdaq the vol
 feedback and the leverage gain too) and every dial that read
 no worse at the 0.25.0 value returned to it; 39.2 and 34.4 on the judge's seeds against the 0.25.0 recipes'
-46.5 and 42.8 (the Nasdaq's with its era row reported), membership p 0.94 / 0.91. Each set is the members
-one round of the loop admitted around its recipe that clear the margin, 56 and 37, both significantly
-better than the 0.25.0 sets and neither with a set miss (the CHANGELOG has the numbers).
+46.5 and 42.8 (the Nasdaq's with its era row reported), membership p 0.94 / 0.91. The S&P's then carries
+the cycle's increment in the vol state (`-cyclevol` 1) with the spiral's stress and the jump family
+re-solved around it (`-stress` 3.03, `-jumpvar` 0.130, `-jumprate` 0.0023, `-jumpskew` 0.80, `-volofvol`
+0.017): on the 36-row ledger 40.5 against 42.3 for the recipe with the increment constant, the vol-process
+rows at the record, p 0.91. Each set is the members one round of the loop admitted around its recipe that
+clear the margin, 72 and 37, neither with a set miss; the Nasdaq's and the S&P's earlier 56-member set
+significantly better than the 0.25.0 sets, the 72-member set within sampling error of the 56 (the
+CHANGELOG has the numbers).
 
 **`0.25.0-sp500` and `0.25.0-nasdaq`** are each member 0 of its `0.25.0` set, a world admitted
 under the membership rule with every class passing on each of four fresh seeds at 200 × 100. The

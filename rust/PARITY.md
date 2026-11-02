@@ -167,7 +167,9 @@ The world block's optional keys are a second such table (`OPTIONAL_WORLD_KEYS` /
 `OptionalWorldKeys`): the keys a set member may omit, each with the value an absent key reads
 -- `volPullStep` 0, the row 65 probes `recessStep` and `recessSteps` 0, the linear vol answer's
 `declineVol` 0, `declineVolHalf` 5, `drawdownVol` 0 and `declineVolAttack` 0, and the rate side's
-`yieldAnchor` 0 (written after `expAnchor`) and `termPress` 0 (written after `termVol`). A key is
+`yieldAnchor` 0 (written after `expAnchor`), `termPress` 0 (written after `termVol`) and the
+cycle's `cycleVol` 0 (written after `cycleYears`; Rust only, the twin's gap logged, so the twin does
+not run a world with it on). A key is
 written only away from its off value (`declineVolHalf` only while `declineVol` is on,
 `declineVolAttack` only while either dial is), so adding a dial moves no frozen world's body or digest, and the
 loader appends each absent key after the body's own in the table's order, so both twins hand

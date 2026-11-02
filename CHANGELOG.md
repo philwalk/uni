@@ -94,23 +94,50 @@ twins; `record_bands -ledgerrows` writes the family; the ledger table (`tmp/rule
 carries the rows' scales, votes and knees from `record_bands -scales`. Ledger scores are not
 comparable across this change: re-score, the rows being seven more.
 
+**The cycle's increment in the vol state (`-cyclevol`).** The valuation cycle's daily innovation
+was a constant-sd Gaussian component of the return, 0.33% a session and 9% of the daily variance
+on the S&P recipe (0.26% and 2.6% on the Nasdaq's): a floor under the vol level that thinned the
+standardized return's tail and damped the level's doubling, and the cause the vol-process rows
+named. `-cyclevol P` multiplies the innovation by the session's conditional diffusion sd (the
+session sigma's factors × the spiral's amplification) over its four-year rms, to the power P; at
+1 the multiplier's mean square is 1, so the swing's stationary sd is preserved and the cycle
+re-rates in the vol state the rest of the return arrives in. On the S&P recipe at 1 the four rows
+move to the record together (`z beyond 3 sds %` 1.25 → 1.36 into its band, `z beyond 4 sds %`
+0.35 → 0.41, `log vol sd` 0.42 → 0.465, `vol doubling months %` 3.1 → 4.0, records 1.44 / 0.37 /
+0.46 / 3.7) with the wings, the dispersion and the stationarity row unmoved, where lowering the
+cycle's amplitude to the same rows loses the wings (4.8 → 3.5 and 1.6 → 0.9 months against 7.6 and
+6.7); the one new band miss is `clustering lag 1` (0.33 → 0.36, band to 0.35), which the recipe's
+re-solve returns to its band. Inert on the Nasdaq recipe. It does not move the sessions beyond 5% a
+century, the level process's tail. The power is the recipes' convention at 1 (a probe dial, set and
+never searched; the world key `cycleVol`, written only when on); 0 is bit-identical, so every
+earlier world reads as before. Rust only: the Scala twin does not carry the dial, so it does not run
+a world with it on.
+
 **The 0.25.1 recipes and sets.** `0.25.1-sp500` and `0.25.1-nasdaq` are the 0.25.0 recipes under
 the one-expectation form (`-yieldanchor` 0.73 / 0.63) and the vol regime (`-termpress` 1),
 re-solved around them: on both, the expectation's anchoring, the calm vol, the CPI noise exponent,
 the policy rule's growth weight, the rate's mean and the refuge; on the S&P the term premium and the
 bond's news and slow legs; on the Nasdaq the breakeven premium's innovation, the yield's beta, the
 vol feedback and the leverage gain. Every dial that read no worse at the 0.25.0 value returned to
-it. On the judge's seeds 39.2 against the 0.25.0 S&P recipe's 46.5, and 34.4 against the 0.25.0
-Nasdaq recipe's 42.8 with the era row reported; membership p 0.94 / 0.91, every class passing on
-every read, and by the margin on 40 more (the closest clause, the valuation spread's stationarity,
-5.6 and 4.8 sds clear). Each recipe is member 0 of its set, and each set is the members one round
-of the loop admitted around its recipe that clear the margin under the audited bounds (the S&P
-loop's three short of it: two on the overnight margin, one on the net rally); both score
-significantly better than the 0.25.0 sets under the release rule, the hazard row among the rows:
-`0.25.1-sp500.json` (56 members) 55.36 to 51.97, −3.39 [−4.38, −2.50], and `0.25.1-nasdaq.json`
-(37) 59.55 to 56.55, −3.00 [−4.57, −1.56]. Each outgoing set had one set miss, the real yield's
-inflation link at 0.1% and 0.3%; neither new set has one. They are the worlds to pin in place of
-the 0.25.0 recipes.
+it. On the judge's seeds and the 29-row ledger 39.2 against the 0.25.0 S&P recipe's 46.5, and 34.4
+against the 0.25.0 Nasdaq recipe's 42.8 with the era row reported; membership p 0.94 / 0.91, every
+class passing on every read, and by the margin on 40 more (the closest clause, the valuation
+spread's stationarity, 5.6 and 4.8 sds clear). The S&P recipe then carries the cycle's increment in
+the vol state (`-cyclevol` 1) with the spiral's stress and the jump family re-solved around it
+(`-stress` 3.03, `-jumpvar` 0.130, `-jumprate` 0.0023, `-jumpskew` 0.80, `-volofvol` 0.017; every
+other dial read no worse at its earlier value): on the 36-row ledger 40.5 against 42.3 for the
+same recipe with the increment constant, the vol-process rows at the record (`z beyond 3 sds %`
+1.33 in its band from 1.25, `z beyond 4 sds %` 0.41, `log vol sd` 0.46, `vol doubling months %`
+3.9, the wings and the dispersion unmoved), the bar's range and the 60-day variance ratio 0.03 and
+0.08 further from the record, membership p 0.91. Each recipe is member 0 of its set, and each set
+is the members one round of the loop admitted around its recipe that clear the margin under the
+audited bounds; both 0.25.1 sets score significantly better than the 0.25.0 sets under the release
+rule, the hazard row among the rows: the S&P's 56-member set 55.36 to 51.97, −3.39 [−4.38, −2.50],
+and `0.25.1-nasdaq.json` (37) 59.55 to 56.55, −3.00 [−4.57, −1.56]; `0.25.1-sp500.json` (72
+members, under the cycle convention) scores within sampling error of that 56-member set, 50.93 to
+51.21, +0.28 [−0.46, +1.09]. Each outgoing 0.25.0 set had one set miss, the real yield's inflation
+link at 0.1% and 0.3%; no 0.25.1 set has one. They are the worlds to pin in place of the 0.25.0
+recipes.
 
 ## v0.25.0 — 2026-10-29
 

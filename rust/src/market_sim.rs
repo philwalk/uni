@@ -2055,19 +2055,26 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     rows
 }
 
-/// `0.25.1-sp500`: member 0 of `0.25.1-sp500.json` (2026-10-30): the 0.25.0 S&P recipe under the
+/// `0.25.1-sp500`: member 0 of `0.25.1-sp500.json` (2026-11-01): the 0.25.0 S&P recipe under the
 /// one-expectation form (`yield_anchor` 0.73, where the record's link of 0.11 sits) and the bond's
 /// vol regime (`term_press` 1, `term_vol` the calm era's innovation), the rate and bond side
-/// re-solved around them and every dial that read no worse at the 0.25.0 value returned to it. On
-/// the ledger with the real yield's inflation link, the ex-post real rate's negative share and
-/// tenth percentile and the conditions index's hazard graded: 39.2 against the 0.25.0 recipe's 46.5
-/// on the judge's seeds, membership p 0.94, every class passing on every read and by the margin on
-/// 40 more.
+/// re-solved around them, then the cycle's increment in the vol state (`cycle_vol` 1) with the
+/// spiral's stress, the jump family and the vol of vol re-solved around it; every dial that read no
+/// worse at the earlier value returned to it. On the 36-row ledger 40.5 against 42.3 for the same
+/// recipe with the increment constant, the vol-process rows at the record (`z beyond 3 sds %` 1.33
+/// in its band, `log vol sd` 0.46, `vol doubling months %` 3.9), membership p 0.91, every class
+/// passing on every read and by the margin on 40 more.
 fn recipe_0251_sp500(mut w: World) -> World {
+    w.stress = 3.0298631;
     w.rate_mean = 0.064741312;
+    w.vol_of_vol = 0.016982764;
+    w.jump_skew = 0.79916463;
+    w.jump_var = 0.13021428;
+    w.jump_rate = 0.0022997084;
     w.news_bond = 0.47452643;
     w.news_bond_skip = 0.017489922;
     w.slow_bond_infl = 0.030234235;
+    w.cycle_vol = 1.0000000;
     w.term_premium = 0.069160855;
     w.term_vol = 0.0048085213;
     w.term_press = 1.0000000;
@@ -25995,6 +26002,7 @@ pub fn probe_dials() -> Vec<(&'static str, Setter, Getter)> {
             |w| w.recess_step_share,
         ),
         ("recessSteps", |w, x| w.recess_steps = x, |w| w.recess_steps),
+        ("cycleVol", |w, x| w.cycle_vol = x, |w| w.cycle_vol),
     ]
 }
 
