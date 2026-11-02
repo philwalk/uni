@@ -280,7 +280,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const EMIT_SCHEMA: u32 = 32;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
-/// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
+/// from the SPY/QQQ volume-on-range regression (`bars-2026-11-02.tsv`, whose rows the
 /// contract tests assert these against): elasticity of detrended log volume to the range's
 /// log-deviation from its slow normal; the down-day loading calibrated to the RESIDUAL
 /// +0.036 down-up; the slow idio component's persistence and variance share (acf5/acf1 =
@@ -2444,12 +2444,13 @@ fn recipe_0250_nasdaq(mut w: World) -> World {
     w.recess_transient = 0.15331538;
     w.noise_scale = 1.5578075;
     w.crowd_adjust = 0.98862035;
-    // THE VOLUME CHANNEL AT QQQ'S: the idiosyncratic sd that puts QQQ's record (volume sd 0.417,
-    // volume vs range 0.56; bars-2026-09-01.tsv, 1999-2026) at the least summed CRPS of the two
-    // rows over the set's members (the S&P's 0.34 read 3.84 against 0.27's 2.74 in the
-    // outgoing read's sd); less idio raises the volume-range correlation, so the two rows trade,
-    // and `VOL_SLOPE` (the range-driven share, frozen from the pooled SPY/QQQ fit) is where a
-    // joint fit would move next
+    // THE VOLUME CHANNEL AT QQQ'S: the idiosyncratic sd that puts QQQ's record (volume sd 0.416,
+    // volume vs range 0.49; bars-2026-11-02.tsv, 1999-2026) at the least summed CRPS of the two
+    // rows on the detrended statistic, the judge's four seeds (0.27 reads 0.68, 0.30 0.99, 0.34
+    // 2.0, 0.38 3.3): the sd sits at the record and any rise of the idio costs that row more than
+    // the correlation gains, so the refit of 2026-11-02 keeps the value the raw statistic chose
+    // (0.34 against 0.27 then read 3.84 against 2.74 over the set's members); `VOL_SLOPE` (the
+    // range-driven share, frozen from the pooled SPY/QQQ fit) is where a joint fit would move next
     w.vol_idio = 0.27;
     // the equity's discount read on the ten-year yield, as every 0.25.0 world holds it: the switch
     // is no longer searched, so the set's seed worlds inherit it from here
@@ -4484,7 +4485,7 @@ pub struct World {
     /// the gap. The bar's bridge then runs from the open over the remaining (1-w) of the
     /// variance, and the sign coupling reads the intraday return. 0 = the open is the prior
     /// close, bit-identical off; the record's overnight share of daily variance is 0.33 (SPY) /
-    /// 0.28 (QQQ), `bars-2026-09-01.tsv`, and the graded share includes the jumps, so the dial
+    /// 0.28 (QQQ), `bars-2026-11-02.tsv`, and the graded share includes the jumps, so the dial
     /// sits below it.
     pub overnight: f64,
     /// THE BASKET: N single names as observational second-pass instances of the primary —
@@ -10519,7 +10520,7 @@ pub struct SatStats {
 }
 
 /// The BAR channels' statistics — present only when the range channel ran. `vol_*` are NaN
-/// unless the volume channel ran too. Graded against `bars-2026-09-01.tsv`, whose rows the
+/// unless the volume channel ran too. Graded against `bars-2026-11-02.tsv`, whose rows the
 /// build-time suites already assert; these carry the same readings into the RUNTIME gate, so an
 /// emitted `logHigh`/`logLow`/`logVolume` is covered by the verdict travelling beside it.
 #[derive(Clone, Copy, Debug)]
@@ -17494,6 +17495,39 @@ fn macro_spreads(per: &[MacroPathRead]) -> ([(Spread, Spread, Spread); 9], Sprea
     (member_spread, spread_of(&hazard_per))
 }
 
+/// The volume rows' detrend window: the record's trailing 252-session median.
+const VOLUME_MEDIAN_WINDOW: usize = 252;
+
+/// THE VOLUME AS THE RECORD READS IT (`bars-2026-11-02.tsv`, 2026-11-02): ln volume less its
+/// trailing 252-session median, the session included, the first 251 sessions dropped. The median
+/// removes the share count's secular trend, which the model's turnover index does not carry, and
+/// with it the volume's slow movement with the vol regime, which it does; graded on the raw
+/// series the model's `bar volume vs range` read 0.07 above its own reading on the record's
+/// convention (the 0.25.1 Nasdaq recipe's histories, median 0.63 against 0.55), the sd under
+/// 0.002 apart. Each window's
+/// median by a sorted window kept across sessions (an even window's the mean of its two middles).
+#[must_use]
+pub fn detrended_log_volume(v: &[f64]) -> Vec<f64> {
+    let w = VOLUME_MEDIAN_WINDOW;
+    if v.len() < w {
+        return Vec::new();
+    }
+    let mut sorted: Vec<f64> = v[..w].to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let median = |s: &[f64]| 0.5 * (s[w / 2 - 1] + s[w / 2]);
+    let mut out = Vec::with_capacity(v.len() - w + 1);
+    out.push(v[w - 1] - median(&sorted));
+    for t in w..v.len() {
+        let gone = v[t - w];
+        let k = sorted.partition_point(|&s| s < gone);
+        sorted.remove(k);
+        let j = sorted.partition_point(|&s| s < v[t]);
+        sorted.insert(j, v[t]);
+        out.push(v[t] - median(&sorted));
+    }
+    out
+}
+
 fn bar_stats(sims: &[Path]) -> Option<BarStats> {
     if sims.is_empty() || sims[0].log_hi.is_empty() {
         return None;
@@ -17532,16 +17566,15 @@ fn bar_stats(sims: &[Path]) -> Option<BarStats> {
                 let mu = up.iter().sum::<f64>() / up.len() as f64;
                 md / mu
             });
-            let volume = (!s.log_volume.is_empty()).then(|| {
-                let mv = s.log_volume.iter().sum::<f64>() / s.log_volume.len() as f64;
-                let sd = (s
-                    .log_volume
-                    .iter()
-                    .map(|v| (v - mv) * (v - mv))
-                    .sum::<f64>()
-                    / s.log_volume.len() as f64)
-                    .sqrt();
-                (sd, pearson(&s.log_volume, &x))
+            let volume = (s.log_volume.len() > VOLUME_MEDIAN_WINDOW).then(|| {
+                // the record's convention: ln volume less its trailing 252-session median, the
+                // first 251 sessions dropped (`detrended_log_volume`), the range on the same
+                // sessions
+                let v = detrended_log_volume(&s.log_volume);
+                let mv = v.iter().sum::<f64>() / v.len() as f64;
+                let sd =
+                    (v.iter().map(|u| (u - mv) * (u - mv)).sum::<f64>() / v.len() as f64).sqrt();
+                (sd, pearson(&v, &x[x.len() - v.len()..]))
             });
             BarPath {
                 range_over_ccvol: mx / sr,
@@ -23153,13 +23186,13 @@ fn macro_row_histories(
 }
 
 /// The channel rows against the set's OWN index: the bars on the index's record window (SPY
-/// w1993, 8,467 sessions; QQQ w1999, 6,930), records from bars-2026-09-01.tsv (QQQ has no range vs
+/// w1993, 8,467 sessions; QQQ w1999, 6,930), records from bars-2026-11-02.tsv (QQQ has no range vs
 /// cc vol record); the sectors whole, against French's ten US industries, which are the S&P's own
 /// market and not the Nasdaq's, so the Nasdaq reads them ungraded; the satellite leg on its
 /// record window (`SAT_SESSIONS`), the QQQ/SPY relation both sets grade; and the dividend yield,
 /// each history's mean over the record's years against the set's anchored yield, when the dial is
 /// on.
-/// The bar rows' records (`BAR_ROWS`' order) from `bars-2026-09-01.tsv`: the S&P's on SPY
+/// The bar rows' records (`BAR_ROWS`' order) from `bars-2026-11-02.tsv`: the S&P's on SPY
 /// (`w1993`), the Nasdaq's on QQQ (`w1999`, which carries no range-over-vol record). The down/up
 /// range is the fixture's `rangeDownupIntraday`: a model bar spans the prior close to the close and
 /// its range is split by that bar's own return, which on the record is the open-to-close move.
@@ -23176,8 +23209,8 @@ const BAR_RECORDS_NASDAQ: [Option<f64>; 6] = [
     None,
     Some(0.71),
     Some(1.142),
-    Some(0.417),
-    Some(0.56),
+    Some(0.416),
+    Some(0.49),
     Some(0.28),
 ];
 
@@ -40671,7 +40704,7 @@ mod joint_coupling_tests {
 mod bars_anchor_tests {
     use super::*;
 
-    const BARS: &str = "../test-data/equity-anchors/bars-2026-09-01.tsv";
+    const BARS: &str = "../test-data/equity-anchors/bars-2026-11-02.tsv";
 
     /// `None` where the fixture is absent — the crate ships without `test-data/`, so a
     /// source-tarball build must not fail here.
@@ -40767,10 +40800,11 @@ mod bars_anchor_tests {
                 .collect();
             mroc.push(mean(&x) / sd(&r));
             racf.push(acf1(&x));
-            // The model's turnover index is trendless, so the record side's rolling-median
-            // detrend is a no-op up to noise here; the raw series is graded.
-            vsd.push(sd(&p.log_volume));
-            vcx.push(corr_of(&p.log_volume, &x));
+            // the record's convention (`detrended_log_volume`): the trailing median removes the
+            // volume's slow movement with the vol regime, 0.07 of the correlation
+            let v = detrended_log_volume(&p.log_volume);
+            vsd.push(sd(&v));
+            vcx.push(corr_of(&v, &x[x.len() - v.len()..]));
         }
         for (stat, got) in [
             ("rangeMeanOverCcvol", med4(mroc)),
@@ -43013,7 +43047,7 @@ mod bar_record_tests {
 
     #[test]
     fn the_bar_records_are_the_fixtures_with_the_intraday_down_up() {
-        let Some(rows) = fixture("bars-2026-09-01.tsv") else {
+        let Some(rows) = fixture("bars-2026-11-02.tsv") else {
             return;
         };
         let stats = [

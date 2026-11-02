@@ -94,6 +94,27 @@ twins; `record_bands -ledgerrows` writes the family; the ledger table (`tmp/rule
 carries the rows' scales, votes and knees from `record_bands -scales`. Ledger scores are not
 comparable across this change: re-score, the rows being seven more.
 
+**The `bar volume vs range` row reads one statistic on both sides.** The Nasdaq record's volume
+carried QQQ's 2:1 split of 2000-03-20: Yahoo's volume is in the shares of its day, so ln volume
+stepped by ln 2 across the 126 sessions until the trailing median caught up, the dot-com break's
+widest ranges, and the row read a co-movement the market never had. The volume rows are
+re-measured on the split-adjusted series (`bars-2026-11-02.tsv`, replacing `bars-2026-09-01.tsv`;
+the price rows and the `const` rows unchanged): `volCorrRange` 0.56 → 0.49, `volSd` 0.417 →
+0.416, the ungraded `volCorrAbsR` 0.44 → 0.39 and `volCorrVol21` 0.35 → 0.28. On the model's side
+the row correlated the raw log volume with the range where the record's convention is ln volume
+less its trailing 252-session median, the first 251 sessions dropped; the median removes the
+volume's slow movement with the vol regime, and so the raw reading sat 0.07 above the
+convention's on every world (`detrended_log_volume`, now the row's and the bars anchor tests'
+series; the sd moves under 0.002). Fixed on one side alone the row swings to the 55th percentile
+or to 0; fixed together, the 0.25.1 Nasdaq recipe reads 0.55 against the record's 0.49, the record
+at the 6th percentile of 3,200 histories over sixteen seeds, where it was: the model's volume
+follows the range more tightly than QQQ's, now a gap of the model's rather than of the ruler's.
+The recipe's `vol_idio`, fitted to the old pair, is refitted on the corrected one and stays at
+0.27: the volume sd sits at the record and any rise of the idio costs that row more than the
+correlation gains (the two rows' summed CRPS 0.68 at 0.27, 0.99 at 0.30, 2.0 at 0.34). The S&P
+row's model side falls by the same 0.07 to 0.52 against SPY's unchanged 0.54, the record at the
+71st percentile. Rust only; the Scala twin stays on the raw series and the earlier fixture.
+
 **The state profile in the ledger.** Two more rows, their own banded family in the same fixture,
 read where the innovation's large sessions fall in the vol state and how high the state runs,
 which the unconditional tail rows cannot see: `z beyond 3 sds calm/high`, the sessions ranked by
