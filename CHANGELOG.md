@@ -115,6 +115,11 @@ correlation gains (the two rows' summed CRPS 0.68 at 0.27, 0.99 at 0.30, 2.0 at 
 row's model side falls by the same 0.07 to 0.52 against SPY's unchanged 0.54, the record at the
 71st percentile. Rust only; the Scala twin stays on the raw series and the earlier fixture.
 
+**The search's candidate log carries the rows.** Under the ledger objective `cands.tsv` now holds
+every evaluated candidate's ledger vector, `crps:ROW`, `sign:ROW` and `model:ROW` per table row
+after its dials (NaN on a rejected read), where the archive held them for admitted members only:
+the data a surrogate of the rows over the dials is fitted on.
+
 **The state profile in the ledger.** Two more rows, their own banded family in the same fixture,
 read where the innovation's large sessions fall in the vol state and how high the state runs,
 which the unconditional tail rows cannot see: `z beyond 3 sds calm/high`, the sessions ranked by

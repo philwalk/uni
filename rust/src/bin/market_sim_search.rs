@@ -2408,6 +2408,33 @@ fn ledger_columns(table: &Ledger) -> String {
     s
 }
 
+/// The candidate log's ledger columns (`cands.tsv`): `crps:ROW`, `sign:ROW` and `model:ROW` for
+/// every row of the table, in table order; empty under the CRPS objective.
+fn ledger_row_columns(table: &Ledger) -> String {
+    let mut s = String::new();
+    for r in &table.rows {
+        let _ = write!(s, "\tcrps:{}\tsign:{}\tmodel:{}", r.name, r.name, r.name);
+    }
+    s
+}
+
+/// A read's ledger vector as the candidate log's cells, NaN where the read has none (rejected,
+/// or stopped at the bar); empty under the CRPS objective.
+fn ledger_vec_cells(v: Option<&Vec<[f64; 3]>>, table: &Ledger) -> String {
+    let mut s = String::new();
+    for k in 0..table.rows.len() {
+        let x = v.and_then(|v| v.get(k)).copied();
+        for j in 0..3 {
+            let _ = write!(
+                s,
+                "\t{}",
+                x.map_or_else(|| "NaN".to_string(), |x| x[j].to_string())
+            );
+        }
+    }
+    s
+}
+
 /// The ledger cells at full round-trip precision (`{}`), not the archive's eight digits: the
 /// re-pick tool's weighted sum of the stored CRPS and sign shares must equal the `ledger` cell.
 fn ledger_cells(m: &Member, table: &Ledger, tier: &str) -> String {
@@ -5093,12 +5120,15 @@ fn main() {
                 Some(f) if f.is_empty() => "pass",
                 Some(_) => "fail",
             };
+            // and, under the ledger objective, the read's ledger vector: every candidate's rows,
+            // the surrogate's data (`ledger_vec_cells`; NaN on a rejected read)
             cands.push(format!(
-                "{g}\t{evals}\t{}\t{}\t{took}\t{staged}\t{secs:.3}\t{}\t{}",
+                "{g}\t{evals}\t{}\t{}\t{took}\t{staged}\t{secs:.3}\t{}\t{}{}",
                 parent.name,
                 r.feasible,
                 g8(r.held),
-                child_dials.join("\t")
+                child_dials.join("\t"),
+                ledger_vec_cells(r.ledger_vec.as_ref(), &ledger)
             ));
             if obj.stage_check {
                 stage_log.push(format!(
@@ -5121,8 +5151,9 @@ fn main() {
             &c.out,
             "cands.tsv",
             &format!(
-                "gen\teval\tparent\tfeasible\tadmitted\tstage\tseconds\theld\t{}",
-                names().join("\t")
+                "gen\teval\tparent\tfeasible\tadmitted\tstage\tseconds\theld\t{}{}",
+                names().join("\t"),
+                ledger_row_columns(&ledger)
             ),
             &cands,
         );
