@@ -300,7 +300,7 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 `worstRow` are that objective's readings. Every member of the three older sets starts at fair
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
-was searched under it. **The 0.25.1 sets** are the two to draw from now: `0.25.1-sp500.json` (72 members) and
+was searched under it. **The 0.25.1 sets** are the two to draw from now: `0.25.1-sp500.json` (65 members) and
 `0.25.1-nasdaq.json` (68), member 0 the recipe itself, every member one the set loop admitted under
 the membership rule on four fresh seeds at 200 × 100 that clears the margin on 40 more, its
 `coverageWeight` over those members, and scored against the 0.25.0 sets under the
@@ -2476,9 +2476,11 @@ the cycle's increment in the vol state (`-cyclevol` 1) with the spiral's stress 
 re-solved around it (`-stress` 3.03, `-jumpvar` 0.130, `-jumprate` 0.0023, `-jumpskew` 0.80, `-volofvol`
 0.017): on the 36-row ledger 40.5 against 42.3 for the recipe with the increment constant, the vol-process
 rows at the record, p 0.91; the Nasdaq's carries the convention too, inert on its rows. Each set is the
-members one round of the loop admitted around its recipe that clear the margin, 72 and 68, neither with a
-set miss; the sets bred before the convention (56 and 37) significantly better than the 0.25.0 sets, the
-sets bred under it within sampling error of those (the CHANGELOG has the numbers).
+members one round of the loop admitted around its recipe that clear the margin, 65 and 68, neither with a
+set miss (the S&P loop holds the vol feedback and the jump rate at the recipe's values, which carry the
+valuation wings the convention's objective no longer holds up); the sets bred before the convention (56 and
+37) significantly better than the 0.25.0 sets, the sets bred under it within sampling error of those (the
+CHANGELOG has the numbers).
 
 **`0.25.0-sp500` and `0.25.0-nasdaq`** are each member 0 of its `0.25.0` set, a world admitted
 under the membership rule with every class passing on each of four fresh seeds at 200 × 100. The
