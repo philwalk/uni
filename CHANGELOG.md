@@ -129,15 +129,17 @@ other dial read no worse at its earlier value): on the 36-row ledger 40.5 agains
 same recipe with the increment constant, the vol-process rows at the record (`z beyond 3 sds %`
 1.33 in its band from 1.25, `z beyond 4 sds %` 0.41, `log vol sd` 0.46, `vol doubling months %`
 3.9, the wings and the dispersion unmoved), the bar's range and the 60-day variance ratio 0.03 and
-0.08 further from the record, membership p 0.91. Each recipe is member 0 of its set, and each set
-is the members one round of the loop admitted around its recipe that clear the margin under the
-audited bounds; both 0.25.1 sets score significantly better than the 0.25.0 sets under the release
-rule, the hazard row among the rows: the S&P's 56-member set 55.36 to 51.97, −3.39 [−4.38, −2.50],
-and `0.25.1-nasdaq.json` (37) 59.55 to 56.55, −3.00 [−4.57, −1.56]; `0.25.1-sp500.json` (72
-members, under the cycle convention) scores within sampling error of that 56-member set, 50.93 to
-51.21, +0.28 [−0.46, +1.09]. Each outgoing 0.25.0 set had one set miss, the real yield's inflation
-link at 0.1% and 0.3%; no 0.25.1 set has one. They are the worlds to pin in place of the 0.25.0
-recipes.
+0.08 further from the record, membership p 0.91. The Nasdaq recipe carries the convention too,
+inert on its rows (its innovation gap is the noise and bust channels'). Each recipe is member 0 of
+its set, and each set is the members one round of the loop admitted around its recipe that clear
+the margin under the audited bounds. The sets bred before the convention scored significantly
+better than the 0.25.0 sets under the release rule, the hazard row among the rows: the S&P's
+56-member set 55.36 to 51.97, −3.39 [−4.38, −2.50], the Nasdaq's 37-member set 59.55 to 56.55,
+−3.00 [−4.57, −1.56]. The sets bred under it score within sampling error of those: `0.25.1-sp500.json`
+(72 members) 50.93 to 51.21, +0.28 [−0.46, +1.09], and `0.25.1-nasdaq.json` (68) 56.32 to 57.39,
++1.07 [−0.45, +2.52], the rows scored predating the vol-process rows. Each outgoing 0.25.0 set had
+one set miss, the real yield's inflation link at 0.1% and 0.3%; no 0.25.1 set has one. They are the
+worlds to pin in place of the 0.25.0 recipes.
 
 ## v0.25.0 — 2026-10-29
 

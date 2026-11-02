@@ -2091,17 +2091,19 @@ fn recipe_0251_sp500(mut w: World) -> World {
     w
 }
 
-/// `0.25.1-nasdaq`: member 0 of `0.25.1-nasdaq.json` (2026-10-30), as the S&P's: `yield_anchor`
+/// `0.25.1-nasdaq`: member 0 of `0.25.1-nasdaq.json` (2026-11-01), as the S&P's: `yield_anchor`
 /// 0.63 and `term_press` 1, the rate and bond side re-solved around them, on the Nasdaq's own era
 /// the breakeven premium's innovation too, and every dial that read no worse at the 0.25.0 value
-/// returned to it. 34.4 against the 0.25.0 recipe's 42.8 on the judge's seeds with
-/// `bond stress share %` reported (`NASDAQ_ERA_ROWS`), membership p 0.91, every class passing on
-/// every read and by the margin on 40 more.
+/// returned to it; the cycle's increment in the vol state (`cycle_vol` 1) as the form's convention,
+/// inert on this recipe's rows. 34.4 against the 0.25.0 recipe's 42.8 on the judge's seeds and the
+/// 29-row ledger with `bond stress share %` reported (`NASDAQ_ERA_ROWS`), membership p 0.91, every
+/// class passing on every read and by the margin on 40 more.
 fn recipe_0251_nasdaq(mut w: World) -> World {
     w.rate_mean = 0.034508216;
     w.news_bond = 0.24905600;
     w.news_bond_skip = 0.26802600;
     w.slow_bond_infl = 0.48413900;
+    w.cycle_vol = 1.0000000;
     w.term_premium = 0.090792400;
     w.term_vol = 0.0056821201;
     w.term_press = 1.0000000;
@@ -2116,7 +2118,6 @@ fn recipe_0251_nasdaq(mut w: World) -> World {
     w.refuge = 0.10451699;
     w.refuge_days = 0.41558600;
     w.lev_gain = 6.3588392;
-    w.margin = 0.0046249100;
     w
 }
 
