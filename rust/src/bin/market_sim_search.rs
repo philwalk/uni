@@ -1104,6 +1104,249 @@ fn candidate_seed(base: i64, slot: u64) -> u64 {
 const RACE_WINDOW: usize = 256;
 const RACE_WARMUP: usize = 32;
 
+/// THE SURROGATE SCREEN (`-screen M`): a generation breeds M times its population from the
+/// archive it starts with, predicts each child's ledger readings from the run's own last
+/// `SCREEN_WINDOW` full reads (a kernel-ridge regression per row on the dials in their search
+/// coordinates, standardised; an RBF kernel at the median pairwise distance, ridge
+/// `SCREEN_RIDGE`), prices each predicted reading by a one-dimensional smoother of the window's
+/// readings against their row contributions (the row's score is a V around the record, which a
+/// fit in the dials does not resolve: the accuracy read of 2026-11-02 put the direct fit's rank
+/// correlation at 0.56 and the composed one's at 0.80), sums them, and reads in full the best
+/// predicted, less one child in `SCREEN_EXPLORE` taken in breeding order unscreened so the
+/// surrogate's own manifold cannot close the search. No screening until `SCREEN_WARMUP` reads
+/// are in; the window is in memory and starts empty on a resume. `screen.tsv` records each read
+/// child's prediction, its rank among the proposals and what the read then found: the
+/// surrogate's accuracy inside the run.
+const SCREEN_WINDOW: usize = 512;
+const SCREEN_WARMUP: usize = 64;
+const SCREEN_EXPLORE: usize = 8;
+const SCREEN_RIDGE: f64 = 0.1;
+const SCREEN_DIST_SAMPLE: usize = 128;
+
+/// A read's ledger readings regressed on the dials: the standardised coordinates of the window's
+/// reads, the kernel's scale, the fitted coefficients per row, and per row the window's
+/// (reading, contribution) pairs with the smoother's bandwidth.
+struct Surrogate {
+    dims: Vec<usize>,
+    mean: Vec<f64>,
+    sd: Vec<f64>,
+    x: Vec<Vec<f64>>,
+    two_ls2: f64,
+    cols: Vec<usize>,
+    ymean: Vec<f64>,
+    alpha: Vec<Vec<f64>>,
+    pairs: Vec<Vec<(f64, f64)>>,
+    bw: Vec<f64>,
+}
+
+/// A dial vector in its search coordinates, each as a fraction of its dial's width.
+fn dial_coords(rs: &[Range], d: &[f64]) -> Vec<f64> {
+    rs.iter()
+        .enumerate()
+        .map(|(i, r)| coord(r, d[i]) / coord_width(r))
+        .collect()
+}
+
+fn sq_dist(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
+}
+
+/// The lower Cholesky factor of a symmetric positive-definite matrix, in place; None when it is
+/// not positive-definite.
+fn cholesky_lower(mut a: Vec<Vec<f64>>) -> Option<Vec<Vec<f64>>> {
+    let n = a.len();
+    for j in 0..n {
+        for k in 0..j {
+            let t = a[j][k];
+            a[j][j] -= t * t;
+        }
+        if a[j][j] <= 0.0 {
+            return None;
+        }
+        a[j][j] = a[j][j].sqrt();
+        for i in j + 1..n {
+            for k in 0..j {
+                let t = a[i][k] * a[j][k];
+                a[i][j] -= t;
+            }
+            a[i][j] /= a[j][j];
+        }
+    }
+    Some(a)
+}
+
+/// `x` with `L L^T x = y` for the factor `l`.
+fn cholesky_solve(l: &[Vec<f64>], y: &[f64]) -> Vec<f64> {
+    let n = l.len();
+    let mut z = vec![0.0; n];
+    for i in 0..n {
+        let mut t = y[i];
+        for k in 0..i {
+            t -= l[i][k] * z[k];
+        }
+        z[i] = t / l[i][i];
+    }
+    let mut x = vec![0.0; n];
+    for i in (0..n).rev() {
+        let mut t = z[i];
+        for k in i + 1..n {
+            t -= l[k][i] * x[k];
+        }
+        x[i] = t / l[i][i];
+    }
+    x
+}
+
+/// The surrogate fitted on the window's reads, each a dial vector in search coordinates with
+/// the ledger vector its full read produced; None before the warm-up or without a dial that
+/// moved.
+fn surrogate_fit(
+    samples: &VecDeque<(Vec<f64>, Vec<[f64; 3]>)>,
+    table: &Ledger,
+) -> Option<Surrogate> {
+    let n = samples.len();
+    if n < SCREEN_WARMUP {
+        return None;
+    }
+    let d = samples[0].0.len();
+    let mean: Vec<f64> = (0..d)
+        .map(|i| samples.iter().map(|s| s.0[i]).sum::<f64>() / n as f64)
+        .collect();
+    let sd: Vec<f64> = (0..d)
+        .map(|i| {
+            (samples
+                .iter()
+                .map(|s| (s.0[i] - mean[i]).powi(2))
+                .sum::<f64>()
+                / n as f64)
+                .sqrt()
+        })
+        .collect();
+    let dims: Vec<usize> = (0..d).filter(|&i| sd[i] > 1e-12).collect();
+    if dims.is_empty() {
+        return None;
+    }
+    let x: Vec<Vec<f64>> = samples
+        .iter()
+        .map(|s| dims.iter().map(|&i| (s.0[i] - mean[i]) / sd[i]).collect())
+        .collect();
+    let m = n.min(SCREEN_DIST_SAMPLE);
+    let mut dist: Vec<f64> = Vec::with_capacity(m * (m - 1) / 2);
+    for a in 0..m {
+        for b in a + 1..m {
+            dist.push(sq_dist(&x[a], &x[b]).sqrt());
+        }
+    }
+    dist.sort_by(f64::total_cmp);
+    let ls = dist[dist.len() / 2].max(1e-9);
+    let two_ls2 = 2.0 * ls * ls;
+    // the rows every read in the window graded, with each read's contribution on the row
+    let cols: Vec<usize> = (0..table.rows.len())
+        .filter(|&k| {
+            samples
+                .iter()
+                .all(|s| s.1[k][0].is_finite() && s.1[k][2].is_finite())
+        })
+        .collect();
+    let contrib = |v: &Vec<[f64; 3]>, k: usize| -> f64 {
+        table.rows[k].weight * (soft(v[k][0], table.knee_at(k)) + LEDGER_SIGN_K * v[k][1])
+    };
+    let pairs: Vec<Vec<(f64, f64)>> = cols
+        .iter()
+        .map(|&k| {
+            samples
+                .iter()
+                .map(|s| (s.1[k][2], contrib(&s.1, k)))
+                .collect()
+        })
+        .collect();
+    let bw: Vec<f64> = pairs
+        .iter()
+        .map(|pr| {
+            let m = pr.iter().map(|q| q.0).sum::<f64>() / pr.len() as f64;
+            let v = pr.iter().map(|q| (q.0 - m).powi(2)).sum::<f64>() / pr.len() as f64;
+            (v.sqrt() / 4.0).max(1e-12)
+        })
+        .collect();
+    let mut kmat: Vec<Vec<f64>> = (0..n)
+        .map(|a| {
+            (0..n)
+                .map(|b| (-sq_dist(&x[a], &x[b]) / two_ls2).exp())
+                .collect()
+        })
+        .collect();
+    for (a, row) in kmat.iter_mut().enumerate() {
+        row[a] += SCREEN_RIDGE;
+    }
+    let l = cholesky_lower(kmat)?;
+    let ymean: Vec<f64> = cols
+        .iter()
+        .map(|&k| samples.iter().map(|s| s.1[k][2]).sum::<f64>() / n as f64)
+        .collect();
+    let alpha: Vec<Vec<f64>> = cols
+        .iter()
+        .zip(&ymean)
+        .map(|(&k, &ym)| {
+            let y: Vec<f64> = samples.iter().map(|s| s.1[k][2] - ym).collect();
+            cholesky_solve(&l, &y)
+        })
+        .collect();
+    Some(Surrogate {
+        dims,
+        mean,
+        sd,
+        x,
+        two_ls2,
+        cols,
+        ymean,
+        alpha,
+        pairs,
+        bw,
+    })
+}
+
+impl Surrogate {
+    /// The predicted score of a dial vector in search coordinates: each fitted row's predicted
+    /// reading priced by the window's smoother (Gaussian, the bandwidth a quarter of the readings'
+    /// sd), summed over the rows.
+    fn predict_score(&self, coords: &[f64]) -> f64 {
+        let z: Vec<f64> = self
+            .dims
+            .iter()
+            .map(|&i| (coords[i] - self.mean[i]) / self.sd[i])
+            .collect();
+        let k: Vec<f64> = self
+            .x
+            .iter()
+            .map(|xi| (-sq_dist(xi, &z) / self.two_ls2).exp())
+            .collect();
+        let mut total = 0.0;
+        for (t, _) in self.cols.iter().enumerate() {
+            let y = self.ymean[t]
+                + k.iter()
+                    .zip(&self.alpha[t])
+                    .map(|(a, b)| a * b)
+                    .sum::<f64>();
+            let (mut num, mut den) = (0.0, 0.0);
+            for &(r, c) in &self.pairs[t] {
+                let w = (-0.5 * ((r - y) / self.bw[t]).powi(2)).exp();
+                num += w * c;
+                den += w;
+            }
+            // a reading outside the window's reach is priced at the nearest pair's contribution
+            total += if den > 1e-300 {
+                num / den
+            } else {
+                self.pairs[t]
+                    .iter()
+                    .min_by(|a, b| (a.0 - y).abs().total_cmp(&(b.0 - y).abs()))
+                    .map_or(0.0, |q| q.1)
+            };
+        }
+        total
+    }
+}
+
 /// The race's cut: the `keep / pop` quantile of the differences read so far, infinite while the
 /// warm-up lasts (every child passes).
 fn race_cut(hist: &VecDeque<f64>, keep: usize, pop: usize) -> f64 {
@@ -1977,6 +2220,7 @@ fn with_settings_before(prior: &mut HashMap<String, String>) {
         ("proposal", "dial"),
         ("seedRule", "candidate"),
         ("race", "0"),
+        ("screen", "0"),
         ("membership", MEMBERSHIP_BEFORE),
     ] {
         prior.entry(k.into()).or_insert_with(|| v.into());
@@ -3446,6 +3690,11 @@ fn usage(msg: &str) -> ! {
                 ;   differences (K default pop/4; every child passes the first 32, and one the
                 ;   few paths find infeasible passes to the full read, which decides its bounds);
                 ;   race.tsv records each; 0 is off
+  -screen M     ; breed M times the population a generation and read the population the
+                ;   surrogate predicts best (a kernel-ridge regression per ledger row on the
+                ;   run's last 512 full reads, summed as the ledger sums a read), one child in
+                ;   eight taken unscreened in breeding order; no screen until 64 reads are in;
+                ;   screen.tsv records each read child's prediction and rank; 0 is off
   -project D:R  ; solve dial D for row R's record instead of stepping it ('drift:return per vol'):
                 ;   a child's D is its parent's plus the parent's miss on R over R's slope in D
   -seedworlds F ; the seed worlds as a TSV of `name` and the searched dials in table order: each row
@@ -3517,6 +3766,9 @@ struct Cfg {
     race: usize,
     /// the children a generation keeps past the race, the lowest differences (`-race P:K`)
     race_keep: usize,
+    /// proposals a generation as a multiple of its population, the surrogate choosing the
+    /// population read (`-screen M`; 0 off)
+    screen: usize,
     /// `DIAL:ROW` solved rather than searched (`-project`)
     project: String,
     /// further seed worlds, one TSV row each (`-seedworlds`)
@@ -3569,6 +3821,7 @@ fn defaults() -> Cfg {
         common: false,
         race: 0,
         race_keep: 0,
+        screen: 0,
         project: String::new(),
         seed_worlds: String::new(),
         noregress_set: String::new(),
@@ -3626,6 +3879,7 @@ fn parse_args() -> Cfg {
             "-stagecheck" => c.stage_check = num(&need(&mut i, "-stagecheck"), "-stagecheck"),
             "-common" => c.common = true,
             "-race" => (c.race, c.race_keep) = race_spec(&need(&mut i, "-race")),
+            "-screen" => c.screen = num(&need(&mut i, "-screen"), "-screen"),
             "-project" => c.project = need(&mut i, "-project"),
             "-seedworlds" => c.seed_worlds = need(&mut i, "-seedworlds"),
             "-noregressset" => c.noregress_set = need(&mut i, "-noregressset"),
@@ -4343,6 +4597,7 @@ fn main() {
                 "0".to_string()
             },
         ),
+        ("screen".into(), c.screen.to_string()),
         // the admission rules and the objective are recorded with the ensemble: a resume under different
         // ones puts two standards in one archive
         ("admit".into(), "spread-keeping-nearest".to_string()),
@@ -5051,6 +5306,9 @@ fn main() {
     let mut race_hist: VecDeque<f64> = VecDeque::with_capacity(RACE_WINDOW + 1);
     let mut pnoise_sum = 0.0f64;
     let mut pnoise_n = 0usize;
+    // the surrogate's window (`-screen`): the last full reads' coordinates and ledger vectors
+    let mut window: VecDeque<(Vec<f64>, Vec<[f64; 3]>)> =
+        VecDeque::with_capacity(SCREEN_WINDOW + 1);
     while c.gens == 0 || g < gen0 + c.gens {
         // One generation: `pop` mutations of members drawn from the archive, then a checkpoint. A
         // kill between generations loses at most one generation's work.
@@ -5086,13 +5344,17 @@ fn main() {
         let mut gen_reads: HashMap<String, Read> = HashMap::new();
         let mut race_reads: HashMap<String, f64> = HashMap::new();
         let mut race_log: Vec<String> = Vec::new();
-        for _ in 0..c.pop {
-            // A PROPOSAL OUTSIDE THE CLI'S DOMAIN is drawn again, parent and step, from the
-            // generation's stream: the proposal restricted to the domain, no seed slot and no log
-            // line spent on it
+        // ONE PROPOSAL: a parent drawn from `pool` and a child stepped from it (`stepped`, `-cov`,
+        // `-fix`, `-project`). A PROPOSAL OUTSIDE THE CLI'S DOMAIN is drawn again, parent and step,
+        // from the generation's stream: the proposal restricted to the domain, no seed slot and no
+        // log line spent on it
+        let breed = |rng: &mut NumPyRng,
+                     pool: &[Member],
+                     held: &HashMap<String, f64>|
+         -> (Member, Vec<f64>) {
             let mut refused = 0usize;
-            let (parent, child) = loop {
-                let parent = arc[rng.next_bounded_u32(arc.len() as u32) as usize].clone();
+            loop {
+                let parent = pool[rng.next_bounded_u32(pool.len() as u32) as usize].clone();
                 let along = factor.as_ref().filter(|_| rng.next_f64() < c.cov);
                 let z: Vec<f64> = (0..rs.len()).map(|_| rng.randn()).collect();
                 let child = admissible(
@@ -5133,7 +5395,89 @@ fn main() {
                         }
                     }
                 }
+            }
+        };
+        // THE SCREEN (`-screen`): the generation's proposals bred first from the archive it
+        // starts with, the surrogate's pick read; without a surrogate yet, no extra proposal
+        let mut brood: VecDeque<(Member, Vec<f64>, f64, usize, bool)> = VecDeque::new();
+        let mut screened = false;
+        if c.screen > 0 {
+            if let Some(sur) = surrogate_fit(&window, &ledger) {
+                screened = true;
+                let mut props: Vec<(Member, Vec<f64>, f64)> = (0..c.pop * c.screen)
+                    .map(|_| {
+                        let (p, ch) = breed(&mut rng, &arc, &held);
+                        let pred = sur.predict_score(&dial_coords(&rs, &ch));
+                        (p, ch, pred)
+                    })
+                    .collect();
+                let mut order: Vec<usize> = (0..props.len()).collect();
+                order.sort_by(|&i, &j| props[i].2.total_cmp(&props[j].2));
+                let mut rank = vec![0usize; props.len()];
+                for (r, &i) in order.iter().enumerate() {
+                    rank[i] = r;
+                }
+                let explore = if c.pop >= SCREEN_EXPLORE {
+                    c.pop / SCREEN_EXPLORE
+                } else {
+                    0
+                };
+                let mut chosen = vec![false; props.len()];
+                for &i in order.iter().take(c.pop - explore) {
+                    chosen[i] = true;
+                }
+                let mut taken = 0usize;
+                for (i, ch) in chosen.iter_mut().enumerate() {
+                    if taken == explore {
+                        break;
+                    }
+                    if !*ch {
+                        *ch = true;
+                        taken += 1;
+                        brood.push_back((
+                            props[i].0.clone(),
+                            props[i].1.clone(),
+                            props[i].2,
+                            rank[i],
+                            true,
+                        ));
+                    }
+                }
+                for &i in &order {
+                    if chosen[i] && !brood.iter().any(|b| b.3 == rank[i]) {
+                        let (p, ch, pred) = std::mem::replace(
+                            &mut props[i],
+                            (
+                                Member {
+                                    name: String::new(),
+                                    dials: Vec::new(),
+                                    score: 0.0,
+                                    raw: 0.0,
+                                    worst: String::new(),
+                                    desc: Vec::new(),
+                                    ledger: None,
+                                },
+                                Vec::new(),
+                                0.0,
+                            ),
+                        );
+                        brood.push_back((p, ch, pred, rank[i], false));
+                    }
+                }
+            }
+        }
+        let mut screen_log: Vec<String> = Vec::new();
+        for _ in 0..c.pop {
+            let (parent, child, predicted, prank, explored) = match brood.pop_front() {
+                Some(b) => b,
+                None => {
+                    let (p, ch) = breed(&mut rng, &arc, &held);
+                    (p, ch, f64::NAN, 0, false)
+                }
             };
+            // A PROPOSAL OUTSIDE THE CLI'S DOMAIN is drawn again, parent and step, from the
+            // generation's stream: the proposal restricted to the domain, no seed slot and no log
+            // line spent on it
             let seeds: Vec<u64> = if c.common {
                 gen_seeds.clone()
             } else {
@@ -5192,6 +5536,12 @@ fn main() {
                     g8(cut)
                 ));
                 if !kept {
+                    if c.screen > 0 {
+                        screen_log.push(format!(
+                            "{g}\t{evals}\t{}\t{prank}\t{explored}\tNaN\traced",
+                            g8(predicted)
+                        ));
+                    }
                     if !c.common {
                         evals += c.reps as u64;
                     }
@@ -5216,6 +5566,26 @@ fn main() {
                 },
             );
             let secs = t0.elapsed().as_secs_f64();
+            // the surrogate's window takes every feasible full read with its ledger vector, a read
+            // the bar cut after one rep included: its vector is the read that set its score
+            if let Some(v) = r.ledger_vec.as_ref().filter(|_| r.feasible) {
+                window.push_back((dial_coords(&rs, &child), v.clone()));
+                if window.len() > SCREEN_WINDOW {
+                    window.pop_front();
+                }
+            }
+            if c.screen > 0 {
+                screen_log.push(format!(
+                    "{g}\t{evals}\t{}\t{prank}\t{explored}\t{}\t{}",
+                    g8(predicted),
+                    if r.feasible {
+                        g8(r.score)
+                    } else {
+                        "NaN".to_string()
+                    },
+                    if r.feasible { "read" } else { "rejected" }
+                ));
+            }
             let bs: Vec<String> = r.desc.iter().map(|x| g8(*x)).collect();
             let gate_fail = r.gate_fail.join("; ");
             // admitted BEFORE the line is written, because the line records the answer
@@ -5381,6 +5751,14 @@ fn main() {
                 &race_log,
             );
         }
+        if c.screen > 0 {
+            append_tsv(
+                &c.out,
+                "screen.tsv",
+                "gen\teval\tpredicted\trank\texplore\tread\toutcome",
+                &screen_log,
+            );
+        }
         append_log(&c.out, &log);
         append_tsv(
             &c.out,
@@ -5417,9 +5795,14 @@ fn main() {
         let raw = arc.iter().map(|m| m.raw).fold(f64::INFINITY, f64::min);
         let scores: Vec<f64> = arc.iter().map(|m| m.score).collect();
         println!(
-            "gen {g:>5}  archive {:>3}  best {best:>7.3}  median {:>7.3}  raw {raw:>7.3}  slots {evals:>6}",
+            "gen {g:>5}  archive {:>3}  best {best:>7.3}  median {:>7.3}  raw {raw:>7.3}  slots {evals:>6}{}",
             arc.len(),
-            ms::pctile(&scores, 0.5)
+            ms::pctile(&scores, 0.5),
+            if c.screen > 0 {
+                format!("  window {:>4}  screened {}", window.len(), screened)
+            } else {
+                String::new()
+            }
         );
         g += 1;
         if c.close > 0.0 {
@@ -5512,6 +5895,38 @@ mod ledger_tests {
             });
         }
         t
+    }
+
+    /// THE SURROGATE (`-screen`): fitted on a window of synthetic reads whose readings are smooth
+    /// in three dials, it prices a proposal near the readings' zero (the record, each row's
+    /// CRPS its reading's size) under one further out, and refuses an empty window.
+    #[test]
+    fn the_surrogate_fits_a_window_and_ranks_by_the_ledger() {
+        let table = table_of(&[
+            ("a", "x", 1.0, None),
+            ("b", "x", 1.0, None),
+            ("c", "x", 2.0, None),
+        ]);
+        let d = ranges().len();
+        let mut rng = NumPyRng::new(7);
+        let mut window: VecDeque<(Vec<f64>, Vec<[f64; 3]>)> = VecDeque::new();
+        for _ in 0..SCREEN_WARMUP + 8 {
+            let coords: Vec<f64> = (0..d)
+                .map(|i| if i < 3 { rng.randn() * 0.05 } else { 0.5 })
+                .collect();
+            let v: Vec<[f64; 3]> = (0..3)
+                .map(|k| {
+                    let reading = coords[k] * 10.0;
+                    [reading.abs(), 0.0, reading]
+                })
+                .collect();
+            window.push_back((coords, v));
+        }
+        let sur = surrogate_fit(&window, &table).expect("a fit past the warm-up");
+        let at = |x: f64| -> Vec<f64> { (0..d).map(|i| if i < 3 { x } else { 0.5 }).collect() };
+        let (near, far) = (sur.predict_score(&at(0.0)), sur.predict_score(&at(0.08)));
+        assert!(near < far, "near {near} far {far}");
+        assert!(surrogate_fit(&VecDeque::new(), &table).is_none());
     }
 
     fn hist_of(name: &'static str, reads: &[f64], record: f64) -> ms::HistoryRow {
