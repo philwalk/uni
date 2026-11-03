@@ -178,8 +178,24 @@ convention scored significantly better than the 0.25.0 sets under the release ru
 row among the rows: the S&P's 56-member set 55.36 to 51.97, −3.39 [−4.38, −2.50], the Nasdaq's
 37-member set 59.55 to 56.55, −3.00 [−4.57, −1.56]. The sets bred under it score within sampling
 error of those: `0.25.1-sp500.json` (65 members) 50.93 to 51.29, +0.35 [−0.41, +1.15], and
-`0.25.1-nasdaq.json` (68) 56.32 to 57.39, +1.07 [−0.45, +2.52], the rows scored predating the
-vol-process rows. Each outgoing 0.25.0 set had
+the Nasdaq's 68-member set 56.32 to 57.39, +1.07 [−0.45, +2.52], the rows scored predating the
+vol-process rows. The Nasdaq recipe is then re-solved in small steps around that set's member 0
+(each move 0.02 of a dial's width, the disaster family, `spreadDd` and `discountLag` held) and read
+back by family: a family of dials stays moved only where returning it together costs more than
+the seeds' noise. Five of the ten stay moved, 49 dials: the vol (`-noisescale` 1.58, `-volofvol`
+0.024, `-volfeedback` 0.54, `-volpull` 0 from 0.14, `-noiseskew` 0.08 from 0), the recession (its
+rate 0.22 from 0.14, size 0.29 from 0.22, length 1.6 years, vol 0.087 from 0.13, the spread's
+share 0.14 from 0.21), the valuation (`-valuecapfall` 0.96 from 0.06, `-cyclesd` 0.062 from 0.10,
+`-cycleyears` 9.8), the news and the policy rule (`-policygrowth` 0.14 from 0.18, `-expanchor`
+0.50 from 0.54); the jump, boom, drift, rates and leverage families return. On the judge's seeds
+41.41 against 43.30: `profit declines a century` 12.7 from 8.9 (record 13.8), `bar overnight
+share`, `vol coupling monthly` and `z beyond 3 sds calm/high` 0.2–0.3 nearer the record each;
+`decline length p50` 0.30 further (0.73 against the record's 0.25), `vol doubling months %` 0.15,
+and `tips vs bond10 corr` 0.42 on a sharp row (0.83 against 0.81) from the rates family's return.
+Its set, `0.25.1-nasdaq.json` (65 members), scores significantly better than the 68 under the
+release rule on the rows as they now stand, 59.88 to 53.44, −6.44 [−7.61, −5.27] (sums on more
+rows than the earlier ones, not comparable with them); on the split-adjusted volume rows the 68
+had one set miss, `bar volume vs range` at 0.2%, and the 65 has none. Each outgoing 0.25.0 set had
 one set miss, the real yield's inflation link at 0.1% and 0.3%; no 0.25.1 set has one. They are the
 worlds to pin in place of the 0.25.0 recipes.
 

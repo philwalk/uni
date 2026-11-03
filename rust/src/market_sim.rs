@@ -2091,13 +2091,16 @@ fn recipe_0251_sp500(mut w: World) -> World {
     w
 }
 
-/// `0.25.1-nasdaq`: member 0 of `0.25.1-nasdaq.json` (2026-11-01), as the S&P's: `yield_anchor`
+/// `0.25.1-nasdaq`: member 0 of `0.25.1-nasdaq.json` (2026-11-03), as the S&P's: `yield_anchor`
 /// 0.63 and `term_press` 1, the rate and bond side re-solved around them, on the Nasdaq's own era
 /// the breakeven premium's innovation too, and every dial that read no worse at the 0.25.0 value
 /// returned to it; the cycle's increment in the vol state (`cycle_vol` 1) as the form's convention,
-/// inert on this recipe's rows. 34.4 against the 0.25.0 recipe's 42.8 on the judge's seeds and the
-/// 29-row ledger with `bond stress share %` reported (`NASDAQ_ERA_ROWS`), membership p 0.91, every
-/// class passing on every read and by the margin on 40 more.
+/// inert on this recipe's rows; then re-solved in small steps around that world with the vol,
+/// recession, valuation, news and policy families kept moved by the family read-back (the
+/// recession's rate 0.22 from 0.14, `value_cap_fall` 0.96 from 0.06, `vol_pull` 0 from 0.14) and
+/// the jump, boom, drift, rates and leverage families at the earlier values. 41.41 against 43.30
+/// on the judge's seeds with `bond stress share %` reported (`NASDAQ_ERA_ROWS`), membership on
+/// every read; its 65-member set significantly better than the 68 under the release rule.
 fn recipe_0251_nasdaq(mut w: World) -> World {
     w.depth = 13.224673;
     w.fund_vol = 0.044375247;
