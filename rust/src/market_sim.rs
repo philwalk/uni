@@ -2099,25 +2099,70 @@ fn recipe_0251_sp500(mut w: World) -> World {
 /// 29-row ledger with `bond stress share %` reported (`NASDAQ_ERA_ROWS`), membership p 0.91, every
 /// class passing on every read and by the margin on 40 more.
 fn recipe_0251_nasdaq(mut w: World) -> World {
+    w.depth = 13.224673;
+    w.fund_vol = 0.044375247;
     w.rate_mean = 0.034508216;
+    w.vol_of_vol = 0.023850037;
+    w.leverage = 0.073934322;
+    w.down_shock = 0.0078867012;
+    w.news_rate = 23.339485;
+    w.news_size = 0.011463959;
+    w.news_lev = 50.103847;
+    w.news_revert = 0.19529314;
+    w.news_scale = 0.16353965;
     w.news_bond = 0.24905600;
     w.news_bond_skip = 0.26802600;
+    w.credit_regime = 0.41509177;
+    w.credit_regime_rate = 1.9723187;
     w.slow_bond_infl = 0.48413900;
+    w.noise_skew = 0.080950629;
+    w.news_flip = 0.65157012;
+    w.value_pull = 0.069324529;
+    w.recess_rate = 0.21895030;
+    w.recess_size = 0.28870908;
+    w.recess_len = 1.6165895;
+    w.recess_recover = 0.81961500;
+    w.recess_news = 1.0000000;
+    w.recess_vol = 0.087203338;
+    w.recess_reprice = 0.93024541;
+    w.recess_shape = 1.4366029;
+    w.recess_rec_mult = 1.6326685;
+    w.recess_credit = 0.14289759;
+    w.recess_infl = 0.36623394;
+    w.vol_pull = 0.0000000;
+    w.belief_share = 0.60206332;
+    w.belief_years = 1.6289685;
+    w.belief_leak = 0.30413936;
+    w.cap_years = 3.5726920;
+    w.cycle_sd = 0.061943798;
+    w.cycle_years = 9.8175170;
     w.cycle_vol = 1.0000000;
     w.term_premium = 0.090792400;
+    w.cpi_noise = 0.0072135904;
+    w.defl_prob = 0.22407948;
+    w.defl_size = 0.039985707;
     w.term_vol = 0.0056821201;
     w.term_press = 1.0000000;
     w.brk_vol = 0.0026305000;
-    w.cpi_noise_level = 0.94952559;
-    w.policy_growth = 0.18095488;
+    w.cpi_noise_level = 0.88145193;
+    w.policy_growth = 0.13724604;
     w.yield_beta = 0.028855859;
     w.yield_lag = 24.417600;
-    w.exp_anchor = 0.53590901;
+    w.exp_anchor = 0.49777614;
     w.yield_anchor = 0.63363114;
-    w.vol_feedback = 0.55284452;
+    w.vol_feedback = 0.53585228;
+    w.value_cap = 0.19382860;
+    w.value_cap_fall = 0.95538454;
+    w.recess_spread = 0.13515143;
+    w.recess_transient = 0.18119246;
+    w.easing = 0.083490492;
+    w.floorhold = 0.071394237;
     w.refuge = 0.10451699;
     w.refuge_days = 0.41558600;
     w.lev_gain = 6.3588392;
+    w.noise_scale = 1.5835440;
+    w.slow_vol = 0.99315148;
+    w.infl_size = 0.039406294;
     w
 }
 
