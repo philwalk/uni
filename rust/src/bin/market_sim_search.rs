@@ -42,6 +42,7 @@
 )]
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::io::Write as _;
 
@@ -1095,6 +1096,54 @@ fn candidate_seed(base: i64, slot: u64) -> u64 {
     (base as u64).wrapping_add(CANDIDATE_OFFSET.wrapping_add(slot.wrapping_mul(READ_STRIDE)))
 }
 
+/// THE RACE (`-race P:K`): a child is read against its parent on P paths and one seed before its
+/// full read, and only the K lowest differences a generation read on. The cut is the K/pop
+/// quantile of the last `RACE_WINDOW` race differences, every child passing until `RACE_WARMUP`
+/// of them have been read, so the screen needs no noise estimate and no batch: the children are
+/// bred and read one at a time as before.
+const RACE_WINDOW: usize = 256;
+const RACE_WARMUP: usize = 32;
+
+/// The race's cut: the `keep / pop` quantile of the differences read so far, infinite while the
+/// warm-up lasts (every child passes).
+fn race_cut(hist: &VecDeque<f64>, keep: usize, pop: usize) -> f64 {
+    if hist.len() < RACE_WARMUP {
+        return f64::INFINITY;
+    }
+    let mut v: Vec<f64> = hist.iter().copied().collect();
+    v.sort_by(f64::total_cmp);
+    let q = (keep as f64 / pop as f64).clamp(0.0, 1.0);
+    v[((v.len() - 1) as f64 * q).floor() as usize]
+}
+
+/// A read's primary-arm scores per seed, from its `seed:score` ledger entries (the transport
+/// arm's carry their market as a prefix and are left out).
+fn seed_scores(r: &Read) -> Vec<f64> {
+    r.ledger
+        .iter()
+        .filter(|e| e.matches(':').count() == 1)
+        .filter_map(|e| e.split_once(':').and_then(|(_, v)| v.parse().ok()))
+        .collect()
+}
+
+/// THE PAIRED NOISE under `-common`: the child and the member it is judged against are read on
+/// the same seeds, and the spread over those seeds of their difference is the noise the paired
+/// admission's margin reads, as `spread` is the level's. None under one rep or an infeasible
+/// member read.
+fn pair_noise(child: &Read, member: &Read) -> Option<f64> {
+    if !(child.feasible && member.feasible && child.complete && member.complete) {
+        return None;
+    }
+    let (a, b) = (seed_scores(child), seed_scores(member));
+    if a.len() < 2 || a.len() != b.len() {
+        return None;
+    }
+    let d: Vec<f64> = a.iter().zip(&b).map(|(x, y)| x - y).collect();
+    let hi = d.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let lo = d.iter().copied().fold(f64::INFINITY, f64::min);
+    Some(hi - lo)
+}
+
 /// THE REFERENCE WORLD READ: `NOREGRESS_READS` reads at the search's own ensemble on the
 /// reference stream; the yardstick over them pooled (`yardstick_from`), and each graded row's
 /// CRPS in that yardstick as the mean over the reads, priced as `read_paths` prices a candidate.
@@ -1910,42 +1959,27 @@ fn yardstick_from(anchors: Anchors, reads: &[Vec<ms::HistoryRow>]) -> Vec<(&'sta
 /// standard. A checkpoint without `score` was scored on the worst row alone, and one without
 /// `gates` gated on its own ensemble.
 fn with_settings_before(prior: &mut HashMap<String, String>) {
-    if !prior.contains_key("score") {
-        prior.insert("score".into(), "worst-row".into());
-    }
-    // one written before `candidateSeeds` read its candidates a path stride apart
-    if !prior.contains_key("candidateSeeds") {
-        prior.insert("candidateSeeds".into(), "path-stride".into());
-    }
-    // one written before `noiseReads` read its seed noise off the reps' spread alone
-    if !prior.contains_key("noiseReads") {
-        prior.insert("noiseReads".into(), "reps".into());
-    }
-    // one written before `-hold` held no row
-    if !prior.contains_key("hold") {
-        prior.insert("hold".into(), "(none)".into());
-    }
-    // one written before `-fix` stepped every dial
-    if !prior.contains_key("fix") {
-        prior.insert("fix".into(), "(none)".into());
-    }
-    // one written before `-gate` gated on the verdict's default classes
-    if !prior.contains_key("gateClasses") {
-        prior.insert("gateClasses".into(), "realism,mechanism".into());
-    }
-    if !prior.contains_key("gates") {
-        prior.insert("gates".into(), "search-ensemble".into());
-    }
-    // one written before `-stage` read every path at once, and one before `-project` stepped every dial
-    if !prior.contains_key("stage") {
-        prior.insert("stage".into(), "0".into());
-    }
-    if !prior.contains_key("project") {
-        prior.insert("project".into(), "(none)".into());
-    }
-    // one written before `-cov` existed drew its children one dial at a time
-    if !prior.contains_key("proposal") {
-        prior.insert("proposal".into(), "dial".into());
+    // each key with what an archive written before it was recorded had: a worst-row score;
+    // candidates a path stride apart; the seed noise off the reps' spread alone; no row held;
+    // every dial stepped; the verdict's default gate classes on the search ensemble; every path
+    // read at once; no dial projected; children drawn one dial at a time; every candidate seeded
+    // alone and none raced; the record placed on each read alone
+    for (k, v) in [
+        ("score", "worst-row"),
+        ("candidateSeeds", "path-stride"),
+        ("noiseReads", "reps"),
+        ("hold", "(none)"),
+        ("fix", "(none)"),
+        ("gateClasses", "realism,mechanism"),
+        ("gates", "search-ensemble"),
+        ("stage", "0"),
+        ("project", "(none)"),
+        ("proposal", "dial"),
+        ("seedRule", "candidate"),
+        ("race", "0"),
+        ("membership", MEMBERSHIP_BEFORE),
+    ] {
+        prior.entry(k.into()).or_insert_with(|| v.into());
     }
     // one without `transportWeight` priced its transport arm in full
     if !prior.contains_key("transportWeight") {
@@ -1955,10 +1989,6 @@ fn with_settings_before(prior: &mut HashMap<String, String>) {
             "1.0000"
         };
         prior.insert("transportWeight".into(), full.into());
-    }
-    // one written before `membership` placed the record on each read alone
-    if !prior.contains_key("membership") {
-        prior.insert("membership".into(), MEMBERSHIP_BEFORE.into());
     }
 }
 
@@ -3011,19 +3041,30 @@ fn spread_added(trace: &[(u64, Vec<f64>)], gens: u64) -> Option<(f64, u64)> {
     Some((100.0 * (at(gens)? - at(gens - 2 * blk)?), blk))
 }
 
-fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> (Vec<Member>, bool) {
-    // the nearest member inside `sep`, not the first found; strict `<` keeps the earliest on a tie,
-    // as the Scala twin's fold does
-    let near = arc
-        .iter()
+/// The nearest member inside `sep`, not the first found; strict `<` keeps the earliest on a tie,
+/// as the Scala twin's fold does.
+fn nearest_within(arc: &[Member], dials: &[f64], sep: f64) -> Option<usize> {
+    arc.iter()
         .enumerate()
-        .map(|(i, o)| (i, apart(&o.dials, &m.dials)))
+        .map(|(i, o)| (i, apart(&o.dials, dials)))
         .filter(|&(_, d)| d < sep)
         .fold(None, |best: Option<(usize, f64)>, (i, d)| match best {
             Some((_, bd)) if bd <= d => best,
             _ => Some((i, d)),
         })
-        .map(|(i, _)| i);
+        .map(|(i, _)| i)
+}
+
+/// `near` is the nearest member inside `sep` (`nearest_within`) with the score the candidate must
+/// beat by `margin`: the member's own under independent seeds, its read on the candidate's seeds
+/// under `-common`, where `margin` is the paired noise.
+fn admit(
+    arc: Vec<Member>,
+    m: Member,
+    keep: usize,
+    near: Option<(usize, f64)>,
+    margin: f64,
+) -> (Vec<Member>, bool) {
     let dials = m.dials.clone();
     let (mut next, placed) = match near {
         None => {
@@ -3031,7 +3072,7 @@ fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> (Vec
             v.push(m);
             (v, true)
         }
-        Some(i) if m.score < arc[i].score - noise => {
+        Some((i, to_beat)) if m.score < to_beat - margin => {
             let mut v = arc;
             v[i] = m;
             (v, true)
@@ -3396,6 +3437,15 @@ fn usage(msg: &str) -> ! {
                 ;   for bit (default 0: every path at once)
   -stagecheck P ; read the same prefix and record its verdict in stage.tsv beside the full read's,
                 ;   never acting on it: how often a full read overturns a prefix's rejection
+  -common       ; one seed set a generation: every child and the member it would replace are
+                ;   read on the same seeds, so the admission reads their difference with the
+                ;   seed noise cancelled, by the paired noise's margin; the set rotates every
+                ;   generation; wants -reps 2 or more
+  -race P:K     ; read each child against its parent on P paths and one seed first, and in full
+                ;   only when its difference is under the K/pop quantile of the last 256 race
+                ;   differences (K default pop/4; every child passes the first 32, and one the
+                ;   few paths find infeasible passes to the full read, which decides its bounds);
+                ;   race.tsv records each; 0 is off
   -project D:R  ; solve dial D for row R's record instead of stepping it ('drift:return per vol'):
                 ;   a child's D is its parent's plus the parent's miss on R over R's slope in D
   -seedworlds F ; the seed worlds as a TSV of `name` and the searched dials in table order: each row
@@ -3460,6 +3510,13 @@ struct Cfg {
     stage: usize,
     /// the same prefix read and recorded, never acted on (`-stagecheck`)
     stage_check: usize,
+    /// one seed set a generation, every child and the member it is judged against read on it
+    /// (`-common`)
+    common: bool,
+    /// the paths of the race read that screens a child against its parent (`-race P:K`; 0 off)
+    race: usize,
+    /// the children a generation keeps past the race, the lowest differences (`-race P:K`)
+    race_keep: usize,
     /// `DIAL:ROW` solved rather than searched (`-project`)
     project: String,
     /// further seed worlds, one TSV row each (`-seedworlds`)
@@ -3474,8 +3531,9 @@ struct Cfg {
     ledger: String,
 }
 
-fn parse_args() -> Cfg {
-    let mut c = Cfg {
+/// The flags' defaults.
+fn defaults() -> Cfg {
+    Cfg {
         out: "search".into(),
         anchor_spec: "sp500".into(),
         seed_spec: String::new(),
@@ -3508,13 +3566,20 @@ fn parse_args() -> Cfg {
         cov_shrink: 0.3,
         stage: 0,
         stage_check: 0,
+        common: false,
+        race: 0,
+        race_keep: 0,
         project: String::new(),
         seed_worlds: String::new(),
         noregress_set: String::new(),
         record: String::new(),
         objective: "ledger".into(),
         ledger: String::new(),
-    };
+    }
+}
+
+fn parse_args() -> Cfg {
+    let mut c = defaults();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     let need = |i: &mut usize, flag: &str| -> String {
@@ -3559,6 +3624,8 @@ fn parse_args() -> Cfg {
             "-seedset" => c.seed_set = need(&mut i, "-seedset"),
             "-stage" => c.stage = num(&need(&mut i, "-stage"), "-stage"),
             "-stagecheck" => c.stage_check = num(&need(&mut i, "-stagecheck"), "-stagecheck"),
+            "-common" => c.common = true,
+            "-race" => (c.race, c.race_keep) = race_spec(&need(&mut i, "-race")),
             "-project" => c.project = need(&mut i, "-project"),
             "-seedworlds" => c.seed_worlds = need(&mut i, "-seedworlds"),
             "-noregressset" => c.noregress_set = need(&mut i, "-noregressset"),
@@ -3572,6 +3639,27 @@ fn parse_args() -> Cfg {
             a => usage(&format!("unrecognized arg [{a}]")),
         }
         i += 1;
+    }
+    checked(c)
+}
+
+/// `-race P:K` as the race's paths and survivors, K absent as 0 (filled by `checked`).
+fn race_spec(v: &str) -> (usize, usize) {
+    let (p, k) = v.split_once(':').unwrap_or((v, ""));
+    (
+        num(p, "-race"),
+        if k.is_empty() { 0 } else { num(k, "-race") },
+    )
+}
+
+/// The flags' joint conditions: `-common` wants the reps its paired noise is read off, and a
+/// race without K keeps a quarter of the population.
+fn checked(mut c: Cfg) -> Cfg {
+    if c.common && c.reps < 2 {
+        usage("-common wants -reps 2 or more: the paired noise is read off the seeds' spread");
+    }
+    if c.race > 0 && c.race_keep == 0 {
+        c.race_keep = (c.pop / 4).max(1);
     }
     c
 }
@@ -4242,6 +4330,19 @@ fn main() {
         // how a candidate's reads are seeded: see `candidate_seed`
         ("candidateSeeds".into(), candidate_seeds),
         ("noiseReads".into(), noise_reads),
+        // one seed set a generation (`-common`) or one a candidate, and the race
+        (
+            "seedRule".into(),
+            if c.common { "generation" } else { "candidate" }.to_string(),
+        ),
+        (
+            "race".into(),
+            if c.race > 0 {
+                format!("{}:{}", c.race, c.race_keep)
+            } else {
+                "0".to_string()
+            },
+        ),
         // the admission rules and the objective are recorded with the ensemble: a resume under different
         // ones puts two standards in one archive
         ("admit".into(), "spread-keeping-nearest".to_string()),
@@ -4944,6 +5045,12 @@ fn main() {
     let mut reserve: Vec<Member> = loaded_reserve;
     let mut g = gen0;
     let mut evals = evals0;
+    // the race's recent differences (`race_cut`) and the paired noise (`pair_noise`), in memory
+    // only: after a resume both start empty, as the seed noise's margin does before its first
+    // reading
+    let mut race_hist: VecDeque<f64> = VecDeque::with_capacity(RACE_WINDOW + 1);
+    let mut pnoise_sum = 0.0f64;
+    let mut pnoise_n = 0usize;
     while c.gens == 0 || g < gen0 + c.gens {
         // One generation: `pop` mutations of members drawn from the archive, then a checkpoint. A
         // kill between generations loses at most one generation's work.
@@ -4964,8 +5071,21 @@ fn main() {
         };
         // the noise read's slot (see `noise_reading`), past the generation's candidates and
         // reserved whether it is used or not, so a candidate's slot never depends on an outcome
-        let noise_slot = evals + (c.pop * c.reps) as u64;
+        let noise_slot = if c.common {
+            evals + c.reps as u64
+        } else {
+            evals + (c.pop * c.reps) as u64
+        };
         let mut noise_due = c.reps == 1;
+        // THE GENERATION'S SEEDS (`-common`): one set for every child and for the member a child is
+        // judged against, read on them once a generation (`gen_reads`); the parents' race reads
+        // likewise (`race_reads`)
+        let gen_seeds: Vec<u64> = (0..c.reps)
+            .map(|j| candidate_seed(c.base, evals + j as u64))
+            .collect();
+        let mut gen_reads: HashMap<String, Read> = HashMap::new();
+        let mut race_reads: HashMap<String, f64> = HashMap::new();
+        let mut race_log: Vec<String> = Vec::new();
         for _ in 0..c.pop {
             // A PROPOSAL OUTSIDE THE CLI'S DOMAIN is drawn again, parent and step, from the
             // generation's stream: the proposal restricted to the domain, no seed slot and no log
@@ -5014,9 +5134,70 @@ fn main() {
                     }
                 }
             };
-            let seeds: Vec<u64> = (0..c.reps)
-                .map(|j| candidate_seed(c.base, evals + j as u64))
-                .collect();
+            let seeds: Vec<u64> = if c.common {
+                gen_seeds.clone()
+            } else {
+                (0..c.reps)
+                    .map(|j| candidate_seed(c.base, evals + j as u64))
+                    .collect()
+            };
+            // THE RACE (`-race`): the child against its parent on the race's paths and the first
+            // seed; a child over the cut is logged and not read in full
+            if c.race > 0 {
+                let base_w = world_for(&parent.name);
+                let pr = *race_reads
+                    .entry(held_key(&parent.name, &parent.dials))
+                    .or_insert_with(|| {
+                        judge(
+                            &base_w,
+                            &parent.dials,
+                            anchors,
+                            transport.as_ref(),
+                            c.race,
+                            c.years,
+                            &seeds[..1],
+                            &obj,
+                            None,
+                        )
+                        .score
+                    });
+                let cr = judge(
+                    &base_w,
+                    &child,
+                    anchors,
+                    transport.as_ref(),
+                    c.race,
+                    c.years,
+                    &seeds[..1],
+                    &obj,
+                    None,
+                );
+                // a child the race's few paths find infeasible is not dropped on gates read
+                // there: it goes to the full read, which decides its bounds, and feeds no
+                // difference
+                let d = if cr.feasible { cr.score - pr } else { f64::NAN };
+                let cut = race_cut(&race_hist, c.race_keep, c.pop);
+                let kept = !cr.feasible || d <= cut;
+                if cr.feasible {
+                    race_hist.push_back(d);
+                    if race_hist.len() > RACE_WINDOW {
+                        race_hist.pop_front();
+                    }
+                }
+                race_log.push(format!(
+                    "{g}\t{evals}\t{}\t{}\t{}\t{}\t{kept}",
+                    parent.name,
+                    cr.feasible,
+                    g8(d),
+                    g8(cut)
+                ));
+                if !kept {
+                    if !c.common {
+                        evals += c.reps as u64;
+                    }
+                    continue;
+                }
+            }
             let t0 = std::time::Instant::now();
             let r = judge(
                 &world_for(&parent.name),
@@ -5087,7 +5268,48 @@ fn main() {
                 } else {
                     Vec::new()
                 };
-                let (next, entered) = admit(arc, cand.clone(), c.sep, c.keep, noise);
+                // THE PAIRED ADMISSION (`-common`): the member the child would replace is read on
+                // the generation's seeds, and the child must beat that read by the paired noise
+                let near = nearest_within(&arc, &cand.dials, c.sep);
+                let paired: Option<(f64, Option<f64>)> = if c.common {
+                    near.and_then(|i| {
+                        let m = &arc[i];
+                        let mr =
+                            gen_reads
+                                .entry(held_key(&m.name, &m.dials))
+                                .or_insert_with(|| {
+                                    judge(
+                                        &world_for(&m.name),
+                                        &m.dials,
+                                        anchors,
+                                        transport.as_ref(),
+                                        c.paths,
+                                        c.years,
+                                        &gen_seeds,
+                                        &obj,
+                                        None,
+                                    )
+                                });
+                        mr.feasible.then(|| (mr.score, pair_noise(&r, mr)))
+                    })
+                } else {
+                    None
+                };
+                if let Some((_, Some(x))) = paired {
+                    pnoise_sum += x;
+                    pnoise_n += 1;
+                }
+                let margin = if c.common {
+                    if pnoise_n > 0 {
+                        pnoise_sum / pnoise_n as f64
+                    } else {
+                        0.0
+                    }
+                } else {
+                    noise
+                };
+                let to_beat = near.map(|i| (i, paired.map_or(arc[i].score, |p| p.0)));
+                let (next, entered) = admit(arc, cand.clone(), c.keep, to_beat, margin);
                 arc = next;
                 took = entered;
                 if obj.kind == ObjectiveKind::Ledger {
@@ -5141,10 +5363,23 @@ fn main() {
                     r.gate_fail.join("; ")
                 ));
             }
+            if !c.common {
+                evals += c.reps as u64;
+            }
+        }
+        if c.common {
             evals += c.reps as u64;
         }
         if c.reps == 1 {
             evals += 1;
+        }
+        if c.race > 0 {
+            append_tsv(
+                &c.out,
+                "race.tsv",
+                "gen\teval\tparent\tfeasible\tdifference\tcut\tkept",
+                &race_log,
+            );
         }
         append_log(&c.out, &log);
         append_tsv(
