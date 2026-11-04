@@ -148,6 +148,20 @@ object MarketSimSearch:
     "              ;   for bit (default 0: every path at once)",
     "-stagecheck P ; read the same prefix and record its verdict in stage.tsv beside the full read's,",
     "              ;   never acting on it: how often a full read overturns a prefix's rejection",
+    "-common       ; one seed set a generation: every child and the member it would replace are",
+    "              ;   read on the same seeds, so the admission reads their difference with the",
+    "              ;   seed noise cancelled, by the paired noise's margin; the set rotates every",
+    "              ;   generation; wants -reps 2 or more",
+    "-race P:K     ; read each child against its parent on P paths and one seed first, and in full",
+    "              ;   only when its difference is under the K/pop quantile of the last 256 race",
+    "              ;   differences (K default pop/4; every child passes the first 32, and one the",
+    "              ;   few paths find infeasible passes to the full read, which decides its bounds);",
+    "              ;   race.tsv records each; 0 is off",
+    "-screen M     ; breed M times the population a generation and read the population the",
+    "              ;   surrogate predicts best (a kernel-ridge regression per ledger row on the",
+    "              ;   run's last 512 full reads, summed as the ledger sums a read), one child in",
+    "              ;   eight taken unscreened in breeding order; no screen until 64 reads are in;",
+    "              ;   screen.tsv records each read child's prediction and rank; 0 is off",
     "-project D:R  ; solve dial D for row R's record instead of stepping it ('drift:return per vol'):",
     "              ;   a child's D is its parent's plus the parent's miss on R over R's slope in D",
     "-seedworlds F ; the seed worlds as a TSV of `name` and the searched dials in table order: each row",
@@ -696,6 +710,199 @@ object MarketSimSearch:
     * this one unforced. */
   def candidateSeed(base: Long, slot: Long): Long = base + CandidateOffset + slot * ReadStride
 
+  /** `g8`, a non-finite number as the Rust twin's `g8` writes it (`inf`, `-inf`, `NaN`). */
+  def g8x(x: Double): String = if x.isInfinite then shown(x) else g8(x)
+
+  /** THE RACE (`-race P:K`): a child is read against its parent on P paths and one seed before its
+    * full read, and only the K lowest differences a generation read on.  The cut is the K/pop
+    * quantile of the last `RaceWindow` race differences, every child passing until `RaceWarmup` of
+    * them have been read, so the screen needs no noise estimate and no batch: the children are bred
+    * and read one at a time as before. */
+  val RaceWindow = 256
+  val RaceWarmup = 32
+
+  /** The race's cut: the `keep / pop` quantile of the differences read so far, infinite while the
+    * warm-up lasts (every child passes). */
+  def raceCut(hist: Vector[Double], keep: Int, pop: Int): Double =
+    if hist.length < RaceWarmup then Double.PositiveInfinity
+    else
+      val v = hist.toArray
+      java.util.Arrays.sort(v)
+      val q = math.min(math.max(keep.toDouble / pop.toDouble, 0.0), 1.0)
+      v(math.floor((v.length - 1).toDouble * q).toInt)
+
+  /** A read's primary-arm scores per seed, from its `seed:score` ledger entries (the transport
+    * arm's carry their market as a prefix and are left out). */
+  def seedScores(r: Read): Vector[Double] =
+    r.ledger.filter(_.count(_ == ':') == 1).flatMap(e => e.split(":", 2).lift(1).flatMap(unshown))
+
+  /** THE PAIRED NOISE under `-common`: the child and the member it is judged against are read on the
+    * same seeds, and the spread over those seeds of their difference is the noise the paired
+    * admission's margin reads, as `spread` is the level's.  None under one rep or an infeasible
+    * member read. */
+  def pairNoise(child: Read, member: Read): Option[Double] =
+    if !(child.feasible && member.feasible && child.complete && member.complete) then None
+    else
+      val (a, b) = (seedScores(child), seedScores(member))
+      if a.length < 2 || a.length != b.length then None
+      else
+        val d = a.zip(b).map((x, y) => x - y)
+        Some(d.foldLeft(Double.NegativeInfinity)(math.max) - d.foldLeft(Double.PositiveInfinity)(math.min))
+
+  /** What a run keeps in memory across generations and starts empty on a resume, as the seed
+    * noise's margin does before its first reading: the race's recent differences (`raceCut`), the
+    * paired noise's running sum and count (`pairNoise`), and the surrogate's window, the last full
+    * reads' search coordinates and ledger vectors (`surrogateFit`). */
+  final case class Carry(raceHist: Vector[Double] = Vector.empty, pnoiseSum: Double = 0.0, pnoiseN: Int = 0,
+                         window: Vector[(Vector[Double], LedgerVec)] = Vector.empty,
+                         /** the path-years the run's generations have simulated (`gens.tsv`'s
+                           * cumulative), resumed from the checkpoint */
+                         pathYears: Long = 0L)
+
+  /** A GENERATION'S COST (`gens.tsv`): the path-years its reads simulated, by kind -- the children's
+    * full reads, the race's reads of children and parents, the members read on the generation's
+    * seeds under `-common`, the `-reps 1` noise read.  A count no slowdown of the machine can touch,
+    * beside the wall clock that one can.  The reads before the first generation (the seed worlds',
+    * the reference's, the projection's) are not counted: they are the same for runs of one world
+    * and settings. */
+  final case class Cost(children: Long = 0L, race: Long = 0L, members: Long = 0L, noise: Long = 0L):
+    def total: Long = children + race + members + noise
+
+  /** What a generation's fold carries besides the archive's own state: the run's memory (`Carry`), the
+    * race's and the screen's log lines, and the generation's reads of members and parents on its
+    * seeds. */
+  final case class Extra(carry: Carry, raceLog: Vector[String], screenLog: Vector[String],
+                         genReads: Map[String, Read], raceReads: Map[String, Double], cost: Cost = Cost())
+
+  /** THE SURROGATE SCREEN (`-screen M`): a generation breeds M times its population from the
+    * archive it starts with, predicts each child's ledger readings from the run's own last
+    * `ScreenWindow` full reads (a kernel-ridge regression per row on the dials in their search
+    * coordinates, standardised; an RBF kernel at the median pairwise distance, ridge
+    * `ScreenRidge`), prices each predicted reading by a one-dimensional smoother of the window's
+    * readings against their row contributions (the row's score is a V around the record, which a
+    * fit in the dials does not resolve: the accuracy read of 2026-11-02 put the direct fit's rank
+    * correlation at 0.56 and the composed one's at 0.80), sums them, and reads in full the best
+    * predicted, less one child in `ScreenExplore` taken in breeding order unscreened so the
+    * surrogate's own manifold cannot close the search.  No screening until `ScreenWarmup` reads are
+    * in; the window is in memory and starts empty on a resume.  `screen.tsv` records each read
+    * child's prediction, its rank among the proposals and what the read then found: the
+    * surrogate's accuracy inside the run.  Every exponential is `expDet`, so the twins rank alike. */
+  val ScreenWindow     = 512
+  val ScreenWarmup     = 64
+  val ScreenExplore    = 8
+  val ScreenRidge      = 0.1
+  val ScreenDistSample = 128
+
+  /** A dial vector in its search coordinates, each as a fraction of its dial's width. */
+  def dialCoords(d: Vector[Double]): Vector[Double] = d.indices.toVector.map(i => coord(i, d(i)) / coordWidth(i))
+
+  def sqDist(a: Seq[Double], b: Seq[Double]): Double =
+    a.indices.foldLeft(0.0)((t, i) => t + (a(i) - b(i)) * (a(i) - b(i)))
+
+  /** The lower Cholesky factor of a symmetric positive-definite matrix; None when it is not
+    * positive-definite. */
+  def choleskyLower(m: Vector[Array[Double]]): Option[Vector[Array[Double]]] =
+    val a = m.map(_.clone)
+    val n = a.length
+    @annotation.tailrec
+    def col(j: Int): Boolean =
+      if j == n then true
+      else
+        for k <- 0 until j do
+          val t = a(j)(k)
+          a(j)(j) -= t * t
+        if a(j)(j) <= 0.0 then false
+        else
+          a(j)(j) = math.sqrt(a(j)(j))
+          for i <- j + 1 until n do
+            for k <- 0 until j do
+              val t = a(i)(k) * a(j)(k)
+              a(i)(j) -= t
+            a(i)(j) /= a(j)(j)
+          col(j + 1)
+    Option.when(col(0))(a)
+
+  /** `x` with `L L^T x = y` for the factor `l`. */
+  def choleskySolve(l: Vector[Array[Double]], y: Vector[Double]): Array[Double] =
+    val n = l.length
+    val z = new Array[Double](n)
+    for i <- 0 until n do
+      var t = y(i)
+      for k <- 0 until i do t -= l(i)(k) * z(k)
+      z(i) = t / l(i)(i)
+    val x = new Array[Double](n)
+    for i <- (0 until n).reverse do
+      var t = z(i)
+      for k <- i + 1 until n do t -= l(k)(i) * x(k)
+      x(i) = t / l(i)(i)
+    x
+
+  /** A read's ledger readings regressed on the dials: the standardised coordinates of the window's
+    * reads, the kernel's scale, the fitted coefficients per row, and per row the window's
+    * (reading, contribution) pairs with the smoother's bandwidth. */
+  final case class Surrogate(dims: Vector[Int], mean: Vector[Double], sd: Vector[Double], x: Vector[Vector[Double]],
+                             twoLs2: Double, cols: Vector[Int], ymean: Vector[Double],
+                             alpha: Vector[Array[Double]], pairs: Vector[Vector[(Double, Double)]],
+                             bw: Vector[Double]):
+    /** The predicted score of a dial vector in search coordinates: each fitted row's predicted
+      * reading priced by the window's smoother (Gaussian, the bandwidth a quarter of the readings'
+      * sd), summed over the rows. */
+    def predictScore(coords: Vector[Double]): Double =
+      val z = dims.map(i => (coords(i) - mean(i)) / sd(i))
+      val k = x.map(xi => MarketSim.expDet(-sqDist(xi, z) / twoLs2))
+      cols.indices.foldLeft(0.0) { (total, t) =>
+        val y = ymean(t) + k.indices.foldLeft(0.0)((acc, i) => acc + k(i) * alpha(t)(i))
+        val (num, den) = pairs(t).foldLeft((0.0, 0.0)) { case ((nm, dn), (r, c)) =>
+          val u = (r - y) / bw(t)
+          val w = MarketSim.expDet(-0.5 * (u * u))
+          (nm + w * c, dn + w)
+        }
+        // a reading outside the window's reach is priced at the nearest pair's contribution
+        total + (if den > 1e-300 then num / den
+                 else if pairs(t).isEmpty then 0.0
+                 else pairs(t).minBy(q => math.abs(q._1 - y))._2)
+      }
+
+  /** The surrogate fitted on the window's reads, each a dial vector in search coordinates with the
+    * ledger vector its full read produced; None before the warm-up or without a dial that moved. */
+  def surrogateFit(samples: Vector[(Vector[Double], LedgerVec)], table: Ledger): Option[Surrogate] =
+    val n = samples.length
+    if n < ScreenWarmup then None
+    else
+      val d    = samples(0)._1.length
+      val mean = (0 until d).toVector.map(i => samples.foldLeft(0.0)((t, s) => t + s._1(i)) / n)
+      val sd   = (0 until d).toVector.map { i =>
+        math.sqrt(samples.foldLeft(0.0)((t, s) => t + (s._1(i) - mean(i)) * (s._1(i) - mean(i))) / n)
+      }
+      val dims = (0 until d).toVector.filter(i => sd(i) > 1e-12)
+      if dims.isEmpty then None
+      else
+        val x = samples.map(s => dims.map(i => (s._1(i) - mean(i)) / sd(i)))
+        val m = math.min(n, ScreenDistSample)
+        val dist = (for a <- 0 until m; b <- a + 1 until m yield math.sqrt(sqDist(x(a), x(b)))).toArray
+        java.util.Arrays.sort(dist)
+        val ls     = math.max(dist(dist.length / 2), 1e-9)
+        val twoLs2 = 2.0 * ls * ls
+        // the rows every read in the window graded, with each read's contribution on the row
+        val cols = table.rows.indices.toVector.filter(k =>
+          samples.forall(s => s._2(k)._1.isFinite && s._2(k)._3.isFinite))
+        def contrib(v: LedgerVec, k: Int): Double =
+          table.rows(k).weight * (soft(v(k)._1, table.kneeAt(k)) + LedgerSignK * v(k)._2)
+        val pairs = cols.map(k => samples.map(s => (s._2(k)._3, contrib(s._2, k))))
+        val bw = pairs.map { pr =>
+          val mm = pr.foldLeft(0.0)((t, q) => t + q._1) / pr.length
+          val v  = pr.foldLeft(0.0)((t, q) => t + (q._1 - mm) * (q._1 - mm)) / pr.length
+          math.max(math.sqrt(v) / 4.0, 1e-12)
+        }
+        val kmat = (0 until n).toVector.map { a =>
+          Array.tabulate(n)(b => MarketSim.expDet(-sqDist(x(a), x(b)) / twoLs2) + (if a == b then ScreenRidge else 0.0))
+        }
+        choleskyLower(kmat).map { l =>
+          val ymean = cols.map(k => samples.foldLeft(0.0)((t, s) => t + s._2(k)._3) / n)
+          val alpha = cols.zip(ymean).map((k, ym) => choleskySolve(l, samples.map(s => s._2(k)._3 - ym)))
+          Surrogate(dims, mean, sd, x, twoLs2, cols, ymean, alpha, pairs, bw)
+        }
+
   /** A reference: the yardstick and the reference's CRPS per graded row, each in row order. */
   type Reference = (Vector[(String, Double)], Vector[(String, Double)])
 
@@ -1035,7 +1242,12 @@ object MarketSimSearch:
                         /** A READ WITHIN ITS BOUNDS awaiting the placement over every read's
                           * histories pooled, which `evaluate` reads and clears (`placedTogether`);
                           * `None` on a read its bounds rejected */
-                        due: Option[Due] = None):
+                        due: Option[Due] = None,
+                        /** THE PATH-YEARS THIS READ SIMULATED: its ensembles' paths x years, the
+                          * horizons' extra ensembles included (`HorizonReadings.simulatedPathYears`),
+                          * every rep and both arms summed; what a generation's cost counts
+                          * (`gens.tsv`) */
+                        pathYears: Long = 0L):
     /** This read once the pooled placement `pl` is read (`placedTogether`): the rejection it ranks
       * as when the placement `rejects`; else the placement's failures (thin units, or a seed world's
       * failing ones) after its uncovered fidelity gates. */
@@ -1150,7 +1362,8 @@ object MarketSimSearch:
     // verdict is; the primary is bit-identical, so the table's horizons read `w`
     val vw = MarketSim.verdictWorld(anchors, w)
     if obj.stage == 0 || obj.stage >= paths then
-      readPaths(w, anchors, MarketSim.simPaths(vw, paths, years, s), years, s, obj)
+      val r = readPaths(w, anchors, MarketSim.simPaths(vw, paths, years, s), years, s, obj)
+      r.copy(pathYears = paths.toLong * years + r.pathYears)
     else
       val head = MarketSim.simPathRange(vw, 0, obj.stage, years, s)
       val first = readPaths(w, anchors, head, years, s, obj.unstaged)
@@ -1159,10 +1372,12 @@ object MarketSimSearch:
       // read (7 of 18 feasible candidates were rejected that way at P = 50 in a measured run), two
       // did not once
       if stageFail.length >= StageMinFails && !obj.stageCheck then
-        first.copy(gateFail = stageFail.map(f => s"stage: $f"), stageFail = Some(stageFail))
+        first.copy(gateFail = stageFail.map(f => s"stage: $f"), stageFail = Some(stageFail),
+                   pathYears = obj.stage.toLong * years + first.pathYears)
       else
         val main = head ++ MarketSim.simPathRange(vw, obj.stage, paths - obj.stage, years, s)
-        readPaths(w, anchors, main, years, s, obj).copy(stageFail = Some(stageFail))
+        val full = readPaths(w, anchors, main, years, s, obj)
+        full.copy(stageFail = Some(stageFail), pathYears = paths.toLong * years + first.pathYears + full.pathYears)
 
   /** The gate failure of a read whose paths are not a number (`MarketSim.Path.nanSeries`). */
   val NanFail: String = "nan"
@@ -1279,7 +1494,8 @@ object MarketSimSearch:
     // the log names a regression past a dead zone; smaller ones are priced but not listed
     val gateFail = gateFail0 ++ regress.collect { case (nm, e) if e > deadUnits => s"regress: $nm" }
     Read(feasible, score, worst._1, worst._2, descOf(st), total, gateFail = gateFail, watchMiss = watchMiss,
-         held = held, ledger = ledger.toVector.map(l => s"$s:${g8(l._2)}"), ledgerVec = ledger.map(_._1), due = due)
+         held = held, ledger = ledger.toVector.map(l => s"$s:${g8(l._2)}"), ledgerVec = ledger.map(_._1), due = due,
+         pathYears = hr.simulatedPathYears)
 
   /** A feasible read's ledger under that objective: its vector (`ledgerVector`), its score
     * (`ledgerSum`) and its row scores (`ledgerRowScores`, what `-noregress` prices), over the graded
@@ -1349,7 +1565,8 @@ object MarketSimSearch:
          held = reads.map(_.held).sum / reads.length,
          ledger = reads.flatMap(_.ledger),
          // the read that set the score: the first at the maximum
-         ledgerVec = reads.find(_.score == reads.map(_.score).max).flatMap(_.ledgerVec))
+         ledgerVec = reads.find(_.score == reads.map(_.score).max).flatMap(_.ledgerVec),
+         pathYears = reads.map(_.pathYears).sum)
 
   // ---- cheap fidelity -------------------------------------------------------------------------
 
@@ -1486,7 +1703,8 @@ object MarketSimSearch:
              // the primary arm's: the transport arm watches nothing, is read whole and projects
              // nothing
              watchMiss = a.watchMiss, stageFail = a.stageFail, held = a.held,
-             ledger = a.ledger ++ b.ledger.map(x => s"${tr.spec}:$x"), ledgerVec = a.ledgerVec)
+             ledger = a.ledger ++ b.ledger.map(x => s"${tr.spec}:$x"), ledgerVec = a.ledgerVec,
+             pathYears = a.pathYears + b.pathYears)
 
   /** the OBJECTIVE, as a digest of every row a candidate is judged on -- each set's name, then each
     * row's name, target and weight, then each record band's edges, for the primary set and the
@@ -1560,7 +1778,7 @@ object MarketSimSearch:
     * members cannot be reproduced, and a resume that changed a flag would mix standards silently.
     * Key/value so a later version copes with a row it does not recognise. */
   def writeArchive(dir: String, arc: Vector[Member], reserve: Vector[Member], gen: Int, evals: Int,
-                   noise: (Double, Int),
+                   noise: (Double, Int), pathYears: Long,
                    cfg: Vector[(String, String)], table: Ledger): Unit =
     val header = (Vector("name", "score", "raw", "worstRow") ++ names ++ descNames).mkString("\t") +
       (if table.isEmpty then "" else ledgerColumns(table))
@@ -1572,8 +1790,11 @@ object MarketSimSearch:
     // The seed-noise accumulator is resumable STATE, not a setting: the resume guard ignores it, and
     // a resume that restarted it would admit inside the noise for its first generations.  `%.8g` so both
     // twins write one text.
+    // the path-years every generation so far simulated (`gens.tsv`'s cumulative): resumable state,
+    // as the noise's is; an archive written before the count resumes it from 0
     val body = (("gen", gen.toString) +: ("evals", evals.toString) +:
-                ("noiseSum", f"${noise._1}%.8g") +: ("noiseN", noise._2.toString) +: cfg)
+                ("noiseSum", f"${noise._1}%.8g") +: ("noiseN", noise._2.toString) +:
+                ("pathYears", pathYears.toString) +: cfg)
                  .map((k, v) => s"$k\t$v")
     s"$dir/state.tsv".asPath.writeLines("key\tvalue" +: body)
 
@@ -1599,6 +1820,10 @@ object MarketSimSearch:
       "project"        -> "(none)",
       // one written before `-cov` existed drew its children one dial at a time
       "proposal"       -> "dial",
+      // every candidate seeded alone and none raced or screened
+      "seedRule"       -> "candidate",
+      "race"           -> "0",
+      "screen"         -> "0",
       // one without `transportWeight` priced its transport arm in full
       "transportWeight" -> (if prior.get("transport").forall(_ == "(none)") then "(none)" else "1.0000"),
       // one written before `membership` placed the record on each read alone
@@ -1629,6 +1854,18 @@ object MarketSimSearch:
     * the `ledger` column. */
   def ledgerColumns(table: Ledger): String =
     "\ttier\tledger" + table.rows.map(r => s"\tcrps:${r.name}\tsign:${r.name}\tmodel:${r.name}").mkString
+
+  /** The candidate log's ledger columns (`cands.tsv`): `crps:ROW`, `sign:ROW` and `model:ROW` for every
+    * row of the table, in table order; empty under the CRPS objective. */
+  def ledgerRowColumns(table: Ledger): String =
+    table.rows.map(r => s"\tcrps:${r.name}\tsign:${r.name}\tmodel:${r.name}").mkString
+
+  /** A read's ledger vector as the candidate log's cells, NaN where the read has none (rejected, or
+    * stopped at the bar); empty under the CRPS objective. */
+  def ledgerVecCells(v: Option[LedgerVec], table: Ledger): String =
+    table.rows.indices.map { k =>
+      v.flatMap(_.lift(k)).fold("\tNaN\tNaN\tNaN")((c, s, x) => s"\t${shown(c)}\t${shown(s)}\t${shown(x)}")
+    }.mkString
 
   /** The ledger cells at full round-trip precision (`shown`), not the archive's eight digits: the
     * re-pick tool's weighted sum of the stored CRPS and sign shares must equal the `ledger` cell. */
@@ -1827,22 +2064,16 @@ object MarketSimSearch:
     * space, each descriptor normalised by its range across the archive, the worse scorer goes.
     * Trimming by score is an optimiser and narrows the spread the archive exists to keep (signed
     * lag-1 range 0.057 -> 0.032 over that run; 0.043 -> 0.074 for spread-keeping in a 40-generation
-    * A/B).  Feasibility is the membership test; score was never meant to be a second one. */
-  def admit(arc: Vector[Member], m: Member, sep: Double, keep: Int,
-            noise: Double): (Vector[Member], Boolean) =
-    // the nearest member inside `sep`, not the first found; strict `<` keeps the earliest on a tie,
-    // as the Rust twin's fold does
-    val near = arc.indices.foldLeft(Option.empty[(Int, Double)]) { (best, i) =>
-      val d = apart(arc(i).dials, m.dials)
-      if d >= sep then best
-      else best match
-        case Some((_, bd)) if bd <= d => best
-        case _                        => Some((i, d))
-    }.map(_._1)
+    * A/B).  Feasibility is the membership test; score was never meant to be a second one.  `near` is
+    * the nearest member inside the separation (`nearestWithin`) with the score the candidate must beat
+    * by `margin`: the member's own under independent seeds, its read on the candidate's seeds under
+    * `-common`, where `margin` is the paired noise. */
+  def admit(arc: Vector[Member], m: Member, keep: Int, near: Option[(Int, Double)],
+            margin: Double): (Vector[Member], Boolean) =
     val (grown, placed) = near match
-      case None                                      => (arc :+ m, true)
-      case Some(i) if m.score < arc(i).score - noise => (arc.updated(i, m), true)
-      case Some(_)                                   => (arc, false)
+      case None                                         => (arc :+ m, true)
+      case Some((i, toBeat)) if m.score < toBeat - margin => (arc.updated(i, m), true)
+      case Some(_)                                      => (arc, false)
     @annotation.tailrec
     def trim(v: Vector[Member]): Vector[Member] =
       if v.length <= keep then v
@@ -1852,6 +2083,17 @@ object MarketSimSearch:
     val kept = trim(grown)
     // in the archive after the trim: an appended candidate can be the worse half of the closest pair
     (kept, placed && kept.exists(_.dials == m.dials))
+
+  /** The nearest member inside `sep`, not the first found; strict `<` keeps the earliest on a tie,
+    * as the Rust twin's fold does. */
+  def nearestWithin(arc: Vector[Member], dials: Vector[Double], sep: Double): Option[Int] =
+    arc.indices.foldLeft(Option.empty[(Int, Double)]) { (best, i) =>
+      val d = apart(arc(i).dials, dials)
+      if d >= sep then best
+      else best match
+        case Some((_, bd)) if bd <= d => best
+        case _                        => Some((i, d))
+    }.map(_._1)
 
   /** THE STOPPING RULE, the report's: the spread is the descriptor span over everything admitted
     * so far, each descriptor as a fraction of its span over the whole run, averaged; the points
@@ -1902,6 +2144,7 @@ object MarketSimSearch:
     var objectiveForm = "ledger"; var ledgerFile = ""
     var transportWeight = 0.25
     var cov = 0.0; var covShrink = 0.3
+    var common = false; var race = 0; var raceKeep = 0; var screen = 0
     eachArg(args.toSeq, usage) {
       case "-out"     => out = consumeNext
       case "-anchors" => anchorSpec = consumeNext
@@ -1934,6 +2177,15 @@ object MarketSimSearch:
       case "-seedset"   => seedSet = consumeNext
       case "-stage"      => stage = intOr("-stage", consumeNext)
       case "-stagecheck" => stageCheck = intOr("-stagecheck", consumeNext)
+      case "-common"     => common = true
+      case "-race"       =>
+        val v = consumeNext
+        val (p, k) = v.split(":", 2) match
+          case Array(p, k) => (p, k)
+          case _           => (v, "")
+        race = intOr("-race", p)
+        raceKeep = if k.isEmpty then 0 else intOr("-race", k)
+      case "-screen"     => screen = intOr("-screen", consumeNext)
       case "-project"    => project = consumeNext
       case "-seedworlds" => seedWorlds = consumeNext
       case "-noregressset" => noregressSet = consumeNext
@@ -1950,6 +2202,10 @@ object MarketSimSearch:
     if pop < 1 then usage("-pop wants at least 1")
     if cov < 0.0 || cov > 1.0 || covShrink < 0.0 || covShrink > 1.0 then
       usage("-cov and -covshrink are shares, 0 to 1")
+    // `-common` wants the reps its paired noise is read off, and a race without K keeps a quarter of
+    // the population
+    if common && reps < 2 then usage("-common wants -reps 2 or more: the paired noise is read off the seeds' spread")
+    if race > 0 && raceKeep == 0 then raceKeep = math.max(pop / 4, 1)
     val _ = out.asPath.mkdirs
 
     val anchors = MarketSim.anchorsNamed(anchorSpec)
@@ -2201,6 +2457,10 @@ object MarketSimSearch:
                           // how a candidate's reads are seeded: see `candidateSeed`
                           "candidateSeeds" -> candidateSeeds,
                           "noiseReads" -> noiseReads,
+                          // one seed set a generation (`-common`) or one a candidate, the race and the screen
+                          "seedRule" -> (if common then "generation" else "candidate"),
+                          "race" -> (if race > 0 then s"$race:$raceKeep" else "0"),
+                          "screen" -> screen.toString,
                           // the admission rules and the objective are recorded with the ensemble: a resume under different
                           // ones puts two standards in one archive
                           "admit" -> "spread-keeping-nearest",
@@ -2233,6 +2493,7 @@ object MarketSimSearch:
     val evals0 = prior.getOrElse("evals", "0").toInt
     val nsum0 = prior.getOrElse("noiseSum", "0").toDouble
     val nn0 = prior.getOrElse("noiseN", "0").toInt
+    val pathYears0 = prior.getOrElse("pathYears", "0").toLong
     // A resume that changes how a candidate is judged puts two standards in one archive and says
     // nothing about it.  Refuse, unless told the change is deliberate.
     if loaded.nonEmpty then
@@ -2327,7 +2588,7 @@ object MarketSimSearch:
         gone.map((m, r) => (Vector(m.name, f"${m.score}%.6f", f"${m.raw}%.6f", m.worst) ++
                             m.dials.map(x => f"$x%.8g") ++ m.desc.map(x => f"$x%.8g") ++
                             Vector(r(1), r(3), r(4), r(5))).mkString("\t")))
-      writeArchive(out, keptBoth.map(_._1), loadedReserve, gen0, evals0, (nsum0, nn0), settings, ledger)
+      writeArchive(out, keptBoth.map(_._1), loadedReserve, gen0, evals0, (nsum0, nn0), pathYears0, settings, ledger)
       println(s"archive pruned to ${keptBoth.length}; ${gone.length} moved to $out/dropped.tsv")
       sys.exit(0)
 
@@ -2441,7 +2702,7 @@ object MarketSimSearch:
       println(s"wrote $out/holdout.tsv")
       sys.exit(0)
 
-    writeArchive(out, startArc, loadedReserve, gen0, evals0, (nsum0, nn0), settings, ledger)
+    writeArchive(out, startArc, loadedReserve, gen0, evals0, (nsum0, nn0), pathYears0, settings, ledger)
     // THE HEADER IS A CONTRACT, and it is written only when the log is absent, so a resume
     // after a column was added would append wider rows under the narrower header and quietly
     // ragged the file.  Refuse instead: the run that wrote those rows read a different log.
@@ -2490,31 +2751,36 @@ object MarketSimSearch:
 
     /** One generation: `pop` mutations of members drawn from the archive, then a checkpoint.  The
       * archive is passed and returned rather than mutated, and a kill between generations loses
-      * at most one generation's work. */
+      * at most one generation's work.  `carry0` is what the run keeps across generations in memory
+      * (`Carry`). */
     def generation(arc: Vector[Member], reserve0: Vector[Member], g: Int, evals: Int, nsum0: Double, nn0: Int,
-                   trace0: Vector[(Int, Vector[Double])], held0: Map[String, Double])
-        : (Vector[Member], Vector[Member], Int, Double, Int, Vector[(Int, Vector[Double])], Map[String, Double]) =
+                   trace0: Vector[(Int, Vector[Double])], held0: Map[String, Double], carry0: Carry)
+        : (Vector[Member], Vector[Member], Int, Double, Int, Vector[(Int, Vector[Double])], Map[String, Double],
+           Carry) =
       // The same `NumPyRNG` as the rest of the program and as the Rust harness: `randn` and `nextBoundedInt`
       // are gated bit-identical across the twins, so one `-seed` proposes the same candidates in both.
       // The mask keeps the derived seed non-negative in both languages.
       val rng = new NumPyRNG((base ^ (g.toLong * 0x9e3779b9L)) & 0x7fffffffffffffffL)
+      val genT0 = System.nanoTime()
       // a running seed-noise estimate from each candidate's spread across its own reps, carried across generations
       // the noise read's slot (see `noiseReading`), past the generation's candidates and reserved
       // whether it is used or not, so a candidate's slot never depends on an outcome
-      val noiseSlot = evals + pop * reps
-      val start = (arc, evals, Vector.empty[String], nsum0, nn0, trace0, reps == 1,
-                   Vector.empty[String], Vector.empty[String], held0, reserve0)
+      val noiseSlot = if common then evals + reps else evals + pop * reps
+      // THE GENERATION'S SEEDS (`-common`): one set for every child and for the member a child is
+      // judged against, read on them once a generation (`genReads`); the parents' race reads
+      // likewise (`raceReads`)
+      val genSeeds = (0 until reps).toVector.map(j => candidateSeed(base, evals + j))
       // the archive's shape is read once a generation; `-cov 0` reads none and draws nothing
       // extra, so a run without it proposes exactly what it always did
       val factor = if cov > 0.0 then proposalFactor(arc, covShrink) else None
-      val (next, slots, log, nsum, nn, trace, _, cands, stageLog, heldNext, reserveNext) =
-        (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn, tr, noiseDue, cl, sl, hm, res), _) =>
-        // A PROPOSAL OUTSIDE THE CLI'S DOMAIN is drawn again, parent and step, from the
-        // generation's stream: the proposal restricted to the domain, no seed slot and no log line
-        // spent on it
+      // ONE PROPOSAL: a parent drawn from `pool` and a child stepped from it (`stepped`, `-cov`,
+      // `-fix`, `-project`).  A PROPOSAL OUTSIDE THE CLI'S DOMAIN is drawn again, parent and step,
+      // from the generation's stream: the proposal restricted to the domain, no seed slot and no log
+      // line spent on it
+      def breed(pool: Vector[Member], hm: Map[String, Double]): (Member, Vector[Double]) =
         @annotation.tailrec
         def propose(refused: Int): (Member, Vector[Double]) =
-          val parent = acc(rng.nextBoundedInt(acc.length))
+          val parent = pool(rng.nextBoundedInt(pool.length))
           val along = factor.filter(_ => rng.nextDouble() < cov)
           val z = parent.dials.indices.toVector.map(_ => rng.randn())
           admissible(worldFor(parent.name), parent.dials.indices.toVector.map { i =>
@@ -2535,70 +2801,179 @@ object MarketSimSearch:
               if refused + 1 == ProposalTries then
                 usage(s"$ProposalTries proposals in a row fell outside the CLI's domain, the last: $why")
               propose(refused + 1)
-        val (parent, child) = propose(0)
-        val t0 = System.nanoTime()
-        // the lineage's bar, so an evaluation stops as soon as it is over it
-        val r = judge(worldFor(parent.name), child, anchors, transport, paths, years,
-                      (0 until reps).toVector.map(j => candidateSeed(base, ev + j)), obj,
-                      bar = if bar > 0.0 then barFor.get(parent.name) else None)
-        val secs = (System.nanoTime() - t0) / 1e9
-        // THE NOISE READ (`-reps 1`): the generation's first candidate to pass its own read is read
-        // once more, at the generation's reserved slot and to the end whatever the bar.  It feeds
-        // the estimate alone: the candidate is scored on its first read, as its siblings are
-        val second =
-          if noiseDue && r.feasible && r.complete then
-            Some(judge(worldFor(parent.name), child, anchors, transport, paths, years,
-                       Vector(candidateSeed(base, noiseSlot)), obj, bar = None))
-          else None
-        // a candidate above the bar still feeds the noise estimate when it ran to the end: its
-        // spread is a reading of the objective's own noise whatever its level.  One the bar cut
-        // short does not: a partial spread is not that reading
-        val reading = noiseReading(reps, r, second)
-        val nsum2 = reading.fold(nsum)(nsum + _)
-        val nn2   = if reading.isDefined then nn + 1 else nn
-        // admitted BEFORE the line is built, because the line records the answer; under the ledger
-        // objective the members the admission discards join the Pareto reserve (`reserveAfter`),
-        // kept beside the core and never drawn from as parents
-        val (grown, took, res2) =
-          if r.feasible && !aboveBar(parent.name, r.score) then
-            val cand = Member(parent.name, child, r.score, r.raw, r.worst, r.desc, r.ledgerVec)
-            // no reading yet is no margin: at `-reps 1` the first may come generations in
-            val (next, entered) = admit(acc, cand, sep, keep, if nn2 > 0 then nsum2 / nn2 else 0.0)
-            (next, entered, if obj.kind == ObjectiveKind.Ledger then reserveAfter(acc, next, cand, res, obj.ledger) else res)
-          else (acc, false, res)
-        // `ev` is the SEED SLOT this candidate drew from (rep j reads `candidateSeed(base, ev + j)`), so a
-        // log line reproduces its candidate
-        val line = f"$g\t$ev\t${parent.name}\t${r.feasible}\t${r.score}%.6f\t${r.raw}%.6f" +
-                   f"\t${r.worst}\t$secs%.3f\t" + r.desc.map(x => f"$x%.8g").mkString("\t") +
-                   "\t" + r.gateFail.mkString("; ") + s"\t$took\t" + r.ledger.mkString(" ")
-        // every candidate's dials, so what it was can be read back without re-deriving the draws:
-        // the log carries its descriptors and the archive only the members
-        val staged = r.stageFail match
-          case None                  => "-"
-          case Some(f) if f.isEmpty  => "pass"
-          case Some(_)               => "fail"
-        val cand = f"$g\t$ev\t${parent.name}\t${r.feasible}\t$took\t$staged\t$secs%.3f\t${r.held}%.8g\t" +
-                   child.map(x => f"$x%.8g").mkString("\t")
-        val stageLine =
-          Option.when(obj.stageCheck)(s"$g\t$ev\t${r.stageFail.exists(_.isEmpty)}\t${r.feasible}\t" +
-            r.stageFail.fold("")(_.mkString("; ")) + "\t" + r.gateFail.mkString("; "))
-        (grown, ev + reps, lg :+ line, nsum2, nn2, if took then tr :+ (g, r.desc) else tr,
-         noiseDue && reading.isEmpty, cl :+ cand, sl ++ stageLine,
-         if took then hm + (heldKey(parent.name, child) -> round8(r.held)) else hm, res2)
+        propose(0)
+      // THE SCREEN (`-screen`): the generation's proposals bred first from the archive it starts
+      // with, the surrogate's pick read, explored ones first in breeding order and then the rest by
+      // rank; without a surrogate yet, no extra proposal
+      val sur = if screen > 0 then surrogateFit(carry0.window, ledger) else None
+      type Brood = Vector[(Member, Vector[Double], Double, Int, Boolean)]
+      val brood: Brood = sur.fold(Vector.empty: Brood) { su =>
+        val props = (0 until pop * screen).toVector.map { _ =>
+          val (p, ch) = breed(arc, held0)
+          (p, ch, su.predictScore(dialCoords(ch)))
+        }
+        val order = props.indices.sortWith((i, j) => java.lang.Double.compare(props(i)._3, props(j)._3) < 0)
+        val rank = order.zipWithIndex.sortBy(_._1).map(_._2)
+        val explore = if pop >= ScreenExplore then pop / ScreenExplore else 0
+        val top = order.take(pop - explore).toSet
+        val explored = props.indices.filterNot(top).take(explore)
+        (explored.map(i => (props(i)._1, props(i)._2, props(i)._3, rank(i), true)) ++
+          order.take(pop - explore).map(i => (props(i)._1, props(i)._2, props(i)._3, rank(i), false))).toVector
       }
-      val used = if reps == 1 then slots + 1 else slots
+      val screened = sur.isDefined
+      val start = (arc, evals, Vector.empty[String], nsum0, nn0, trace0, reps == 1,
+                   Vector.empty[String], Vector.empty[String], held0, reserve0,
+                   Extra(carry0, Vector.empty, Vector.empty, Map.empty, Map.empty))
+      val (next, slots, log, nsum, nn, trace, _, cands, stageLog, heldNext, reserveNext, extra) =
+        (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn, tr, noiseDue, cl, sl, hm, res, ex), k) =>
+        val (parent, child, predicted, prank, explored) =
+          brood.lift(k).getOrElse {
+            val (p, ch) = breed(acc, hm)
+            (p, ch, Double.NaN, 0, false)
+          }
+        val seeds =
+          if common then genSeeds else (0 until reps).toVector.map(j => candidateSeed(base, ev + j))
+        val evNext = if common then ev else ev + reps
+        // THE RACE (`-race`): the child against its parent on the race's paths and the first seed; a
+        // child over the cut is logged and not read in full
+        val raced: Option[(Boolean, Extra)] = Option.when(race > 0) {
+          val baseW = worldFor(parent.name)
+          val pkey = heldKey(parent.name, parent.dials)
+          val (pr, prCost) = ex.raceReads.get(pkey).fold {
+            val pread = judge(baseW, parent.dials, anchors, transport, race, years, seeds.take(1), obj, bar = None)
+            (pread.score, pread.pathYears)
+          }(v => (v, 0L))
+          val cr = judge(baseW, child, anchors, transport, race, years, seeds.take(1), obj, bar = None)
+          // a child the race's few paths find infeasible is not dropped on gates read there: it goes
+          // to the full read, which decides its bounds, and feeds no difference
+          val d = if cr.feasible then cr.score - pr else Double.NaN
+          val cut = raceCut(ex.carry.raceHist, raceKeep, pop)
+          val kept = !cr.feasible || d <= cut
+          val hist = if cr.feasible then (ex.carry.raceHist :+ d).takeRight(RaceWindow) else ex.carry.raceHist
+          val line = s"$g\t$ev\t${parent.name}\t${cr.feasible}\t${g8x(d)}\t${g8x(cut)}\t$kept"
+          (kept, ex.copy(carry = ex.carry.copy(raceHist = hist), raceLog = ex.raceLog :+ line,
+                         raceReads = ex.raceReads + (pkey -> pr),
+                         cost = ex.cost.copy(race = ex.cost.race + prCost + cr.pathYears)))
+        }
+        val ex1 = raced.fold(ex)(_._2)
+        if raced.exists(!_._1) then
+          val sl2 = if screen > 0 then ex1.screenLog :+ s"$g\t$ev\t${g8x(predicted)}\t$prank\t$explored\tNaN\traced"
+                    else ex1.screenLog
+          (acc, evNext, lg, nsum, nn, tr, noiseDue, cl, sl, hm, res, ex1.copy(screenLog = sl2))
+        else
+          val t0 = System.nanoTime()
+          // the lineage's bar, so an evaluation stops as soon as it is over it
+          val r = judge(worldFor(parent.name), child, anchors, transport, paths, years, seeds, obj,
+                        bar = if bar > 0.0 then barFor.get(parent.name) else None)
+          val secs = (System.nanoTime() - t0) / 1e9
+          val ex1c = ex1.copy(cost = ex1.cost.copy(children = ex1.cost.children + r.pathYears))
+          // the surrogate's window takes every feasible full read with its ledger vector, a read the bar
+          // cut after one rep included: its vector is the read that set its score
+          val window2 = r.ledgerVec.filter(_ => r.feasible)
+            .fold(ex1.carry.window)(v => (ex1.carry.window :+ (dialCoords(child), v)).takeRight(ScreenWindow))
+          val screenLog2 =
+            if screen > 0 then
+              ex1.screenLog :+ (s"$g\t$ev\t${g8x(predicted)}\t$prank\t$explored\t" +
+                (if r.feasible then g8x(r.score) else "NaN") + "\t" + (if r.feasible then "read" else "rejected"))
+            else ex1.screenLog
+          // THE NOISE READ (`-reps 1`): the generation's first candidate to pass its own read is read
+          // once more, at the generation's reserved slot and to the end whatever the bar.  It feeds
+          // the estimate alone: the candidate is scored on its first read, as its siblings are
+          val second =
+            if noiseDue && r.feasible && r.complete then
+              Some(judge(worldFor(parent.name), child, anchors, transport, paths, years,
+                         Vector(candidateSeed(base, noiseSlot)), obj, bar = None))
+            else None
+          // a candidate above the bar still feeds the noise estimate when it ran to the end: its
+          // spread is a reading of the objective's own noise whatever its level.  One the bar cut
+          // short does not: a partial spread is not that reading
+          val reading = noiseReading(reps, r, second)
+          val nsum2 = reading.fold(nsum)(nsum + _)
+          val nn2   = if reading.isDefined then nn + 1 else nn
+          val ex1n  = ex1c.copy(cost = ex1c.cost.copy(noise = ex1c.cost.noise + second.fold(0L)(_.pathYears)))
+          // admitted BEFORE the line is built, because the line records the answer; under the ledger
+          // objective the members the admission discards join the Pareto reserve (`reserveAfter`),
+          // kept beside the core and never drawn from as parents
+          val (grown, took, res2, ex2) =
+            if r.feasible && !aboveBar(parent.name, r.score) then
+              val cand = Member(parent.name, child, r.score, r.raw, r.worst, r.desc, r.ledgerVec)
+              // THE PAIRED ADMISSION (`-common`): the member the child would replace is read on the
+              // generation's seeds, and the child must beat that read by the paired noise
+              val near = nearestWithin(acc, cand.dials, sep)
+              val (genReads2, paired, memberCost) =
+                if !common then (ex1n.genReads, Option.empty[(Double, Option[Double])], 0L)
+                else near.fold((ex1n.genReads, Option.empty[(Double, Option[Double])], 0L)) { i =>
+                  val m = acc(i)
+                  val key = heldKey(m.name, m.dials)
+                  val (mr, mc) = ex1n.genReads.get(key).fold {
+                    val read = judge(worldFor(m.name), m.dials, anchors, transport, paths, years, genSeeds, obj,
+                                     bar = None)
+                    (read, read.pathYears)
+                  }(v => (v, 0L))
+                  (ex1n.genReads + (key -> mr), Option.when(mr.feasible)((mr.score, pairNoise(r, mr))), mc)
+                }
+              val (psum, pn) = paired.flatMap(_._2)
+                .fold((ex1n.carry.pnoiseSum, ex1n.carry.pnoiseN))(x => (ex1n.carry.pnoiseSum + x, ex1n.carry.pnoiseN + 1))
+              // no reading yet is no margin: at `-reps 1` the first may come generations in
+              val margin =
+                if common then (if pn > 0 then psum / pn else 0.0)
+                else if nn2 > 0 then nsum2 / nn2 else 0.0
+              val toBeat = near.map(i => (i, paired.fold(acc(i).score)(_._1)))
+              val (next, entered) = admit(acc, cand, keep, toBeat, margin)
+              (next, entered,
+               if obj.kind == ObjectiveKind.Ledger then reserveAfter(acc, next, cand, res, obj.ledger) else res,
+               ex1n.copy(carry = ex1n.carry.copy(pnoiseSum = psum, pnoiseN = pn), genReads = genReads2,
+                         cost = ex1n.cost.copy(members = ex1n.cost.members + memberCost)))
+            else (acc, false, res, ex1n)
+          // `ev` is the SEED SLOT this candidate drew from (rep j reads `candidateSeed(base, ev + j)`), so a
+          // log line reproduces its candidate
+          val line = f"$g\t$ev\t${parent.name}\t${r.feasible}\t${r.score}%.6f\t${r.raw}%.6f" +
+                     f"\t${r.worst}\t$secs%.3f\t" + r.desc.map(x => f"$x%.8g").mkString("\t") +
+                     "\t" + r.gateFail.mkString("; ") + s"\t$took\t" + r.ledger.mkString(" ")
+          // every candidate's dials, so what it was can be read back without re-deriving the draws:
+          // the log carries its descriptors and the archive only the members
+          val staged = r.stageFail match
+            case None                  => "-"
+            case Some(f) if f.isEmpty  => "pass"
+            case Some(_)               => "fail"
+          // and, under the ledger objective, the read's ledger vector: every candidate's rows, the
+          // surrogate's data (`ledgerVecCells`; NaN on a rejected read)
+          val cand = f"$g\t$ev\t${parent.name}\t${r.feasible}\t$took\t$staged\t$secs%.3f\t${r.held}%.8g\t" +
+                     child.map(x => f"$x%.8g").mkString("\t") + ledgerVecCells(r.ledgerVec, ledger)
+          val stageLine =
+            Option.when(obj.stageCheck)(s"$g\t$ev\t${r.stageFail.exists(_.isEmpty)}\t${r.feasible}\t" +
+              r.stageFail.fold("")(_.mkString("; ")) + "\t" + r.gateFail.mkString("; "))
+          (grown, evNext, lg :+ line, nsum2, nn2, if took then tr :+ (g, r.desc) else tr,
+           noiseDue && reading.isEmpty, cl :+ cand, sl ++ stageLine,
+           if took then hm + (heldKey(parent.name, child) -> round8(r.held)) else hm, res2,
+           ex2.copy(carry = ex2.carry.copy(window = window2), screenLog = screenLog2))
+      }
+      val used0 = if common then slots + reps else slots
+      val used  = if reps == 1 then used0 + 1 else used0
+      // THE GENERATION'S COST (`Cost`), the run's total beside it
+      val cost = extra.cost
+      val pathYears = carry0.pathYears + cost.total
+      if race > 0 then
+        appendTsv(out, "race.tsv", "gen\teval\tparent\tfeasible\tdifference\tcut\tkept", extra.raceLog)
+      if screen > 0 then
+        appendTsv(out, "screen.tsv", "gen\teval\tpredicted\trank\texplore\tread\toutcome", extra.screenLog)
       appendLog(out, log)
       appendTsv(out, "cands.tsv",
                 (Vector("gen", "eval", "parent", "feasible", "admitted", "stage", "seconds", "held") ++ names)
-                  .mkString("\t"), cands)
+                  .mkString("\t") + ledgerRowColumns(ledger), cands)
       if obj.stageCheck then
         appendTsv(out, "stage.tsv", "gen\teval\tprefixFeasible\tfeasible\tprefixFail\tgateFail", stageLog)
-      writeArchive(out, next, reserveNext, g + 1, used, (nsum, nn), settings, ledger)
+      writeArchive(out, next, reserveNext, g + 1, used, (nsum, nn), pathYears, settings, ledger)
+      appendTsv(out, "gens.tsv", "gen\tfinished\tseconds\tchildren\trace\tmembers\tnoise\ttotal\tcumulative",
+                Vector(f"$g\t${System.currentTimeMillis() / 1000.0}%.3f\t${(System.nanoTime() - genT0) / 1e9}%.3f" +
+                       s"\t${cost.children}\t${cost.race}\t${cost.members}\t${cost.noise}\t${cost.total}\t$pathYears"))
       if projection.isDefined then writeHeld(out, next, heldNext)
+      val screenNote =
+        if screen > 0 then f"  window ${extra.carry.window.length}%4d  screened $screened" else ""
       println(f"gen $g%5d  archive ${next.length}%3d  best ${next.map(_.score).min}%7.3f  " +
               f"median ${MarketSim.pctile(next.map(_.score), 0.5)}%7.3f  " +
-              f"raw ${next.map(_.raw).min}%7.3f  slots $used%6d")
-      (next, reserveNext, used, nsum, nn, trace, heldNext)
+              f"raw ${next.map(_.raw).min}%7.3f  slots $used%6d" + screenNote)
+      (next, reserveNext, used, nsum, nn, trace, heldNext, extra.carry.copy(pathYears = pathYears))
 
     // `-gens 0` runs until the spread closes or the run is killed; the checkpoint after every
     // generation is what makes that safe.
@@ -2614,10 +2989,13 @@ object MarketSimSearch:
       }
     var arc = startArc; var reserve = loadedReserve; var g = gen0; var evals = evals0
     var nsum = nsum0; var nn = nn0; var trace = trace0; var heldMap = heldStart
+    // the race's recent differences, the paired noise and the surrogate's window, in memory only:
+    // after a resume they start empty, as the seed noise's margin does before its first reading
+    var carry = Carry(pathYears = pathYears0)
     var closed = false
     while !closed && (gens == 0 || g < gen0 + gens) do
-      val (a2, r2, e2, s2, n2, t2, h2) = generation(arc, reserve, g, evals, nsum, nn, trace, heldMap)
-      arc = a2; reserve = r2; evals = e2; nsum = s2; nn = n2; trace = t2; heldMap = h2; g += 1
+      val (a2, r2, e2, s2, n2, t2, h2, c2) = generation(arc, reserve, g, evals, nsum, nn, trace, heldMap, carry)
+      arc = a2; reserve = r2; evals = e2; nsum = s2; nn = n2; trace = t2; heldMap = h2; carry = c2; g += 1
       if close > 0.0 then
         spreadAdded(trace, g).foreach { (added, blk) =>
           if added < close then

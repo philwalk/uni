@@ -5207,6 +5207,68 @@ impl Path {
         }
     }
 
+    /// The path's `sessions` from `start`, without the channels, the basket, the sectors and the
+    /// macro panels (`tail_sessions_keeping` without them, opening at `start` instead of the end):
+    /// the cut a reported record with a conditioned start reads (`gap_first_passage`). A series
+    /// that runs beside the price is cut beside it; the scalar summaries stay the whole path's.
+    #[must_use]
+    pub fn window_sessions_lean(&self, start: usize, sessions: usize) -> Path {
+        fn window<T: Clone>(v: &[T], start: usize, sessions: usize) -> Vec<T> {
+            let a = start.min(v.len());
+            v[a..(a + sessions).min(v.len())].to_vec()
+        }
+        let cut = |v: &[f64]| window(v, start, sessions);
+        Path {
+            price: cut(&self.price),
+            rate: cut(&self.rate),
+            fundamental: cut(&self.fundamental),
+            liq: cut(&self.liq),
+            bliq: cut(&self.bliq),
+            bond: cut(&self.bond),
+            bond10: cut(&self.bond10),
+            tips10: cut(&self.tips10),
+            real_yield10: cut(&self.real_yield10),
+            exp_infl10: cut(&self.exp_infl10),
+            real_rate: cut(&self.real_rate),
+            infl_press: cut(&self.infl_press),
+            cpi: cut(&self.cpi),
+            mean_trend_share: self.mean_trend_share,
+            trend_pinned: self.trend_pinned,
+            target_sat: self.target_sat,
+            clamped_days: self.clamped_days,
+            eq_floor_days: self.eq_floor_days,
+            eq_tail_days: self.eq_tail_days,
+            eq_halt_days: self.eq_halt_days,
+            mean_bond_stress: self.mean_bond_stress,
+            bond_stress_hi: window(&self.bond_stress_hi, start, sessions),
+            duration: self.duration,
+            bond10_duration: self.bond10_duration,
+            tips_duration: self.tips_duration,
+            mean_crowd_flow: self.mean_crowd_flow,
+            disasters: self.disasters,
+            booms: self.booms,
+            recessions: self.recessions,
+            bust_ceil_days: self.bust_ceil_days,
+            sat: Vec::new(),
+            log_hi: Vec::new(),
+            log_lo: Vec::new(),
+            log_volume: Vec::new(),
+            div_yield: cut(&self.div_yield),
+            traded: cut(&self.traded),
+            log_open: Vec::new(),
+            names: Vec::new(),
+            sectors: Vec::new(),
+            chan_k: self.chan_k,
+            chan_k_sat: self.chan_k_sat,
+            chan_k_div: self.chan_k_div,
+            chan_k_vs: self.chan_k_vs,
+            chan_k_iv: self.chan_k_iv,
+            chan_k_dr: self.chan_k_dr,
+            macro_panel: None,
+            macro_null_panel: None,
+        }
+    }
+
     /// The path's last `sessions`, for the rows read at a record's window, which ends where the
     /// record's does: every series cut to them, the channels and the macro panel included (the
     /// bar and panel rows read the same window, each bar beside its close), the scalar summaries
@@ -11546,7 +11608,7 @@ pub fn vol_exit_resamples(
 /// (`ledger_histories`); then the one-day reversion (`lag1_demeaned` of the daily log returns,
 /// ruled 2026-10-23), read on the record after `UNLAG_CUT` alone, where the lag correction leaves
 /// no lag-1 to read, and on each history of that many sessions (`LedgerRecords::lag1_sessions`).
-/// The records in `ledgerrows-2026-11-01.tsv`.
+/// The records in `ledgerrows-2026-11-02.tsv`.
 pub const LEDGER_ROWS: [&str; 38] = [
     "vol-exit 1x edge 1.0/1.5 pts/yr",
     "vol-exit 3x edge 1.0/1.5 pts/yr",
@@ -19810,6 +19872,9 @@ pub enum RowFamily {
     MultiYear,
     /// the bubble coupling, an extreme row's 5-95 percentile band
     Coupling,
+    /// `VOL_STATE_ROWS`, `vol_state_of` on the window's sessions, their joint band at the
+    /// family's own level (`VOL_STATE_REPORTED_ALPHA`)
+    VolState,
 }
 
 impl RowFamily {
@@ -19820,8 +19885,23 @@ impl RowFamily {
             Self::Timing => &TIMING_ROWS,
             Self::MultiYear => &MULTI_YEAR_ROWS,
             Self::Coupling => &["bubble coupling 3y"],
+            Self::VolState => &VOL_STATE_ROWS,
         }
     }
+}
+
+/// WHERE A REPORTED RECORD'S WINDOW OPENS on a path: at the path's last `years` (the record's
+/// windows end together, `record_window`), or at the first session with `years` left whose
+/// valuation gap ln(price / fundamental) is in the top `pct` percent of the world's sessions'
+/// (`gap_first_passage`). The second places a record that opened near a valuation peak among the
+/// histories that open as stretched: QQQ listed a year before the Nasdaq-100's peak, and among
+/// every history its window reads rarer than a world that opens there makes it. The histories a
+/// conditioned placement rests on are the paths that reach the gap in time, and their count is
+/// carried in the row's window label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowStart {
+    Last,
+    GapTop(u8),
 }
 
 /// A RECORD A SET REPORTS BESIDE THE ONE IT GRADES: one family's rows read off another window of
@@ -19833,13 +19913,15 @@ pub struct ReportedRecord {
     pub family: RowFamily,
     pub window: &'static str,
     pub years: usize,
+    pub start: WindowStart,
     /// the record's readings, in `family.rows()` order
     pub records: &'static [f64],
 }
 
 /// THE NASDAQ'S REPORTED RECORDS: CRSP's century (the S&P's timing record), the NDX from 1990
 /// and QQQ, the last two inside the window the consumer's rules were selected on. Records from
-/// `timing-2026-09-30.tsv`, `bubblebust-2026-09-24.tsv` and `multiyear-2026-09-29.tsv`.
+/// `timing-2026-09-30.tsv`, `bubblebust-2026-09-24.tsv`, `multiyear-2026-09-29.tsv` and
+/// `volstate-2026-10-20.tsv`.
 /// THE S&P SET's era rows (`Anchors::era_rows`): the TIPS era's breakeven rows, which its
 /// 1954-2026 inflation persistence cannot hold.
 pub const SP500_ERA_ROWS: [&str; 4] = [
@@ -19856,29 +19938,33 @@ pub const SP500_ERA_ROWS: [&str; 4] = [
 /// set reports the TIPS era's breakeven rows.
 pub const NASDAQ_ERA_ROWS: [&str; 1] = ["bond stress share %"];
 
-const NASDAQ_REPORTED: [ReportedRecord; 5] = [
+const NASDAQ_REPORTED: [ReportedRecord; 9] = [
     ReportedRecord {
         family: RowFamily::Timing,
         window: "CRSP month-ends 1926-2026",
         years: 100,
+        start: WindowStart::Last,
         records: &[64.829032, 5.999646, 0.730000, 0.656616],
     },
     ReportedRecord {
         family: RowFamily::Timing,
         window: "NDX month-ends 1990-2026",
         years: 37,
+        start: WindowStart::Last,
         records: &[52.586943, 7.685632, 0.816327, 1.519920],
     },
     ReportedRecord {
         family: RowFamily::Coupling,
         window: "NDX 1990-2026",
         years: 37,
+        start: WindowStart::Last,
         records: &[0.877198],
     },
     ReportedRecord {
         family: RowFamily::MultiYear,
         window: "NDX 1990-2026",
         years: 37,
+        start: WindowStart::Last,
         records: &[
             0.100774, 0.983545, 0.964811, 0.740796, 18.396825, 0.246032, 2.515873, 41.888384,
         ],
@@ -19887,9 +19973,43 @@ const NASDAQ_REPORTED: [ReportedRecord; 5] = [
         family: RowFamily::MultiYear,
         window: "QQQ 1999-2026",
         years: 27,
+        start: WindowStart::Last,
         records: &[
             0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182,
         ],
+    },
+    // THE VOLATILITY STATE ON QQQ'S WINDOW (`VOL_STATE_QQQ_RECORD`): among every 27-year history,
+    // and among those opening where a path first enters the top tenth, three percent and one
+    // percent of the world's sessions by valuation gap. The record proxy the model prints
+    // (Shiller's CAPE, which has no Nasdaq equivalent) puts no number on QQQ's own start, so the
+    // start is a ladder of the model's quantiles, not one judged level.
+    ReportedRecord {
+        family: RowFamily::VolState,
+        window: "QQQ 1999-2026",
+        years: 27,
+        start: WindowStart::Last,
+        records: &VOL_STATE_QQQ_RECORD,
+    },
+    ReportedRecord {
+        family: RowFamily::VolState,
+        window: "QQQ 1999-2026",
+        years: 27,
+        start: WindowStart::GapTop(10),
+        records: &VOL_STATE_QQQ_RECORD,
+    },
+    ReportedRecord {
+        family: RowFamily::VolState,
+        window: "QQQ 1999-2026",
+        years: 27,
+        start: WindowStart::GapTop(3),
+        records: &VOL_STATE_QQQ_RECORD,
+    },
+    ReportedRecord {
+        family: RowFamily::VolState,
+        window: "QQQ 1999-2026",
+        years: 27,
+        start: WindowStart::GapTop(1),
+        records: &VOL_STATE_QQQ_RECORD,
     },
 ];
 
@@ -22610,7 +22730,7 @@ impl FidelityRow {
         if let Some((lo, hi)) = self.record_band {
             return !(lo..=hi).contains(&self.model);
         }
-        if is_multi_year(self.name) {
+        if self.single_history() {
             return !self
                 .history_band
                 .is_some_and(|(lo, hi)| (lo..=hi).contains(&self.real));
@@ -22648,8 +22768,16 @@ impl FidelityRow {
         }
     }
 
+    /// Whether the row places the record among the world's single histories: a multi-year row,
+    /// or a volatility-state row reported on a window (`RowFamily::VolState`), which carries no
+    /// record band.
+    fn single_history(&self) -> bool {
+        is_multi_year(self.name)
+            || (self.record_band.is_none() && VOL_STATE_ROWS.contains(&self.name))
+    }
+
     fn aggregation(&self) -> &'static str {
-        if is_multi_year(self.name) {
+        if self.single_history() {
             "single-history"
         } else if EXTREME_TARGETS.contains(&self.name) {
             "ensemble-extreme"
@@ -24288,11 +24416,52 @@ fn multi_year_path_reading(p: &Path) -> [f64; 8] {
 }
 
 /// One row of a reported record (`ReportedRecord`), never graded: `row.miss()` says only where
-/// the record would fall were it graded.
+/// the record would fall were it graded. `window` is the record's, and on a conditioned start
+/// (`WindowStart::GapTop`) carries the start and the histories the placement rests on.
 #[derive(Debug, Clone)]
 pub struct ReportedRow {
-    pub window: &'static str,
+    pub window: String,
     pub row: FidelityRow,
+}
+
+/// The family-wise level the volatility state's reported placement is banded at: the family's own
+/// (`volstate-2026-10-20.tsv`).
+const VOL_STATE_REPORTED_ALPHA: f64 = 0.05;
+
+/// The valuation gap ln(price / fundamental) a session is in the top `pct` percent of the
+/// world's sessions at: the gaps pooled over every session of every path, the value with
+/// ceil(pct% of them) at or above it, each by `ln_det` so the twins cut alike. A non-finite gap
+/// is left out; infinity where none is finite.
+fn gap_threshold(sims: &[Path], pct: u8) -> f64 {
+    let mut g: Vec<f64> = sims
+        .iter()
+        .flat_map(|p| {
+            p.price
+                .iter()
+                .zip(&p.fundamental)
+                .map(|(x, f)| ln_det(x / f))
+        })
+        .filter(|x| x.is_finite())
+        .collect();
+    if g.is_empty() {
+        return f64::INFINITY;
+    }
+    let above = (g.len() * usize::from(pct.min(100)))
+        .div_ceil(100)
+        .clamp(1, g.len());
+    let k = g.len() - above;
+    *g.select_nth_unstable_by(k, f64::total_cmp).1
+}
+
+/// A path's window of `years` from the first session, with the window left, whose valuation gap
+/// is at or above `q` (`gap_threshold`): the history of a record that opened as stretched over
+/// fair as its window's first session, among the histories that open so. None where the path
+/// never reaches `q` with the window left.
+fn gap_first_passage(p: &Path, years: usize, q: f64) -> Option<Path> {
+    let n = years * DAYS_PER_YEAR;
+    let last = p.price.len().checked_sub(n)?;
+    let s = (0..=last).find(|&i| ln_det(p.price[i] / p.fundamental[i]) >= q)?;
+    Some(p.window_sessions_lean(s, n))
 }
 
 /// Each row's edges of a joint band at `alpha` over histories `reads`; none under
@@ -24312,8 +24481,9 @@ fn joint_edges<const N: usize>(reads: &[[f64; N]], alpha: f64) -> Vec<Option<(f6
 /// Every single history's readings of one family's rows, and each row's joint-band edges.
 type FamilyReads = (Vec<Vec<f64>>, Vec<Option<(f64, f64)>>);
 
-/// One reported record's rows, read on `sims`, single histories of the record's length.
-fn reported_rows_on(rec: &ReportedRecord, sims: &[Path]) -> Vec<ReportedRow> {
+/// One reported record's rows, read on `sims`, single histories of the record's length, each
+/// under `window`.
+fn reported_rows_on(rec: &ReportedRecord, sims: &[Path], window: &str) -> Vec<ReportedRow> {
     let (reads, bands): FamilyReads = match rec.family {
         RowFamily::Timing => {
             let r: Vec<[f64; 4]> = sims.par_iter().map(|p| timing_of_path(&p.price)).collect();
@@ -24331,6 +24501,14 @@ fn reported_rows_on(rec: &ReportedRecord, sims: &[Path]) -> Vec<ReportedRow> {
                 .collect(),
             vec![None],
         ),
+        RowFamily::VolState => {
+            let r: Vec<[f64; 5]> = sims
+                .par_iter()
+                .map(|p| vol_state_of(&vol_state_days_of_path(p)))
+                .collect();
+            let bands = joint_edges(&r, VOL_STATE_REPORTED_ALPHA);
+            (r.iter().map(|x| x.to_vec()).collect(), bands)
+        }
     };
     rec.family
         .rows()
@@ -24341,7 +24519,7 @@ fn reported_rows_on(rec: &ReportedRecord, sims: &[Path]) -> Vec<ReportedRow> {
         .map(|(k, ((&name, &real), history_band))| {
             let xs: Vec<f64> = reads.iter().map(|x| x[k]).filter(|x| !x.is_nan()).collect();
             ReportedRow {
-                window: rec.window,
+                window: window.to_string(),
                 row: FidelityRow {
                     name,
                     model: med(&xs),
@@ -24362,7 +24540,9 @@ fn reported_rows_on(rec: &ReportedRecord, sims: &[Path]) -> Vec<ReportedRow> {
 
 /// THE REPORTED RECORDS' ROWS (`Anchors::reported`), in the set's order: each record's rows among
 /// the world's single histories of its own length, cut from `main` (the caller's ensemble at
-/// `years`) where that length is no longer, simulated once per length where it is.
+/// `years`) where that length is no longer, simulated once per length where it is. A record with
+/// a conditioned start (`WindowStart::GapTop`) is read on the windows `gap_first_passage` cuts
+/// from the ensemble at `years`, under a label carrying the start and the histories' count.
 pub fn reported_record_rows(
     a: Anchors,
     main: Option<&[Path]>,
@@ -24371,7 +24551,9 @@ pub fn reported_record_rows(
     seed: u64,
     w: &World,
 ) -> Vec<ReportedRow> {
-    let horizons: std::collections::BTreeSet<usize> = a.reported.iter().map(|r| r.years).collect();
+    let at_end = |r: &&ReportedRecord| r.start == WindowStart::Last;
+    let horizons: std::collections::BTreeSet<usize> =
+        a.reported.iter().filter(at_end).map(|r| r.years).collect();
     let mut by_record: Vec<Vec<ReportedRow>> = vec![Vec::new(); a.reported.len()];
     for h in horizons {
         let own = main.filter(|_| h == years);
@@ -24389,8 +24571,40 @@ pub fn reported_record_rows(
             .or(cut.as_deref())
             .or(own)
             .unwrap_or_default();
-        for (k, rec) in a.reported.iter().enumerate().filter(|(_, r)| r.years == h) {
-            by_record[k] = reported_rows_on(rec, sims);
+        for (k, rec) in a
+            .reported
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.years == h && at_end(r))
+        {
+            by_record[k] = reported_rows_on(rec, sims, rec.window);
+        }
+    }
+    let conditioned: Vec<(usize, &ReportedRecord, u8)> = a
+        .reported
+        .iter()
+        .enumerate()
+        .filter_map(|(k, r)| match r.start {
+            WindowStart::GapTop(pct) => Some((k, r, pct)),
+            WindowStart::Last => None,
+        })
+        .collect();
+    if !conditioned.is_empty() {
+        let simulated = main.is_none().then(|| sim_paths(w, paths, years, seed));
+        let full: &[Path] = main.or(simulated.as_deref()).unwrap_or_default();
+        for (k, rec, pct) in conditioned {
+            let q = gap_threshold(full, pct);
+            let cut: Vec<Path> = full
+                .par_iter()
+                .filter_map(|p| gap_first_passage(p, rec.years, q))
+                .collect();
+            let label = format!(
+                "{} from a start in the gap's top {pct}% ({} of {} histories)",
+                rec.window,
+                cut.len(),
+                full.len()
+            );
+            by_record[k] = reported_rows_on(rec, &cut, &label);
         }
     }
     by_record.into_iter().flatten().collect()
@@ -24675,6 +24889,10 @@ pub struct HorizonReadings {
     /// row is one history's statistic: none compares paths, so each reading stands beside the
     /// record's one history.
     pub banded_by_path: std::collections::HashMap<&'static str, Vec<f64>>,
+    /// THE PATH-YEARS SIMULATED HERE: paths x years of each ensemble simulated for a horizon the
+    /// caller's ensemble could not serve, 0 where every horizon was cut from it or was its own; a
+    /// search counts its cost with it
+    pub simulated_path_years: u64,
 }
 
 impl HorizonReadings {
@@ -24765,6 +24983,9 @@ pub fn horizon_readings(
                 .map(window)
                 .collect::<Vec<Path>>()
         });
+        if needs_sims {
+            out.simulated_path_years += (paths * h.max(years)) as u64;
+        }
         let sims: &[Path] = simulated
             .as_deref()
             .or(cut.as_deref())
@@ -31559,7 +31780,7 @@ fn reported_rows_json(rows: &[ReportedRow]) -> String {
     }
     let lines: Vec<String> = rows
         .iter()
-        .map(|r| fidelity_row_json_in(Some(r.window), &r.row))
+        .map(|r| fidelity_row_json_in(Some(&r.window), &r.row))
         .collect();
     format!("  \"reportedRows\": [\n{}\n  ]", lines.join(",\n"))
 }
@@ -41777,6 +41998,29 @@ mod record_band_tests {
             .vol_state_reference
             .expect("the Nasdaq reports QQQ's own window");
         assert_eq!(rec, VOL_STATE_QQQ_RECORD);
+        // the same window is placed among the world's 27-year histories, at the end and from the
+        // conditioned starts, each from the one record
+        let placed: Vec<WindowStart> = a
+            .reported
+            .iter()
+            .filter(|r| r.family == RowFamily::VolState)
+            .map(|r| {
+                assert_eq!(
+                    (r.window, r.years, r.records),
+                    ("QQQ 1999-2026", 27, &rec[..])
+                );
+                r.start
+            })
+            .collect();
+        assert_eq!(
+            placed,
+            [
+                WindowStart::Last,
+                WindowStart::GapTop(10),
+                WindowStart::GapTop(3),
+                WindowStart::GapTop(1)
+            ]
+        );
         // the reference is the fixture's reading of the QQQ window alone, under the reference
         // rows' names
         for (k, name) in VOL_STATE_REFERENCE_ROWS.iter().enumerate() {
@@ -44932,23 +45176,108 @@ mod timing_tests {
         }
     }
 
+    /// The first-passage cut opens where the path's valuation gap first reaches the threshold
+    /// with the window left, runs the window's sessions beside the price, and is absent where the
+    /// path never gets there in time; the threshold leaves the asked share of sessions at or
+    /// above it.
+    #[test]
+    fn the_gap_first_passage_opens_where_the_gap_first_reaches_the_top() {
+        let w = default_world();
+        let main = sim_paths(&w, 8, 12, DEFAULT_SEED);
+        let gap = |p: &Path, i: usize| ln_det(p.price[i] / p.fundamental[i]);
+        for pct in [50u8, 10, 1] {
+            let q = gap_threshold(&main, pct);
+            let all: Vec<f64> = main
+                .iter()
+                .flat_map(|p| (0..p.price.len()).map(move |i| gap(p, i)))
+                .collect();
+            let above = all.iter().filter(|x| **x >= q).count();
+            let want = (all.len() * usize::from(pct)).div_ceil(100);
+            assert!(
+                above >= want && above < want + 8,
+                "top {pct}%: {above} vs {want}"
+            );
+            let n = 5 * DAYS_PER_YEAR;
+            for p in &main {
+                let first = (0..=p.price.len() - n).find(|&i| gap(p, i) >= q);
+                match (first, gap_first_passage(p, 5, q)) {
+                    (None, None) => {}
+                    (Some(s), Some(win)) => {
+                        assert_eq!(win.price, p.price[s..s + n]);
+                        assert_eq!(win.rate, p.rate[s..s + n]);
+                        assert_eq!(win.traded.len(), p.traded.len().min(n));
+                        assert!(win.sat.is_empty() && win.macro_panel.is_none());
+                        assert!((0..s).all(|i| gap(p, i) < q));
+                    }
+                    (a, b) => panic!("top {pct}%: {a:?} against {}", b.is_some()),
+                }
+            }
+            assert!(gap_first_passage(&main[0], 13, q).is_none());
+        }
+    }
+
+    /// The conditioned record's five rows come under one label naming the start and the histories,
+    /// each the median over the first-passage cuts, with no record band and no ratio.
+    fn conditioned_rows_read_the_first_passage_cuts(main: &[Path], rows: &[ReportedRow]) {
+        let q = gap_threshold(main, 50);
+        let cuts: Vec<Path> = main
+            .iter()
+            .filter_map(|p| gap_first_passage(p, 4, q))
+            .collect();
+        assert!(
+            cuts.len() >= EXTREME_MIN_HISTORIES / 2,
+            "{} cuts",
+            cuts.len()
+        );
+        let label = format!(
+            "C 4y from a start in the gap's top 50% ({} of {} histories)",
+            cuts.len(),
+            main.len()
+        );
+        let names: Vec<&str> = rows.iter().map(|r| r.row.name).collect();
+        assert_eq!(names, VOL_STATE_ROWS);
+        assert!(rows.iter().all(|r| r.window == label), "{label}");
+        for (k, r) in rows.iter().enumerate() {
+            let xs: Vec<f64> = cuts
+                .iter()
+                .map(|p| vol_state_of(&vol_state_days_of_path(p))[k])
+                .filter(|x| !x.is_nan())
+                .collect();
+            let (got, want) = (r.row.model.to_bits(), med(&xs).to_bits());
+            assert_eq!(got, want, "[{}]", r.row.name);
+            assert_eq!((r.row.horizon_years, r.row.n_histories), (4, xs.len()));
+            assert_eq!(r.row.aggregation(), "single-history");
+            assert!(r.row.ratio.is_none() && r.row.record_band.is_none());
+        }
+    }
+
     /// The reported records come out in the set's order, each row under its record's window, read
     /// on histories of the record's own length cut from the caller's ensemble; none is a fit
-    /// target.
+    /// target. A conditioned start reads the windows `gap_first_passage` cuts, under a label
+    /// carrying the start and the histories' count.
     #[test]
     fn reported_records_read_their_own_length_and_are_never_graded() {
-        const RECORDS: [ReportedRecord; 2] = [
+        const RECORDS: [ReportedRecord; 3] = [
             ReportedRecord {
                 family: RowFamily::Coupling,
                 window: "B 8y",
                 years: 8,
+                start: WindowStart::Last,
                 records: &[0.5],
             },
             ReportedRecord {
                 family: RowFamily::Timing,
                 window: "A 4y",
                 years: 4,
+                start: WindowStart::Last,
                 records: &[50.0, 5.0, 0.8, 1.0],
+            },
+            ReportedRecord {
+                family: RowFamily::VolState,
+                window: "C 4y",
+                years: 4,
+                start: WindowStart::GapTop(50),
+                records: &[0.0, 0.0, 0.0, 0.0, 0.0],
             },
         ];
         let a = Anchors {
@@ -44958,9 +45287,12 @@ mod timing_tests {
         let w = default_world();
         let main = sim_paths(&w, EXTREME_MIN_HISTORIES, 8, DEFAULT_SEED);
         let rows = reported_record_rows(a, Some(&main), 8, main.len(), DEFAULT_SEED, &w);
-        let got: Vec<(&str, &str)> = rows.iter().map(|r| (r.window, r.row.name)).collect();
+        let got: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|r| (r.window.as_str(), r.row.name))
+            .collect();
         assert_eq!(
-            got,
+            got[..5],
             [
                 ("B 8y", "bubble coupling 3y"),
                 ("A 4y", TIMING_ROWS[0]),
@@ -44969,6 +45301,7 @@ mod timing_tests {
                 ("A 4y", TIMING_ROWS[3]),
             ]
         );
+        conditioned_rows_read_the_first_passage_cuts(&main, &rows[5..]);
         let xs: Vec<f64> = main
             .iter()
             .map(|p| timing_of_path(&p.tail(4).price)[2])

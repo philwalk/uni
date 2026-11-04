@@ -91,9 +91,14 @@ writes nothing, where every other gate verdict only warns.
 `reportedRows` holds rows read off records the set does not grade on, each shaped as a `fidelity`
 row and led by its `window`. They never enter a verdict; their `miss` says only where the record
 would fall. The Nasdaq set reports its timing rows against CRSP's century and the NDX from 1990,
-its bubble coupling against the NDX from 1990, and its multi-year rows against the NDX from 1990
-and QQQ (see [Each set on its own record](#each-set-on-its-own-record)); the S&P set reports
-nothing.
+its bubble coupling against the NDX from 1990, its multi-year rows against the NDX from 1990 and
+QQQ (see [Each set on its own record](#each-set-on-its-own-record)), and the volatility state's
+five rows against QQQ 1999-2026 four times: among the world's 27-year histories cut at the paths'
+end, and among those opening where a path first enters the top 10%, 3% and 1% of the world's
+sessions by valuation gap ln(price / fundamental), since QQQ listed a year before the Nasdaq-100's
+peak and among every history its window reads rarer than a world that opens there makes it. A
+conditioned window's label carries its start and the histories the placement rests on. The S&P
+set reports nothing.
 
 **`schema` and `version` do not substitute for each other.** The default world moved at 0.19.1 and
 again at 0.19.2, so two files with identical columns and identical `schema` can still be
@@ -1014,7 +1019,8 @@ own earnings fall further at the tail (write-offs), which the disaster channel s
 | `profit decline regain months` | the median months from trough to the peak regained, over the regained declines |
 
 In the sidecar a multi-year row carries `"aggregation": "single-history"`, `"ratio": null`, a
-`"percentile"` and `"historyBand"`, the joint band its `miss` reads the record against.
+`"percentile"` and `"historyBand"`, the joint band its `miss` reads the record against; a
+volatility-state row reported on QQQ's window (`reportedRows`) carries the same.
 
 **`largest 3y run-up`**, **`longest calm stretch`** and **`equity d20 vs real`** are reported
 beneath the table and in the sidecar's `gate.reported`, and not graded. The first two are one number

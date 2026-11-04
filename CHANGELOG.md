@@ -113,12 +113,18 @@ The recipe's `vol_idio`, fitted to the old pair, is refitted on the corrected on
 0.27: the volume sd sits at the record and any rise of the idio costs that row more than the
 correlation gains (the two rows' summed CRPS 0.68 at 0.27, 0.99 at 0.30, 2.0 at 0.34). The S&P
 row's model side falls by the same 0.07 to 0.52 against SPY's unchanged 0.54, the record at the
-71st percentile. Rust only; the Scala twin stays on the raw series and the earlier fixture.
+71st percentile.
 
 **The search's candidate log carries the rows.** Under the ledger objective `cands.tsv` now holds
 every evaluated candidate's ledger vector, `crps:ROW`, `sign:ROW` and `model:ROW` per table row
 after its dials (NaN on a rejected read), where the archive held them for admitted members only:
 the data a surrogate of the rows over the dials is fitted on.
+
+**The search's cost is path-years.** A run's cost is the paths times the years it simulated, summed over
+every read a generation makes (the children's full reads, the race reads, the members' re-reads and the
+paired-noise reads); `gens.tsv` records each generation's by kind with its wall time beside, and the
+checkpoint carries the run's total as `pathYears`. Wall time is reported, never compared: it moves with
+whatever else the machine runs.
 
 **The state profile in the ledger.** Two more rows, their own banded family in the same fixture,
 read where the innovation's large sessions fall in the vol state and how high the state runs,
@@ -129,8 +135,7 @@ among the highest three tenths (each count plus a half); and `vol state p99 %`, 
 in calm months (S&P 3.1, Nasdaq 3.0) and its state tops out at 45% on the S&P (68 on the long
 tech record); the 0.25.1 S&P recipe reads 2.2 and 53, its surprises scaling with the state and its
 crises running hotter on the same state distribution below them, a shape no dial was moved for
-because no row read it. Rust only: the Scala twin carries the vol-process rows and not these,
-so it does not read a 38-row ledger. Ledger scores are not comparable across this change either.
+because no row read it. Ledger scores are not comparable across this change either.
 
 **The cycle's increment in the vol state (`-cyclevol`).** The valuation cycle's daily innovation
 was a constant-sd Gaussian component of the return, 0.33% a session and 9% of the daily variance
@@ -148,8 +153,7 @@ cycle's amplitude to the same rows loses the wings (4.8 → 3.5 and 1.6 → 0.9 
 re-solve returns to its band. Inert on the Nasdaq recipe. It does not move the sessions beyond 5% a
 century, the level process's tail. The power is the recipes' convention at 1 (a probe dial, set and
 never searched; the world key `cycleVol`, written only when on); 0 is bit-identical, so every
-earlier world reads as before. Rust only: the Scala twin does not carry the dial, so it does not run
-a world with it on.
+earlier world reads as before.
 
 **The 0.25.1 recipes and sets.** `0.25.1-sp500` and `0.25.1-nasdaq` are the 0.25.0 recipes under
 the one-expectation form (`-yieldanchor` 0.73 / 0.63) and the vol regime (`-termpress` 1),
@@ -198,6 +202,17 @@ rows than the earlier ones, not comparable with them); on the split-adjusted vol
 had one set miss, `bar volume vs range` at 0.2%, and the 65 has none. Each outgoing 0.25.0 set had
 one set miss, the real yield's inflation link at 0.1% and 0.3%; no 0.25.1 set has one. They are the
 worlds to pin in place of the 0.25.0 recipes.
+
+**QQQ's window placed from its own start.** The Nasdaq set's `reportedRows` gain the volatility
+state's five rows (`downside vol excess %`, `vol-timing edge pts/yr`, `vol-exit timing pts/yr`,
+`vol-exit 3x interaction pts/yr`, `high-vol fifth return pts/yr`) on QQQ 1999-2026, placed among
+the world's 27-year histories with the family's joint band at 0.05: once among the histories cut
+at the paths' end, and three times among those opening where a path first enters the top 10%, 3%
+and 1% of the world's sessions by valuation gap ln(price / fundamental). QQQ listed a year before
+the Nasdaq-100's peak, and among every history its window reads rarer than a world that opens
+there makes it; the record proxy puts no number on that start, so the start is a ladder of the
+model's own quantiles. A conditioned window's label carries its start and the histories the
+placement rests on. Reported, never graded.
 
 ## v0.25.0 — 2026-10-29
 

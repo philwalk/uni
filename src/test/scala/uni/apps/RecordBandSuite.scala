@@ -101,6 +101,40 @@ class RecordBandSuite extends FunSuite:
     // the reference is the fixture's reading of the QQQ window alone, under the reference rows' names
     for (name, k) <- MarketSim.VolStateReferenceRows.zipWithIndex do
       assertEquals(row("nasdaq", name).head, rec(k), s"[$name]")
+    // the same window is placed among the world's 27-year histories, at the end and from the
+    // conditioned starts, each from the one record
+    val placed = a.reported.filter(_.family == MarketSim.RowFamily.VolState)
+    placed.foreach(r => assertEquals((r.window, r.years, r.records), ("QQQ 1999-2026", 27, rec)))
+    assertEquals(placed.map(_.start),
+                 Vector(MarketSim.WindowStart.Last, MarketSim.WindowStart.GapTop(10), MarketSim.WindowStart.GapTop(3),
+                        MarketSim.WindowStart.GapTop(1)))
+  }
+
+  // The first-passage cut opens where the path's valuation gap first reaches the threshold with the
+  // window left, runs the window's sessions beside the price, and is absent where the path never
+  // gets there in time; the threshold leaves the asked share of sessions at or above it.
+  test("the gap's first passage opens where the gap first reaches the top") {
+    val main = MarketSim.simPaths(MarketSim.Defaults, 8, 12, MarketSim.DefaultSeed)
+    def gap(p: MarketSim.Path, i: Int): Double = MarketSim.lnDet(p.price(i) / p.fundamental(i))
+    for pct <- Vector(50, 10, 1) do
+      val q = MarketSim.gapThreshold(main, pct)
+      val all = main.flatMap(p => p.price.indices.map(gap(p, _)))
+      val above = all.count(_ >= q)
+      val want = (all.length * pct + 99) / 100
+      assert(above >= want && above < want + 8, s"top $pct%: $above vs $want")
+      val n = 5 * MarketSim.DaysPerYear
+      for p <- main do
+        val first = (0 to p.price.length - n).find(i => gap(p, i) >= q)
+        (first, MarketSim.gapFirstPassage(p, 5, q)) match
+          case (None, None) => ()
+          case (Some(s), Some(win)) =>
+            assert(win.price.sameElements(p.price.slice(s, s + n)))
+            assert(win.rate.sameElements(p.rate.slice(s, s + n)))
+            assertEquals(win.traded.length, math.min(p.traded.length, n))
+            assert(win.sat.isEmpty && win.macroPanel.isEmpty)
+            assert((0 until s).forall(i => gap(p, i) < q))
+          case (a, b) => fail(s"top $pct%: $a against ${b.isDefined}")
+      assert(MarketSim.gapFirstPassage(main(0), 13, q).isEmpty)
   }
 
   test("the vol state reader and resampler are the rows' own") {
@@ -596,17 +630,35 @@ class RecordBandSuite extends FunSuite:
   }
 
   // The reported records come out in the set's order, each row under its record's window, read on
-  // histories of the record's own length cut from the caller's ensemble; none is a fit target.
+  // histories of the record's own length cut from the caller's ensemble; none is a fit target.  A
+  // conditioned start reads the windows `gapFirstPassage` cuts, under a label carrying the start and
+  // the histories' count.
   test("reported records read their own length and are never graded") {
     val recs = Vector(
       MarketSim.ReportedRecord(MarketSim.RowFamily.Coupling, "B 8y", 8, Vector(0.5)),
-      MarketSim.ReportedRecord(MarketSim.RowFamily.Timing, "A 4y", 4, Vector(50.0, 5.0, 0.8, 1.0)))
+      MarketSim.ReportedRecord(MarketSim.RowFamily.Timing, "A 4y", 4, Vector(50.0, 5.0, 0.8, 1.0)),
+      MarketSim.ReportedRecord(MarketSim.RowFamily.VolState, "C 4y", 4, Vector(0.0, 0.0, 0.0, 0.0, 0.0),
+                               MarketSim.WindowStart.GapTop(50)))
     val a = MarketSim.NasdaqAnchors.copy(reported = recs)
     val w = MarketSim.Defaults
     val main = MarketSim.simPaths(w, MarketSim.ExtremeMinHistories, 8, MarketSim.DefaultSeed)
     val rows = MarketSim.reportedRecordRows(a, Some(main), 8, main.length, MarketSim.DefaultSeed, w)
-    assertEquals(rows.map(r => (r.window, r.row.name)),
+    assertEquals(rows.take(5).map(r => (r.window, r.row.name)),
                  ("B 8y", "bubble coupling 3y") +: MarketSim.TimingRows.map(("A 4y", _)))
+    // the conditioned record: its five rows under one label, read on the first-passage cuts
+    val q = MarketSim.gapThreshold(main, 50)
+    val cuts = main.flatMap(p => MarketSim.gapFirstPassage(p, 4, q))
+    assert(cuts.length >= MarketSim.ExtremeMinHistories / 2, s"${cuts.length} cuts")
+    val label = s"C 4y from a start in the gap's top 50% (${cuts.length} of ${main.length} histories)"
+    assertEquals(rows.drop(5).map(_.row.name), MarketSim.VolStateRows)
+    assert(rows.drop(5).forall(_.window == label), label)
+    for (r, k) <- rows.drop(5).zipWithIndex do
+      val xs = cuts.map(p => MarketSim.volStateOf(MarketSim.volStateDaysOfPath(p))(k)).filter(!_.isNaN)
+      val fin = xs.filter(_.isFinite).sorted
+      assertEquals(r.row.model, if fin.isEmpty then Double.NaN else fin(fin.size / 2), r.row.name)
+      assertEquals((r.row.horizonYears, r.row.nHistories), (4, xs.size))
+      assertEquals(r.row.aggregation, "single-history")
+      assert(r.row.ratio.isEmpty && r.row.recordBand.isEmpty)
     val xs = main.map(p => MarketSim.timingOfPath(p.tail(4).price)(2)).filter(!_.isNaN)
     val sorted = xs.filter(_.isFinite).sorted
     assertEquals(rows(3).row.model, sorted(sorted.size / 2))

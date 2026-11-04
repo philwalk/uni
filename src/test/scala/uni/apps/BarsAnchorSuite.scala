@@ -13,7 +13,7 @@ import uni.*
  */
 class BarsAnchorSuite extends FunSuite:
 
-  val Bars = "test-data/equity-anchors/bars-2026-09-01.tsv"
+  val Bars = "test-data/equity-anchors/bars-2026-11-02.tsv"
 
   /** Empty where the fixture is absent, which is a skip and not a failure: the artifact ships
     * without `test-data/`, so a source-tarball build must not fail here. */
@@ -74,9 +74,10 @@ class BarsAnchorSuite extends FunSuite:
     val perPath = sims.toVector.map { p =>
       val r = Array.tabulate(p.price.length - 1)(i => math.log(p.price(i + 1) / p.price(i)))
       val x = Array.tabulate(p.logHi.length)(i => p.logHi(i) - p.logLo(i))
-      // The model's turnover index is trendless, so the record side's rolling-median detrend
-      // is a no-op up to noise here; the raw series is graded.
-      (mean(x) / sd(r), acf1(x), sd(p.logVolume), corrOf(p.logVolume, x))
+      // the record's convention (`detrendedLogVolume`): the trailing median removes the volume's
+      // slow movement with the vol regime, 0.07 of the correlation
+      val v = MarketSim.detrendedLogVolume(p.logVolume)
+      (mean(x) / sd(r), acf1(x), sd(v), corrOf(v, x.takeRight(v.length)))
     }
     val graded = Vector(
       ("rangeMeanOverCcvol", med4(perPath.map(_._1))),

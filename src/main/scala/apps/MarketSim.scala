@@ -582,6 +582,9 @@ object MarketSim:
     "              ;   with stationary sd S (log), started from its own law so paths begin",
     "              ;   stationary; beliefs track the gap net of it.  Own stream; 0 = bit-identical",
     s"-cycleyears Y ; its half-life in years (default ${Defaults.cycleYears}; the record's CAPE 11.5)",
+    "-cyclevol P   ; the cycle's daily increment times the session's conditional sd over its four-year",
+    "              ;   rms, to the power P: at 1 the cycle re-rates in the vol state the rest of the",
+    "              ;   return arrives in, its stationary sd preserved; 0 = the constant-sd increment",
     "-stressadapt M ; the equity spiral's SCALE speed: the EWMA weight on ret^2 that standardizes",
     "              ;   the decline the spiral's stress index reads.  0.005, a ~140-session memory,",
     "              ;   reads a persistently volatile stretch as continuous stress; faster lets the",
@@ -1329,7 +1332,7 @@ object MarketSim:
                            // (1-w) of the variance, and the sign coupling reads the intraday
                            // return.  0 = the open is the prior close, bit-identical off; the
                            // record's overnight share of daily variance is 0.33 (SPY) / 0.28
-                           // (QQQ), `bars-2026-09-01.tsv`, and the graded share includes the
+                           // (QQQ), `bars-2026-11-02.tsv`, and the graded share includes the
                            // jumps, so the dial sits below it.
     basket: Int = 0,       // THE BASKET: N single names as observational second-pass instances
                            // of the primary -- name_i = the SECTOR leg + its own idio + its own
@@ -1592,6 +1595,15 @@ object MarketSim:
                             // bond's vol with it; `termVol` is then the calm era's innovation.  0 is
                             // bit-identical.
                             termPress: Double = 0.0,
+                            // THE CYCLE'S INCREMENT IN THE VOL STATE (the `cycleVol` key, a probe dial): the
+                            // valuation cycle's daily innovation times the session's conditional diffusion sd
+                            // (the session sigma's factors x the spiral's amplification) over its four-year
+                            // rms, to this power; at 1 the multiplier's mean square is 1, so the swing's
+                            // stationary sd is preserved and the cycle re-rates in the vol state the rest of
+                            // the return arrives in (a constant-sd increment is a Gaussian floor under the
+                            // vol level: it thins the standardized return's tail and damps the level's
+                            // doubling).  0 is bit-identical.
+                            cycleVol: Double = 0.0,
                             // THE BREAKEVEN PREMIUM (item 60): the sd per sqrt-year, decimal, of the
                             // innovation of the premium the market's ten-year breakeven carries over its
                             // inflation expectation, an OU state reverting at `BrkRevert` on its own
@@ -1894,6 +1906,25 @@ object MarketSim:
     /** The path's last `years`: `tailSessions` at the year's sessions. */
     def tail(years: Int): Path = tailSessions(years * DaysPerYear)
 
+    /** The path's `sessions` from `start`, without the channels, the basket, the sectors and the
+      * macro panels (`tailSessions` without them, opening at `start` instead of the end): the cut a
+      * reported record with a conditioned start reads (`gapFirstPassage`).  A series that runs
+      * beside the price is cut beside it; the scalar summaries stay the whole path's.  The Rust
+      * twin's `window_sessions_lean`. */
+    def windowSessionsLean(start: Int, sessions: Int): Path =
+      def cut(v: Array[Double]): Array[Double] =
+        val a = math.min(start, v.length)
+        v.slice(a, math.min(a + sessions, v.length))
+      val a = math.min(start, bondStressHi.length)
+      copy(price = cut(price), rate = cut(rate), fundamental = cut(fundamental), liq = cut(liq),
+           bliq = cut(bliq), bond = cut(bond), bond10 = cut(bond10), tips10 = cut(tips10),
+           realYield10 = cut(realYield10), expInfl10 = cut(expInfl10), realRate = cut(realRate),
+           inflPress = cut(inflPress), cpi = cut(cpi), sat = Array.emptyDoubleArray,
+           logHi = Array.emptyDoubleArray, logLo = Array.emptyDoubleArray, logVolume = Array.emptyDoubleArray,
+           divYield = cut(divYield), traded = cut(traded), logOpen = Array.emptyDoubleArray,
+           names = Vector.empty, sectors = Vector.empty, macroPanel = None, macroNullPanel = None,
+           bondStressHi = bondStressHi.slice(a, math.min(a + sessions, bondStressHi.length)))
+
     /** THE FIRST SERIES OF THE PATH THAT IS NOT A NUMBER: its printed price, then the channel level
       * its world's derived series were sampled at (`worldLevel`, solved on an ensemble of its own,
       * so one NaN session there reaches every path), then each series `-emit` writes; `None` for a
@@ -2022,7 +2053,7 @@ object MarketSim:
   val DefaultSeed = 20260813L
 
   /** Frozen structural constants of the volume channel -- see the `volIdio` field.  Measured
-    * from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows
+    * from the SPY/QQQ volume-on-range regression (`bars-2026-11-02.tsv`, whose rows
     * `BarsAnchorSuite` asserts these against): elasticity of detrended log volume to the
     * range's log-deviation from its slow normal; the down-day loading calibrated to the
     * RESIDUAL +0.036 down-up; the slow idio component's persistence and variance share
@@ -2605,11 +2636,13 @@ object MarketSim:
                  inflSize = 0.040625138, discount = 7.5769784, discountRef = 6.8062828, margin = 0.0046249107,
                  recessBase = 1.5, discountLag = 0.0,
                  // THE VOLUME CHANNEL AT QQQ'S: the idiosyncratic sd that puts QQQ's record (volume sd
-                 // 0.417, volume vs range 0.56; bars-2026-09-01.tsv, 1999-2026) at the least summed
-                 // CRPS of the two rows over the set's members (the S&P's 0.34 read 3.84 against
-                 // 0.27's 2.74 in the outgoing read's sd); less idio raises the volume-range
-                 // correlation, so the two rows trade, and `VolSlope` (the range-driven share, frozen
-                 // from the pooled SPY/QQQ fit) is where a joint fit would move next
+                 // 0.416, volume vs range 0.49; bars-2026-11-02.tsv, 1999-2026) at the least summed
+                 // CRPS of the two rows on the detrended statistic, the judge's four seeds (0.27 reads
+                 // 0.68, 0.30 0.99, 0.34 2.0, 0.38 3.3): the sd sits at the record and any rise of the
+                 // idio costs that row more than the correlation gains, so the refit of 2026-11-02
+                 // keeps the value the raw statistic chose (0.34 against 0.27 then read 3.84 against
+                 // 2.74 over the set's members); `VolSlope` (the range-driven share, frozen from the
+                 // pooled SPY/QQQ fit) is where a joint fit would move next
                  volIdio = 0.27,
                  // the satellite leg at the set's channel dials (item 62 B: beta 1.3 on ordinary
                  // sessions, the tail drop placing the record's kurtosis ratio) and the long bond's
@@ -2630,40 +2663,65 @@ object MarketSim:
 
   /** THE 0.25.1 RECIPES: each is member 0 of its 0.25.1 set.
     *
-    * `0.25.1-sp500`: the 0.25.0 S&P recipe under the one-expectation form (`yieldAnchor` 0.73, where
-    * the record's link of 0.11 sits) and the bond's vol regime (`termPress` 1, `termVol` the calm
-    * era's innovation), the rate and bond side re-solved around them and every dial that read no
-    * worse at the 0.25.0 value returned to it.  On the ledger with the real yield's inflation link,
-    * the ex-post real rate's negative share and tenth percentile and the conditions index's hazard
-    * graded: 39.2 against the 0.25.0 recipe's 46.5 on the judge's seeds, membership p 0.94, every
-    * class passing on every read and by the margin on 40 more.
+    * `0.25.1-sp500` (2026-11-01): the 0.25.0 S&P recipe under the one-expectation form (`yieldAnchor`
+    * 0.73, where the record's link of 0.11 sits) and the bond's vol regime (`termPress` 1, `termVol`
+    * the calm era's innovation), the rate and bond side re-solved around them, then the cycle's
+    * increment in the vol state (`cycleVol` 1) with the spiral's stress, the jump family and the vol
+    * of vol re-solved around it; every dial that read no worse at the earlier value returned to it.
+    * On the 36-row ledger 40.5 against 42.3 for the same recipe with the increment constant, the
+    * vol-process rows at the record (`z beyond 3 sds %` 1.33 in its band, `log vol sd` 0.46, `vol
+    * doubling months %` 3.9), membership p 0.91, every class passing on every read and by the margin
+    * on 40 more.
     *
-    * `0.25.1-nasdaq`: as the S&P's: `yieldAnchor` 0.63 and `termPress` 1, the rate and bond side
-    * re-solved around them, on the Nasdaq's own era the breakeven premium's innovation too, and every
-    * dial that read no worse at the 0.25.0 value returned to it.  34.4 against the 0.25.0 recipe's
-    * 42.8 on the judge's seeds with `bond stress share %` reported (`NasdaqEraRows`), membership
-    * p 0.91, every class passing on every read and by the margin on 40 more. */
+    * `0.25.1-nasdaq` (2026-11-03), as the S&P's: `yieldAnchor` 0.63 and `termPress` 1, the rate and
+    * bond side re-solved around them, on the Nasdaq's own era the breakeven premium's innovation too,
+    * and every dial that read no worse at the 0.25.0 value returned to it; the cycle's increment in
+    * the vol state (`cycleVol` 1) as the form's convention, inert on this recipe's rows; then
+    * re-solved in small steps around that world with the vol, recession, valuation, news and policy
+    * families kept moved by the family read-back (the recession's rate 0.22 from 0.14,
+    * `valueCapFall` 0.96 from 0.06, `volPull` 0 from 0.14) and the jump, boom, drift, rates and
+    * leverage families at the earlier values.  41.41 against 43.30 on the judge's seeds with `bond
+    * stress share %` reported (`NasdaqEraRows`), membership on every read; its 65-member set
+    * significantly better than the 68 under the release rule.  Both literals are the Rust twin's
+    * `recipe_0251_sp500` and `recipe_0251_nasdaq`, field for field. */
   val Recipes0251: Vector[(String, World, String)] =
     def base(name: String): World =
       Recipes0250.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
     val sp = base("0.25.0-sp500")
     val nq = base("0.25.0-nasdaq")
     Vector(("0.25.1-sp500",
-            sp.copy(rateMean = 0.064741312, newsBond = 0.47452643, newsBondSkip = 0.017489922,
-                    slowBondInfl = 0.030234235, refuge = 0.13842340, refugeDays = 1.3746700, levGain = 4.5653900,
-                    margin = 0.0079948400,
-                    ext = sp.ext.copy(termPremium = 0.069160855, termVol = 0.0048085213, termPress = 1.0000000,
-                                      cpiNoiseLevel = 0.87106100, policyGrowth = 0.068884987, yieldLag = 28.615200,
-                                      expAnchor = 0.49890381, yieldAnchor = 0.72761553, volFeedback = 0.29804100)),
+            sp.copy(stress = 3.0298631, rateMean = 0.064741312, volOfVol = 0.016982764, jumpSkew = 0.79916463,
+                    jumpVar = 0.13021428, jumpRate = 0.0022997084, newsBond = 0.47452643,
+                    newsBondSkip = 0.017489922, slowBondInfl = 0.030234235, refuge = 0.13842340,
+                    refugeDays = 1.3746700, levGain = 4.5653900, margin = 0.0079948400,
+                    ext = sp.ext.copy(cycleVol = 1.0000000, termPremium = 0.069160855, termVol = 0.0048085213,
+                                      termPress = 1.0000000, cpiNoiseLevel = 0.87106100,
+                                      policyGrowth = 0.068884987, yieldLag = 28.615200, expAnchor = 0.49890381,
+                                      yieldAnchor = 0.72761553, volFeedback = 0.29804100)),
             "sp500"),
            ("0.25.1-nasdaq",
-            nq.copy(rateMean = 0.034508216, newsBond = 0.24905600, newsBondSkip = 0.26802600,
-                    slowBondInfl = 0.48413900, refuge = 0.10451699, refugeDays = 0.41558600, levGain = 6.3588392,
-                    margin = 0.0046249100,
-                    ext = nq.ext.copy(termPremium = 0.090792400, termVol = 0.0056821201, termPress = 1.0000000,
-                                      brkVol = 0.0026305000, cpiNoiseLevel = 0.94952559, policyGrowth = 0.18095488,
-                                      yieldBeta = 0.028855859, yieldLag = 24.417600, expAnchor = 0.53590901,
-                                      yieldAnchor = 0.63363114, volFeedback = 0.55284452)),
+            nq.copy(depth = 13.224673, fundVol = 0.044375247, rateMean = 0.034508216, volOfVol = 0.023850037,
+                    leverage = 0.073934322, downShock = 0.0078867012, newsRate = 23.339485,
+                    newsSize = 0.011463959, newsLev = 50.103847, newsRevert = 0.19529314,
+                    newsScale = 0.16353965, newsBond = 0.24905600, newsBondSkip = 0.26802600,
+                    creditRegime = 0.41509177, creditRegimeRate = 1.9723187, slowBondInfl = 0.48413900,
+                    noiseSkew = 0.080950629, newsFlip = 0.65157012, valuePull = 0.069324529,
+                    recessRate = 0.21895030, recessSize = 0.28870908, recessLen = 1.6165895,
+                    recessRecover = 0.81961500, recessNews = 1.0000000, recessVol = 0.087203338,
+                    recessReprice = 0.93024541, recessShape = 1.4366029, recessRecMult = 1.6326685,
+                    recessCredit = 0.14289759, recessInfl = 0.36623394, volPull = 0.0000000,
+                    beliefShare = 0.60206332, beliefYears = 1.6289685, beliefLeak = 0.30413936,
+                    capYears = 3.5726920, cycleSd = 0.061943798, cycleYears = 9.8175170, easing = 0.083490492,
+                    floorhold = 0.071394237, refuge = 0.10451699, refugeDays = 0.41558600, levGain = 6.3588392,
+                    slowVol = 0.99315148, inflSize = 0.039406294,
+                    ext = nq.ext.copy(cycleVol = 1.0000000, termPremium = 0.090792400, cpiNoise = 0.0072135904,
+                                      deflProb = 0.22407948, deflSize = 0.039985707, termVol = 0.0056821201,
+                                      termPress = 1.0000000, brkVol = 0.0026305000, cpiNoiseLevel = 0.88145193,
+                                      policyGrowth = 0.13724604, yieldBeta = 0.028855859, yieldLag = 24.417600,
+                                      expAnchor = 0.49777614, yieldAnchor = 0.63363114,
+                                      volFeedback = 0.53585228, valueCap = 0.19382860,
+                                      valueCapFall = 0.95538454, recessSpread = 0.13515143,
+                                      recessTransient = 0.18119246, noiseScale = 1.5835440)),
             "nasdaq"))
 
   val Recipes: Vector[(String, World, String)] =
@@ -3053,6 +3111,7 @@ object MarketSim:
     w => nonNegRefusal("-cyclesd", w.cycleSd),
     w => nonNegRefusal("-beliefleak", w.beliefLeak),
     w => Option.when(w.cycleSd > 0.0 && w.cycleYears <= 0.0)(s"-cyclesd ${w.cycleSd} needs -cycleyears above 0"),
+    w => shareRefusal("-cyclevol", w.ext.cycleVol),
     w => nonNegRefusal("-volrespcap", w.volRespCap),
     w => nonNegRefusal("-jumpresp", w.jumpResp),
     w => refused(!(w.levPersist >= 0.0 && w.levPersist < 1.0), "-levpersist is a persistence in [0, 1)"),
@@ -3532,6 +3591,9 @@ object MarketSim:
       * months */
     private var scaleVarRef = 0.01 * 0.01
     private var stressAmp = 0.0
+    /** The spiral's amplification this session's step will apply to flow and noise, read before
+      * the step (`step`'s `amp`). */
+    def amp: Double = 1.0 + stressK * stressAmp * levMult * gainMult
     /** The liquidity multiplier this session's step will apply to flow and noise, read before
       * the step: `lastLiq`'s expression. */
     def liquidity: Double = (1.0 + stressK * stressAmp * levMult * gainMult) * impact
@@ -5427,6 +5489,9 @@ object MarketSim:
     private var cyc = 0.0
     // the running peak of the price WITHOUT the cycle, for the drag's drawdown read
     private var cycPeakEx = 0.0
+    // the conditional sd's four-year mean square, the increment's norm (`WorldExt.cycleVol`);
+    // started at the noise's base sd, settled inside the burn-in
+    private var cycRef = SigmaN * w.ext.noiseScale * SigmaN * w.ext.noiseScale
     if w.cycleSd > 0.0 then
       cyc = w.cycleSd * cycRng.randn()
       eqM.logP = cyc
@@ -6241,7 +6306,18 @@ object MarketSim:
       // repricing, like the swing's.
       cycMove = 0.0
       if w.cycleSd > 0.0 then
-        val cycNew = cycPhi * cyc + cycInno * cycRng.randn()
+        // the increment carries the session's vol state (`WorldExt.cycleVol`): the conditional
+        // diffusion sd (the session sigma's factors x the spiral's amplification) over its
+        // four-year rms
+        val cycM =
+          if w.ext.cycleVol > 0.0 then
+            val levM = if w.leverage > 0.0 then expDet(w.leverage * kickS) else 1.0
+            val sdNow = newsDamp * sigmaN * expDet(logVol - volNorm) * levM * asymM * volRespM *
+              (if linOn then linM else 1.0) * regimeM * mix * eqM.amp
+            cycRef = 0.999 * cycRef + 0.001 * sdNow * sdNow
+            powDet(Math.sqrt(sdNow * sdNow / cycRef), w.ext.cycleVol)
+          else 1.0
+        val cycNew = cycPhi * cyc + cycInno * cycM * cycRng.randn()
         cycMove = cycNew - cyc
         cyc = cycNew
         eqM.logP += cycMove
@@ -6942,7 +7018,7 @@ object MarketSim:
     }
 
   /** The BAR channels' statistics -- present only when the range channel ran.  `vol*` are NaN
-    * unless the volume channel ran too.  Graded against `bars-2026-09-01.tsv`, whose rows the
+    * unless the volume channel ran too.  Graded against `bars-2026-11-02.tsv`, whose rows the
     * build-time suites already assert; these carry the same readings into the RUNTIME gate. */
   final case class BarStats(rangeOverCcvol: Double, rangeAcf1: Double, rangeDownup: Double,
                             volSd: Double, volCorrRange: Double)
@@ -8429,6 +8505,48 @@ object MarketSim:
   val DividendRow: String = "dividend yield %"
 
   /** The bar channels' statistics -- `None` when no range channel ran. */
+  /** The volume rows' detrend window: the record's trailing 252-session median. */
+  val VolumeMedianWindow: Int = 252
+
+  /** THE VOLUME AS THE RECORD READS IT (`bars-2026-11-02.tsv`, 2026-11-02): ln volume less its
+    * trailing 252-session median, the session included, the first 251 sessions dropped.  The median
+    * removes the share count's secular trend, which the model's turnover index does not carry, and
+    * with it the volume's slow movement with the vol regime, which it does; graded on the raw series
+    * the model's `bar volume vs range` read 0.07 above its own reading on the record's convention
+    * (the 0.25.1 Nasdaq recipe's histories, median 0.63 against 0.55), the sd under 0.002 apart.
+    * Each window's median by a sorted window kept across sessions (an even window's the mean of its
+    * two middles).  The Rust twin's `detrended_log_volume`. */
+  def detrendedLogVolume(v: Array[Double]): Array[Double] =
+    val w = VolumeMedianWindow
+    if v.length < w then Array.emptyDoubleArray
+    else
+      // the window sorted, kept across sessions; `lowerBound` is the first index not below x, the
+      // Rust twin's `partition_point(|&s| s < x)`
+      val sorted = v.slice(0, w)
+      java.util.Arrays.sort(sorted)
+      def lowerBound(x: Double): Int =
+        var lo = 0
+        var hi = w
+        while lo < hi do
+          val mid = (lo + hi) >>> 1
+          if sorted(mid) < x then lo = mid + 1 else hi = mid
+        lo
+      def median: Double = 0.5 * (sorted(w / 2 - 1) + sorted(w / 2))
+      val out = new Array[Double](v.length - w + 1)
+      out(0) = v(w - 1) - median
+      for t <- w until v.length do
+        val k = lowerBound(v(t - w))
+        System.arraycopy(sorted, k + 1, sorted, k, w - 1 - k)
+        var lo = 0
+        var hi = w - 1
+        while lo < hi do
+          val mid = (lo + hi) >>> 1
+          if sorted(mid) < v(t) then lo = mid + 1 else hi = mid
+        System.arraycopy(sorted, lo, sorted, lo + 1, w - 1 - lo)
+        sorted(lo) = v(t)
+        out(t - w + 1) = v(t) - median
+      out
+
   def barStats(sims: Vector[Path]): Option[BarStats] =
     if sims.isEmpty || sims.head.logHi.isEmpty then None
     else
@@ -8445,11 +8563,13 @@ object MarketSim:
         val du = if dn.nonEmpty && up.nonEmpty then (dn.sum / dn.size) / (up.sum / up.size)
                  else Double.NaN
         val (vsd, vcx) =
-          if s.logVolume.isEmpty then (Double.NaN, Double.NaN)
+          if s.logVolume.length <= VolumeMedianWindow then (Double.NaN, Double.NaN)
           else
-            val mv = s.logVolume.sum / s.logVolume.length
-            (math.sqrt(s.logVolume.map(v => (v - mv) * (v - mv)).sum / s.logVolume.length),
-             pearson(s.logVolume, x))
+            // the record's convention: ln volume less its trailing 252-session median, the first
+            // 251 sessions dropped (`detrendedLogVolume`), the range on the same sessions
+            val v  = detrendedLogVolume(s.logVolume)
+            val mv = v.sum / v.length
+            (math.sqrt(v.map(u => (u - mv) * (u - mv)).sum / v.length), pearson(v, x.takeRight(v.length)))
         (mx / sr, pearson(x.dropRight(1), x.drop(1)), du, vsd, vcx)
       }
       Some(BarStats(medOf(per.map(_._1)), medOf(per.map(_._2)), medOf(per.map(_._3)),
@@ -9574,22 +9694,44 @@ object MarketSim:
     case MultiYear
     /** the bubble coupling, an extreme row's 5-95 percentile band */
     case Coupling
+    /** `VolStateRows`, `volStateOf` on the window's sessions, their joint band at the family's own
+      * level (`VolStateReportedAlpha`) */
+    case VolState
 
     /** The family's row names, in its readings' order. */
     def rows: Vector[String] = this match
       case Timing    => TimingRows
       case MultiYear => MultiYearRows
       case Coupling  => Vector("bubble coupling 3y")
+      case VolState  => VolStateRows
+
+  /** WHERE A REPORTED RECORD'S WINDOW OPENS on a path: at the path's last `years` (the record's
+    * windows end together, `recordWindow`), or at the first session with `years` left whose valuation
+    * gap ln(price / fundamental) is in the top `pct` percent of the world's sessions'
+    * (`gapFirstPassage`).  The second places a record that opened near a valuation peak among the
+    * histories that open as stretched: QQQ listed a year before the Nasdaq-100's peak, and among
+    * every history its window reads rarer than a world that opens there makes it.  The histories a
+    * conditioned placement rests on are the paths that reach the gap in time, and their count is
+    * carried in the row's window label. */
+  enum WindowStart:
+    case Last
+    case GapTop(pct: Int)
 
   /** A RECORD A SET REPORTS BESIDE THE ONE IT GRADES: one family's rows read off another window of
     * the record, placed among the world's single histories of that window's length.  Never
     * graded: a window a consumer's rules were selected on cannot test whether their reward lasts,
     * and another index's record is another market's.  `records` in `family.rows` order. */
-  final case class ReportedRecord(family: RowFamily, window: String, years: Int, records: Vector[Double])
+  final case class ReportedRecord(family: RowFamily, window: String, years: Int, records: Vector[Double],
+                                  start: WindowStart = WindowStart.Last)
 
   /** THE NASDAQ'S REPORTED RECORDS: CRSP's century (the S&P's timing record), the NDX from 1990
     * and QQQ, the last two inside the window the consumer's rules were selected on.  Records from
-    * `timing-2026-09-30.tsv`, `bubblebust-2026-09-24.tsv` and `multiyear-2026-09-29.tsv`. */
+    * `timing-2026-09-30.tsv`, `bubblebust-2026-09-24.tsv`, `multiyear-2026-09-29.tsv` and
+    * `volstate-2026-10-20.tsv`.  THE VOLATILITY STATE ON QQQ'S WINDOW (`VolStateQqqRecord`): among
+    * every 27-year history, and among those opening where a path first enters the top tenth, three
+    * percent and one percent of the world's sessions by valuation gap.  The record proxy the model
+    * prints (Shiller's CAPE, which has no Nasdaq equivalent) puts no number on QQQ's own start, so
+    * the start is a ladder of the model's quantiles, not one judged level. */
   val NasdaqReported: Vector[ReportedRecord] = Vector(
     ReportedRecord(RowFamily.Timing, "CRSP month-ends 1926-2026", 100,
                    Vector(64.829032, 5.999646, 0.730000, 0.656616)),
@@ -9599,7 +9741,11 @@ object MarketSim:
     ReportedRecord(RowFamily.MultiYear, "NDX 1990-2026", 37,
                    Vector(0.100774, 0.983545, 0.964811, 0.740796, 18.396825, 0.246032, 2.515873, 41.888384)),
     ReportedRecord(RowFamily.MultiYear, "QQQ 1999-2026", 27,
-                   Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182)))
+                   Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182)),
+    ReportedRecord(RowFamily.VolState, "QQQ 1999-2026", 27, VolStateQqqRecord),
+    ReportedRecord(RowFamily.VolState, "QQQ 1999-2026", 27, VolStateQqqRecord, WindowStart.GapTop(10)),
+    ReportedRecord(RowFamily.VolState, "QQQ 1999-2026", 27, VolStateQqqRecord, WindowStart.GapTop(3)),
+    ReportedRecord(RowFamily.VolState, "QQQ 1999-2026", 27, VolStateQqqRecord, WindowStart.GapTop(1)))
 
   /** The dials of the derived series the verdict supplies: the satellite leg, the bars and their
     * volume, the open, the dividend stream, the sectors and the macro panel -- not the basket,
@@ -11701,12 +11847,12 @@ object MarketSim:
     * unit's p.  In order: the volatility exit's surface (`VolExitGrid`, each point's 1x edge then
     * its 3x edge, the production pair being `VolStateRows`' own), its parts at the production
     * thresholds (`volExitParts`), the coupling of the volatility with the price (`volCouplingOf`),
-    * and the correction rate (`declinesOf`), read on the set's volatility-state window
-    * (`Anchors.volStateWindow`), the model on each history of that length (`ledgerHistories`); then
-    * the one-day reversion (`lag1Demeaned` of the daily log returns, ruled 2026-10-23), read on the
-    * record after `UnlagCut` alone, where the lag correction leaves no lag-1 to read, and on each
-    * history of that many sessions (`LedgerRecords.lag1Sessions`).  The records in
-    * `ledgerrows-2026-11-01.tsv`. */
+    * the correction rate (`declinesOf`), the vol process (`volProcessOf`) and the state profile
+    * (`volStateProfileOf`), read on the set's volatility-state window (`Anchors.volStateWindow`), the
+    * model on each history of that length (`ledgerHistories`); then the one-day reversion
+    * (`lag1Demeaned` of the daily log returns, ruled 2026-10-23), read on the record after
+    * `UnlagCut` alone, where the lag correction leaves no lag-1 to read, and on each history of that
+    * many sessions (`LedgerRecords.lag1Sessions`).  The records in `ledgerrows-2026-11-02.tsv`. */
   val LedgerRows: Vector[String] = Vector(
     "vol-exit 1x edge 1.0/1.5 pts/yr", "vol-exit 3x edge 1.0/1.5 pts/yr",
     "vol-exit 1x edge 1.0/2.0 pts/yr", "vol-exit 3x edge 1.0/2.0 pts/yr",
@@ -11722,15 +11868,16 @@ object MarketSim:
     "vol coupling monthly corr", "vol coupling quarterly corr", "up-day vol slope in falls",
     "declines 10%+ a century", "z beyond 3 sds %", "z beyond 4 sds %", "log vol sd",
     "vol doubling months %", "sessions beyond 5% a century", "log vol autocorr 1m",
-    "log vol autocorr 12m", "return lag-1 autocorr")
+    "log vol autocorr 12m", "z beyond 3 sds calm/high", "vol state p99 %", "return lag-1 autocorr")
   /** The ledger rows' families, as `LedgerRows` lays them out: the surface, the parts, the
     * coupling, the declines, the vol process's innovation and level, the level's persistence, the
-    * one-day reversion. */
+    * state profile, the one-day reversion. */
   val LedgerFamilies: Vector[Range] =
-    Vector(0 until 14, 14 until 24, 24 until 27, 27 until 28, 28 until 33, 33 until 35, 35 until 36)
+    Vector(0 until 14, 14 until 24, 24 until 27, 27 until 28, 28 until 33, 33 until 35, 35 until 37,
+           37 until 38)
   /** The ledger rows read on the volatility-state window (`ledgerReadingsOf`): all but the one-day
     * reversion. */
-  val LedgerStateRows: Int = 35
+  val LedgerStateRows: Int = 37
   /** THE EXIT'S SURFACE: (hold below, cash at) besides the production pair, as decimals of the
     * trailing sd. */
   val VolExitGrid: Vector[(Double, Double)] = Vector(
@@ -11936,11 +12083,41 @@ object MarketSim:
       if r.isEmpty then Double.NaN else 100.0 * r.count(u => math.abs(u) > 0.05) / (r.length.toDouble / DaysPerYear)
     Vector(zTail(3.0), zTail(4.0), lvSd, doubling, big, ac(1), ac(12))
 
+  /** THE STATE PROFILE (`LedgerRows`' seventh family, 2026-11-02): where the innovation's large
+    * sessions fall in the vol state, and how high the state runs.  On `volProcessOf`'s z and trailing
+    * sd (s_t the sample sd of the 21 sessions before t, a zero sd leaving the session out), the
+    * sessions ranked by s_t, ties in session order: the share beyond 3 sds among the lowest three
+    * tenths over the share among the highest three tenths, each count plus a half so a high group
+    * without one still reads (the record's 3.1 -- its surprises are relatively largest in calm
+    * months; a model whose surprises scale with the state reads 2.2); and the 99th percentile of s_t
+    * by nearest rank, annualised in percent (the record's 45; a model whose crises run hotter reads
+    * 53 on the same state distribution below it).  Neither is visible to the unconditional tail rows.
+    * NaN under ten sessions.  The Rust twin's `vol_state_profile_of`. */
+  private[apps] def volStateProfileOf(r: Array[Double]): Vector[Double] =
+    val w = 21
+    val sz: Vector[(Double, Double)] = (w until r.length).iterator.flatMap { t =>
+      val x    = r.slice(t - w, t)
+      val mean = foldSum(x.iterator) / w
+      val v    = foldSum(x.iterator.map(u => (u - mean) * (u - mean))) / (w - 1)
+      val sd   = math.sqrt(v)
+      if sd > 0.0 then Some((sd, r(t) / sd)) else None
+    }.toVector
+    val m = sz.length
+    if m < 10 then Vector(Double.NaN, Double.NaN)
+    else
+      val order = (0 until m).sortWith((a, b) => java.lang.Double.compare(sz(a)._1, sz(b)._1) < 0)
+      val g     = 3 * m / 10
+      def beyond(ix: Seq[Int]): Double = ix.count(i => math.abs(sz(i)._2) > 3.0).toDouble + 0.5
+      val ratio = beyond(order.take(g)) / beyond(order.drop(m - g))
+      val p99   = sz(order((99 * m + 99) / 100 - 1))._1 * math.sqrt(DaysPerYear.toDouble) * 100.0
+      Vector(ratio, p99)
+
   /** The ledger rows read on the volatility-state window (`LedgerStateRows`) on one record or path's
     * volatility-state sessions. */
   def ledgerReadingsOf(d: IndexedSeq[VolStateDay]): Vector[Double] =
     val r = d.iterator.map(_.logRet).toArray
-    (volExitLedgerOf(d.map(_.exit)) ++ volCouplingOf(r) :+ declinesOf(r)) ++ volProcessOf(r)
+    (volExitLedgerOf(d.map(_.exit)) ++ volCouplingOf(r) :+ declinesOf(r)) ++ volProcessOf(r) ++
+      volStateProfileOf(r)
 
   /** `ledgerReadingsOf` on one-year-block resamples of a record's sessions, each session's inputs
     * kept together: the blocks and stream `volStateResamples` draws. */
@@ -12094,11 +12271,11 @@ object MarketSim:
                           blockYears: Option[Int] = None): Vector[Vector[Double]] =
     blockResamplesOf(r, DaysPerYear * blockYears.getOrElse(1), resamples, seed, x => Vector(ledgerLag1Of(x)))
 
-  /** THE LEDGER ROWS' RECORDS (`ledgerrows-2026-11-01.tsv`): a set's reading of every `LedgerRows`
+  /** THE LEDGER ROWS' RECORDS (`ledgerrows-2026-11-02.tsv`): a set's reading of every `LedgerRows`
     * row, and the banded rows' resamples and joint bands, which they are judged by (`model@`): the
-    * coupling's, the vol process's innovation and level and the one-day reversion's; the surface, the
-    * parts, the declines and the level's persistence are judged by where the record falls among the
-    * model's histories (`record@`).  `lag1Sessions` is the record's
+    * coupling's, the vol process's innovation and level, the state profile's and the one-day
+    * reversion's; the surface, the parts, the declines and the level's persistence are judged by
+    * where the record falls among the model's histories (`record@`).  `lag1Sessions` is the record's
     * session count after `UnlagCut`, the length the model's histories of the reversion are read at. */
   final case class LedgerRecords(record: Vector[Double], bands: Vector[RecordBand], lag1Sessions: Int)
 
@@ -12107,7 +12284,7 @@ object MarketSim:
            1.144072, 8.408481, 1.057782, 9.765416, 0.673300, 6.302301, 50.038610, 15.615003,
            45.000000, 13.078909, 13.325448, 52.052475, 34.565455, 63.888889, 0.671685, -1.601635,
            -0.285806, -0.377615, -1.579370, 69.402368, 1.340024, 0.336385, 0.442641, 3.707995,
-           252.624621, 0.680897, 0.283904, -0.056147),
+           252.624621, 0.680897, 0.283904, 2.956044, 68.378600, -0.056147),
     Vector(
       RecordBand("vol coupling monthly corr", -0.285806,
         Vector(-0.438744, -0.349199, -0.321547, -0.306346, -0.295727, -0.287780, -0.280582, -0.274135, -0.268252, -0.262672, -0.257282, -0.251589, -0.246370, -0.240769, -0.234748, -0.228774, -0.222070, -0.214887, -0.206354, -0.195977, -0.180039, -0.150391, -0.068181),
@@ -12133,6 +12310,12 @@ object MarketSim:
       RecordBand("sessions beyond 5% a century", 252.624621,
         Vector(66.626274, 115.207932, 145.744974, 165.177637, 180.446158, 192.938584, 202.654916, 212.371248, 222.087579, 230.415863, 240.132195, 249.848527, 259.564858, 267.893142, 278.997521, 290.101900, 302.594327, 316.474800, 333.131369, 355.340127, 390.041311, 456.667585, 617.681080),
         0.493825, (106.879647, 474.712200)),
+      RecordBand("z beyond 3 sds calm/high", 2.956044,
+        Vector(1.715232, 2.104000, 2.327434, 2.449541, 2.541284, 2.614679, 2.685393, 2.747573, 2.810526, 2.868132, 2.924051, 2.979381, 3.043011, 3.105263, 3.168675, 3.241758, 3.315789, 3.408602, 3.527473, 3.675325, 3.933333, 4.462687, 6.396226),
+        0.487025, (2.132743, 4.380282)),
+      RecordBand("vol state p99 %", 68.378600,
+        Vector(40.143578, 47.365891, 51.442709, 54.638218, 56.395357, 57.755826, 59.005220, 60.375470, 63.101719, 64.909508, 65.609357, 67.005173, 68.378600, 68.916566, 69.505861, 70.326396, 71.677017, 73.048513, 74.053435, 74.798767, 77.336628, 79.525775, 89.253497),
+        0.487025, (48.016578, 79.308504)),
       RecordBand("return lag-1 autocorr", -0.056147,
         Vector(-0.181306, -0.122250, -0.099846, -0.089013, -0.081936, -0.076538, -0.072299, -0.068200, -0.064835, -0.061613, -0.058604, -0.055522, -0.052715, -0.049603, -0.046449, -0.043351, -0.040064, -0.036547, -0.032618, -0.027821, -0.020635, -0.009416, 0.016560),
         0.475025, (-0.110044, -0.015576))),
@@ -12143,7 +12326,7 @@ object MarketSim:
            -0.216482, 0.698917, -0.302807, 0.922389, 0.237333, 1.701461, 25.069084, 5.311153,
            45.000000, 9.827473, 12.007971, 36.010443, 32.145166, 66.666667, 0.181760, -1.457118,
            -0.410259, -0.530453, -3.383634, 38.942546, 1.442148, 0.370207, 0.455485, 3.716609,
-           84.839119, 0.657588, 0.238687, -0.078768),
+           84.839119, 0.657588, 0.238687, 3.089888, 44.921773, -0.078768),
     Vector(
       RecordBand("vol coupling monthly corr", -0.410259,
         Vector(-0.514408, -0.458895, -0.432567, -0.418702, -0.409166, -0.401332, -0.394956, -0.388631, -0.383192, -0.377522, -0.372199, -0.367235, -0.362233, -0.357082, -0.351696, -0.345887, -0.339617, -0.332519, -0.324695, -0.314595, -0.298006, -0.268016, -0.190260),
@@ -12169,6 +12352,12 @@ object MarketSim:
       RecordBand("sessions beyond 5% a century", 84.839119,
         Vector(13.908052, 30.597715, 43.114962, 50.068988, 55.632209, 59.804625, 63.977041, 68.149456, 70.931067, 75.103483, 79.275898, 83.448314, 86.229924, 90.402340, 94.574756, 98.747171, 104.310392, 109.873613, 116.827639, 126.563276, 140.471328, 166.896628, 251.735747),
         0.494025, (27.816105, 176.632264)),
+      RecordBand("z beyond 3 sds calm/high", 3.089888,
+        Vector(1.696296, 2.097744, 2.321101, 2.459459, 2.557522, 2.643564, 2.714286, 2.784946, 2.849462, 2.913978, 2.978947, 3.044944, 3.114943, 3.189474, 3.263736, 3.351648, 3.441558, 3.549451, 3.691358, 3.867470, 4.138462, 4.762712, 7.046512),
+        0.486650, (2.136000, 4.672131)),
+      RecordBand("vol state p99 %", 44.921773,
+        Vector(30.733887, 35.097391, 37.104677, 38.751942, 39.706089, 40.533885, 40.783606, 41.291229, 42.096203, 42.742470, 43.087646, 44.260515, 45.121930, 45.497676, 46.947711, 48.235502, 49.350873, 50.258986, 52.860976, 57.203370, 66.667410, 73.627851, 84.088667),
+        0.486650, (35.353097, 72.089508)),
       RecordBand("return lag-1 autocorr", -0.078768,
         Vector(-0.212521, -0.156709, -0.133466, -0.120490, -0.112126, -0.105297, -0.099191, -0.094093, -0.089413, -0.085101, -0.080744, -0.076783, -0.072544, -0.068239, -0.063678, -0.058796, -0.053612, -0.047885, -0.041730, -0.034152, -0.024196, -0.008531, 0.022291),
         0.475025, (-0.143689, -0.016222))),
@@ -14272,7 +14461,8 @@ object MarketSim:
     * carries it. */
   val ProbeDials: Vector[(String, (World, Double) => World, World => Double)] = Vector(
     ("recessStep", (w, x) => w.copy(ext = w.ext.copy(recessStep = x)), _.ext.recessStep),
-    ("recessSteps", (w, x) => w.copy(ext = w.ext.copy(recessSteps = x)), _.ext.recessSteps))
+    ("recessSteps", (w, x) => w.copy(ext = w.ext.copy(recessSteps = x)), _.ext.recessSteps),
+    ("cycleVol", (w, x) => w.copy(ext = w.ext.copy(cycleVol = x)), _.ext.cycleVol))
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
     // depth, trendShare, drift and crowdImpact are in the search because they are the strongest
@@ -15060,7 +15250,7 @@ object MarketSim:
       * record band is judged by it alone. */
     def miss: Boolean = recordBand match
       case Some((lo, hi)) => !(model >= lo && model <= hi)
-      case None if isMultiYear(name) => !historyBand.exists((lo, hi) => real >= lo && real <= hi)
+      case None if singleHistory => !historyBand.exists((lo, hi) => real >= lo && real <= hi)
       case None => ratio match
         case Some(r) => !(r >= FidelityRatioBand._1 && r <= FidelityRatioBand._2)
         case None    => !pctile.exists(p => p >= ExtremePctBand._1 && p <= ExtremePctBand._2)
@@ -15074,8 +15264,12 @@ object MarketSim:
           if real > 0.0 then Some((FidelityRatioBand._1 * real, FidelityRatioBand._2 * real))
           else if real < 0.0 then Some((FidelityRatioBand._2 * real, FidelityRatioBand._1 * real))
           else None
+    /** Whether the row places the record among the world's single histories: a multi-year row, or
+      * a volatility-state row reported on a window (`RowFamily.VolState`), which carries no record
+      * band. */
+    def singleHistory: Boolean = isMultiYear(name) || (recordBand.isEmpty && VolStateRows.contains(name))
     def aggregation: String =
-      if isMultiYear(name) then "single-history"
+      if singleHistory then "single-history"
       else if ExtremeTargets.contains(name) then "ensemble-extreme"
       else "per-path"
 
@@ -15261,7 +15455,7 @@ object MarketSim:
                   w: World): Vector[HistoryRow] =
     historyRows(a, st, sims, years, horizonReadings(a, st, Some(sims), years, paths, seed, w, true))
 
-  /** The bar rows' records (`BarRows`' order) from `bars-2026-09-01.tsv`: the S&P's on SPY
+  /** The bar rows' records (`BarRows`' order) from `bars-2026-11-02.tsv`: the S&P's on SPY
     * (`w1993`), the Nasdaq's on QQQ (`w1999`, which carries no range-over-vol record).  The down/up
     * range is the fixture's `rangeDownupIntraday`: a model bar spans the prior close to the close
     * and its range is split by that bar's own return, which on the record is the open-to-close
@@ -15269,7 +15463,7 @@ object MarketSim:
   val BarRecordsSP500: Vector[Option[Double]] =
     Vector(Some(1.10), Some(0.67), Some(1.109), Some(0.498), Some(0.54), Some(0.33))
   val BarRecordsNasdaq: Vector[Option[Double]] =
-    Vector(None, Some(0.71), Some(1.142), Some(0.417), Some(0.56), Some(0.28))
+    Vector(None, Some(0.71), Some(1.142), Some(0.416), Some(0.49), Some(0.28))
 
   /** The sector rows' records (`SectorRows`' order): French's ten industries in
     * `sectors-2026-09-30.tsv` over the whole panel, each form's ratio rounded to four decimals.
@@ -15882,8 +16076,36 @@ object MarketSim:
     if reads.length < ExtremeMinHistories then Vector.fill(width)(None)
     else recordBandJoint(reads, Vector.range(0, width), alpha)._2.map(Some(_))
 
-  /** One reported record's rows, read on `sims`, single histories of the record's length. */
-  private def reportedRowsOn(rec: ReportedRecord, sims: Vector[Path]): Vector[ReportedRow] =
+  /** The family-wise level the volatility state's reported placement is banded at: the family's own
+    * (`volstate-2026-10-20.tsv`). */
+  val VolStateReportedAlpha: Double = 0.05
+
+  /** The valuation gap ln(price / fundamental) a session is in the top `pct` percent of the world's
+    * sessions at: the gaps pooled over every session of every path, the value with ceil(pct% of
+    * them) at or above it, each by `lnDet` so the twins cut alike.  A non-finite gap is left out;
+    * infinity where none is finite.  The Rust twin's `gap_threshold`. */
+  private[apps] def gapThreshold(sims: Vector[Path], pct: Int): Double =
+    val g = sims.iterator.flatMap(p => p.price.indices.iterator.map(i => lnDet(p.price(i) / p.fundamental(i))))
+      .filter(x => !x.isNaN && !x.isInfinite).toArray
+    if g.isEmpty then Double.PositiveInfinity
+    else
+      java.util.Arrays.sort(g)
+      val above = math.min(math.max((g.length * math.min(pct, 100) + 99) / 100, 1), g.length)
+      g(g.length - above)
+
+  /** A path's window of `years` from the first session, with the window left, whose valuation gap is
+    * at or above `q` (`gapThreshold`): the history of a record that opened as stretched over fair as
+    * its window's first session, among the histories that open so.  None where the path never
+    * reaches `q` with the window left.  The Rust twin's `gap_first_passage`. */
+  private[apps] def gapFirstPassage(p: Path, years: Int, q: Double): Option[Path] =
+    val n    = years * DaysPerYear
+    val last = p.price.length - n
+    if last < 0 then None
+    else (0 to last).find(i => lnDet(p.price(i) / p.fundamental(i)) >= q).map(p.windowSessionsLean(_, n))
+
+  /** One reported record's rows, read on `sims`, single histories of the record's length, each under
+    * `window`. */
+  private def reportedRowsOn(rec: ReportedRecord, sims: Vector[Path], window: String): Vector[ReportedRow] =
     val (reads, bands) = rec.family match
       case RowFamily.Timing =>
         val r = parMap(sims)(p => timingOfPath(p.price))
@@ -15893,10 +16115,13 @@ object MarketSim:
         (r, jointEdges(r, 8, MultiYearAlpha / 2.0))
       case RowFamily.Coupling =>
         (parMap(sims)(p => Vector(bubbleCouplingOf(dailyReturns(p.price)))), Vector(None))
+      case RowFamily.VolState =>
+        val r = parMap(sims)(p => volStateOf(volStateDaysOfPath(p)))
+        (r, jointEdges(r, 5, VolStateReportedAlpha))
     rec.family.rows.indices.toVector.map { k =>
       val real = rec.records(k)
       val xs = reads.map(_(k)).filter(x => !x.isNaN)
-      ReportedRow(rec.window,
+      ReportedRow(window,
         FidelityRow(rec.family.rows(k), extremeMedian(xs), real, real, None,
                     if xs.size < ExtremeMinHistories then None else Some(anchorPctile(xs, real)),
                     None, None, bands(k), rec.years, xs.size))
@@ -15904,16 +16129,27 @@ object MarketSim:
 
   /** THE REPORTED RECORDS' ROWS (`Anchors.reported`), in the set's order: each record's rows among
     * the world's single histories of its own length, cut from `main` (the caller's ensemble at
-    * `years`) where that length is no longer, simulated once per length where it is. */
+    * `years`) where that length is no longer, simulated once per length where it is.  A record with
+    * a conditioned start (`WindowStart.GapTop`) is read on the windows `gapFirstPassage` cuts from
+    * the ensemble at `years`, under a label carrying the start and the histories' count. */
   def reportedRecordRows(a: Anchors, main: Option[Vector[Path]], years: Int, paths: Int, seed: Long,
                          w: World): Vector[ReportedRow] =
-    val simsAt = a.reported.map(_.years).distinct.map { h =>
+    val simsAt = a.reported.filter(_.start == WindowStart.Last).map(_.years).distinct.map { h =>
       h -> (main match
         case Some(m) if h == years => m
         case Some(m) if h < years  => m.map(recordWindow(_, h))
         case _                      => simPaths(w, paths, math.max(h, years), seed).map(recordWindow(_, h)))
     }.toMap
-    a.reported.flatMap(rec => reportedRowsOn(rec, simsAt(rec.years)))
+    lazy val full: Vector[Path] = main.getOrElse(simPaths(w, paths, years, seed))
+    a.reported.flatMap { rec =>
+      rec.start match
+        case WindowStart.Last => reportedRowsOn(rec, simsAt(rec.years), rec.window)
+        case WindowStart.GapTop(pct) =>
+          val q   = gapThreshold(full, pct)
+          val cut = parMap(full)(p => gapFirstPassage(p, rec.years, q)).flatten
+          reportedRowsOn(rec, cut,
+            s"${rec.window} from a start in the gap's top $pct% (${cut.length} of ${full.length} histories)")
+    }
 
   /** THE MULTI-YEAR ROWS' JOINT BAND: each row's edges among the world's single histories of its
     * window's length, at the ranks a record-like history stays inside on every row of its window
@@ -16056,7 +16292,12 @@ object MarketSim:
                                    // p.head(h)), h)` by the row's getter, NaN where the history has
                                    // no reading -- where the read holds the paths at that horizon
                                    // (empty otherwise); every banded row is one history's statistic
-                                   bandedByPath: Map[String, Vector[Double]] = Map.empty):
+                                   bandedByPath: Map[String, Vector[Double]] = Map.empty,
+                                   // THE PATH-YEARS SIMULATED HERE: paths x years of each ensemble
+                                   // simulated for a horizon the caller's ensemble could not serve, 0
+                                   // where every horizon was cut from it or was its own; a search
+                                   // counts its cost with it
+                                   simulatedPathYears: Long = 0L):
     /** The extreme rows as the loss reads them (`extremeScoreStats`). */
     def extremeScores: Map[String, Double] = extreme.map((nm, xs) => nm -> extremeMedian(xs))
 
@@ -16093,6 +16334,9 @@ object MarketSim:
         case _                      => simPaths(w, paths, math.max(h, years), seed).map(recordWindow(_, h))
       // the paths at this horizon exist unless it is the run's own and the caller holds none
       val held = main.isDefined || h != years || extremeAt.contains(h)
+      // `sims` is simulated, not cut, when the caller's ensemble cannot serve the horizon and
+      // something reads it: the Rust twin's `needs_sims`
+      val simulated = (main.isEmpty || h > years) && (h != years || extremeAt.contains(h))
       val (banded, bandedByPath) =
         bandedAt.get(h).fold((Map.empty[String, Double], Map.empty[String, Vector[Double]])): rows =>
           // the families the rows at this horizon read, and nothing else; the paths' readings
@@ -16107,7 +16351,8 @@ object MarketSim:
         else (Map.empty[String, Vector[Double]], Map.empty[String, Vector[Double]],
               Map.empty[String, (Double, Double)])
       HorizonReadings(acc.banded ++ banded, acc.extreme ++ extreme, acc.extremeByPath ++ byPath,
-                      acc.historyBand ++ bands, acc.bandedByPath ++ bandedByPath)
+                      acc.historyBand ++ bands, acc.bandedByPath ++ bandedByPath,
+                      acc.simulatedPathYears + (if simulated then paths.toLong * math.max(h, years) else 0L))
 
   /** Each of `rows` read on every path of `sims` alone at horizon `h`, from the paths' readings
     * `per` (`pathReads` with `nd`): `measureNeeds(Vector(p), h, nd)` by the row's getter, in path
@@ -17252,7 +17497,7 @@ object MarketSim:
   val OptionalWorldKeys: Vector[(String, String)] = Vector(
     ("volPullStep", "0"), ("recessStep", "0"), ("recessSteps", "0"), ("declineVol", "0"),
     ("declineVolHalf", "5"), ("drawdownVol", "0"), ("declineVolAttack", "0"), ("yieldAnchor", "0"),
-    ("termPress", "0"))
+    ("termPress", "0"), ("cycleVol", "0"))
 
   /** Every `World` field, in declaration order, as the indented body of a JSON object.  A world
     * that reaches a consumer without its parameters cannot be re-simulated.
@@ -17366,6 +17611,7 @@ object MarketSim:
       (Vector("jumpResp"), "declineVol", w.ext.declineVol, 0.0),
       (Vector("expAnchor"), "yieldAnchor", w.ext.yieldAnchor, 0.0),
       (Vector("termVol"), "termPress", w.ext.termPress, 0.0),
+      (Vector("cycleYears"), "cycleVol", w.ext.cycleVol, 0.0),
       (Vector("declineVol", "jumpResp"), "declineVolHalf", half, 5.0),
       (Vector("declineVolHalf", "declineVol", "jumpResp"), "drawdownVol", w.ext.drawdownVol, 0.0),
       (Vector("drawdownVol", "declineVolHalf", "declineVol", "jumpResp"), "declineVolAttack", attack, 0.0)
@@ -18271,7 +18517,7 @@ $body
     var termPremium = dw.ext.termPremium
     var cpiNoise = dw.ext.cpiNoise; var deflProb = dw.ext.deflProb; var deflSize = dw.ext.deflSize
     var spikeRate = dw.ext.spikeRate; var spikeSize = dw.ext.spikeSize; var termVol = dw.ext.termVol
-    var termPress = dw.ext.termPress
+    var termPress = dw.ext.termPress; var cycleVol = dw.ext.cycleVol
     var brkVol = dw.ext.brkVol; var brkNominal = dw.ext.brkNominal
     var discountYield = dw.ext.discountYield; var cpiNoiseLevel = dw.ext.cpiNoiseLevel
     var policyGrowth = dw.ext.policyGrowth; var yieldBeta = dw.ext.yieldBeta
@@ -18447,6 +18693,7 @@ $body
       case "-spikesize"  => spikeSize = numOr("-spikesize", consumeNext)
       case "-termvol"    => termVol = numOr("-termvol", consumeNext)
       case "-termpress"  => termPress = numOr("-termpress", consumeNext)
+      case "-cyclevol"   => cycleVol = numOr("-cyclevol", consumeNext)
       case "-brkvol"     => brkVol = numOr("-brkvol", consumeNext)
       case "-brknominal" => brkNominal = numOr("-brknominal", consumeNext)
       case "-discountyield" => discountYield = numOr("-discountyield", consumeNext)
@@ -18635,7 +18882,7 @@ $body
                   duration = duration, bond10 = bond10,
                   ext = WorldExt(termPremium = termPremium, cpiNoise = cpiNoise, deflProb = deflProb, deflSize = deflSize,
                                  spikeRate = spikeRate, spikeSize = spikeSize, tips = tips, termVol = termVol,
-                                 termPress = termPress, brkVol = brkVol, brkNominal = brkNominal,
+                                 termPress = termPress, cycleVol = cycleVol, brkVol = brkVol, brkNominal = brkNominal,
                                  discountYield = discountYield, cpiNoiseLevel = cpiNoiseLevel,
                                  policyGrowth = policyGrowth, yieldBeta = yieldBeta,
                                  yieldLag = yieldLag, expAnchor = expAnchor, yieldAnchor = yieldAnchor,

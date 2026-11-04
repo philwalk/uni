@@ -43,6 +43,7 @@
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
 use std::fmt::Write as _;
 use std::io::Write as _;
 
@@ -1116,7 +1117,7 @@ const RACE_WARMUP: usize = 32;
 /// surrogate's own manifold cannot close the search. No screening until `SCREEN_WARMUP` reads
 /// are in; the window is in memory and starts empty on a resume. `screen.tsv` records each read
 /// child's prediction, its rank among the proposals and what the read then found: the
-/// surrogate's accuracy inside the run.
+/// surrogate's accuracy inside the run. Every exponential is `exp_det`, so the twins rank alike.
 const SCREEN_WINDOW: usize = 512;
 const SCREEN_WARMUP: usize = 64;
 const SCREEN_EXPLORE: usize = 8;
@@ -1271,7 +1272,7 @@ fn surrogate_fit(
     let mut kmat: Vec<Vec<f64>> = (0..n)
         .map(|a| {
             (0..n)
-                .map(|b| (-sq_dist(&x[a], &x[b]) / two_ls2).exp())
+                .map(|b| ms::exp_det(-sq_dist(&x[a], &x[b]) / two_ls2))
                 .collect()
         })
         .collect();
@@ -1318,7 +1319,7 @@ impl Surrogate {
         let k: Vec<f64> = self
             .x
             .iter()
-            .map(|xi| (-sq_dist(xi, &z) / self.two_ls2).exp())
+            .map(|xi| ms::exp_det(-sq_dist(xi, &z) / self.two_ls2))
             .collect();
         let mut total = 0.0;
         for (t, _) in self.cols.iter().enumerate() {
@@ -1329,7 +1330,7 @@ impl Surrogate {
                     .sum::<f64>();
             let (mut num, mut den) = (0.0, 0.0);
             for &(r, c) in &self.pairs[t] {
-                let w = (-0.5 * ((r - y) / self.bw[t]).powi(2)).exp();
+                let w = ms::exp_det(-0.5 * ((r - y) / self.bw[t]).powi(2));
                 num += w * c;
                 den += w;
             }
@@ -1344,6 +1345,26 @@ impl Surrogate {
             };
         }
         total
+    }
+}
+
+/// A GENERATION'S COST (`gens.tsv`): the path-years its reads simulated, by kind -- the children's
+/// full reads, the race's reads of children and parents, the members read on the generation's
+/// seeds under `-common`, the `-reps 1` noise read. A count no slowdown of the machine can touch,
+/// beside the wall clock that one can. The reads before the first generation (the seed worlds',
+/// the reference's, the projection's) are not counted: they are the same for runs of one world and
+/// settings.
+#[derive(Default)]
+struct Cost {
+    children: u64,
+    race: u64,
+    members: u64,
+    noise: u64,
+}
+
+impl Cost {
+    fn total(&self) -> u64 {
+        self.children + self.race + self.members + self.noise
     }
 }
 
@@ -1507,6 +1528,10 @@ struct Read {
     /// A READ WITHIN ITS BOUNDS awaiting the placement over every read's histories pooled, which
     /// `evaluate` reads and clears (`placed_together`); `None` on a read its bounds rejected
     due: Option<Box<Due>>,
+    /// THE PATH-YEARS THIS READ SIMULATED: its ensembles' paths x years, the horizons' extra
+    /// ensembles included (`HorizonReadings::simulated_path_years`), every rep and both arms
+    /// summed; what a generation's cost counts (`gens.tsv`)
+    path_years: u64,
 }
 
 /// A read within its bounds, before the placement over every read's histories pooled.
@@ -1634,6 +1659,7 @@ fn nan_read(series: &str) -> Read {
         ledger: Vec::new(),
         ledger_vec: None,
         due: None,
+        path_years: 0,
     }
 }
 
@@ -1658,7 +1684,7 @@ fn one_read(
     // verdict is; the primary is bit-identical, so the table's horizons read `w`
     let vw = ms::verdict_world(anchors, w);
     if obj.stage == 0 || obj.stage >= paths {
-        return read_paths(
+        let r = read_paths(
             w,
             anchors,
             &ms::sim_paths(&vw, paths, years, s),
@@ -1666,6 +1692,10 @@ fn one_read(
             s,
             obj,
         );
+        return Read {
+            path_years: (paths * years) as u64 + r.path_years,
+            ..r
+        };
     }
     let mut main = ms::sim_path_range(&vw, 0, obj.stage, years, s);
     let head = read_paths(w, anchors, &main, years, s, &obj.unstaged());
@@ -1682,6 +1712,7 @@ fn one_read(
         return Read {
             gate_fail: stage_fail.iter().map(|f| format!("stage: {f}")).collect(),
             stage_fail: Some(stage_fail),
+            path_years: (obj.stage * years) as u64 + head.path_years,
             ..head
         };
     }
@@ -1692,9 +1723,11 @@ fn one_read(
         years,
         s,
     ));
+    let full = read_paths(w, anchors, &main, years, s, obj);
     Read {
         stage_fail: Some(stage_fail),
-        ..read_paths(w, anchors, &main, years, s, obj)
+        path_years: (paths * years) as u64 + head.path_years + full.path_years,
+        ..full
     }
 }
 
@@ -1738,6 +1771,7 @@ fn read_paths(
     } else {
         ms::horizon_readings(anchors, &st, Some(main), years, paths, s, w, true)
     };
+    let horizon_path_years = hr.simulated_path_years;
     let banded = &hr.banded;
     // at its record's horizon where the table read it, as the verdict reads it
     let held = obj.project_row.map_or(f64::NAN, |nm| {
@@ -1918,6 +1952,7 @@ fn read_paths(
             .map_or_else(Vec::new, |l| vec![format!("{s}:{}", g8(l.1))]),
         ledger_vec: ledger.map(|l| l.0),
         due,
+        path_years: horizon_path_years,
     }
 }
 
@@ -2330,6 +2365,7 @@ fn evaluate(
             .find(|r| r.score == hi)
             .and_then(|r| r.ledger_vec.clone()),
         due: None,
+        path_years: reads.iter().map(|r| r.path_years).sum(),
     }
 }
 
@@ -2517,6 +2553,7 @@ fn judge(
             .collect(),
         ledger_vec: a.ledger_vec,
         due: None,
+        path_years: a.path_years + b.path_years,
     }
 }
 
@@ -2730,7 +2767,8 @@ fn ledger_cells(m: &Member, table: &Ledger, tier: &str) -> String {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "the archive, its reserve, the run's position, its noise and its settings: what a checkpoint is"
+    reason = "the archive, its reserve, the run's position, its noise, its cost and its settings: \
+              what a checkpoint is"
 )]
 fn write_archive(
     dir: &str,
@@ -2739,6 +2777,7 @@ fn write_archive(
     generation: u64,
     evals: u64,
     noise: (f64, u64),
+    path_years: u64,
     cfg: &[(String, String)],
     table: &Ledger,
 ) {
@@ -2787,6 +2826,9 @@ fn write_archive(
     // twins write one text.
     let _ = writeln!(st, "noiseSum\t{}", g8(noise.0));
     let _ = writeln!(st, "noiseN\t{}", noise.1);
+    // the path-years every generation so far simulated (`gens.tsv`'s cumulative): resumable state,
+    // as the noise's is; an archive written before the count resumes it from 0
+    let _ = writeln!(st, "pathYears\t{path_years}");
     for (k, v) in cfg {
         let _ = writeln!(st, "{k}\t{v}");
     }
@@ -4705,6 +4747,10 @@ fn main() {
         .get("noiseN")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
+    let path_years0: u64 = prior
+        .get("pathYears")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
 
     // A resume that changes how a candidate is judged puts two standards in one archive and says
     // nothing about it. Refuse, unless told the change is deliberate.
@@ -4930,6 +4976,7 @@ fn main() {
             gen0,
             evals0,
             (nsum0, nn0),
+            path_years0,
             &settings,
             &ledger,
         );
@@ -5177,6 +5224,7 @@ fn main() {
         gen0,
         evals0,
         (nsum0, nn0),
+        path_years0,
         &settings,
         &ledger,
     );
@@ -5309,6 +5357,8 @@ fn main() {
     // the surrogate's window (`-screen`): the last full reads' coordinates and ledger vectors
     let mut window: VecDeque<(Vec<f64>, Vec<[f64; 3]>)> =
         VecDeque::with_capacity(SCREEN_WINDOW + 1);
+    // the path-years the run's generations have simulated (`gens.tsv`), resumed from the checkpoint
+    let mut path_years = path_years0;
     while c.gens == 0 || g < gen0 + c.gens {
         // One generation: `pop` mutations of members drawn from the archive, then a checkpoint. A
         // kill between generations loses at most one generation's work.
@@ -5320,6 +5370,8 @@ fn main() {
         let mut log = Vec::new();
         let mut cands: Vec<String> = Vec::new();
         let mut stage_log: Vec<String> = Vec::new();
+        let gen_t0 = std::time::Instant::now();
+        let mut cost = Cost::default();
         // the archive's shape is read once a generation; `-cov 0` reads none and draws nothing
         // extra, so a run without it proposes exactly what it always did
         let factor = if c.cov > 0.0 {
@@ -5489,10 +5541,10 @@ fn main() {
             // seed; a child over the cut is logged and not read in full
             if c.race > 0 {
                 let base_w = world_for(&parent.name);
-                let pr = *race_reads
-                    .entry(held_key(&parent.name, &parent.dials))
-                    .or_insert_with(|| {
-                        judge(
+                let pr = match race_reads.entry(held_key(&parent.name, &parent.dials)) {
+                    Entry::Occupied(e) => *e.get(),
+                    Entry::Vacant(e) => {
+                        let pread = judge(
                             &base_w,
                             &parent.dials,
                             anchors,
@@ -5502,9 +5554,11 @@ fn main() {
                             &seeds[..1],
                             &obj,
                             None,
-                        )
-                        .score
-                    });
+                        );
+                        cost.race += pread.path_years;
+                        *e.insert(pread.score)
+                    }
+                };
                 let cr = judge(
                     &base_w,
                     &child,
@@ -5519,6 +5573,7 @@ fn main() {
                 // a child the race's few paths find infeasible is not dropped on gates read
                 // there: it goes to the full read, which decides its bounds, and feeds no
                 // difference
+                cost.race += cr.path_years;
                 let d = if cr.feasible { cr.score - pr } else { f64::NAN };
                 let cut = race_cut(&race_hist, c.race_keep, c.pop);
                 let kept = !cr.feasible || d <= cut;
@@ -5566,6 +5621,7 @@ fn main() {
                 },
             );
             let secs = t0.elapsed().as_secs_f64();
+            cost.children += r.path_years;
             // the surrogate's window takes every feasible full read with its ledger vector, a read
             // the bar cut after one rep included: its vector is the read that set its score
             if let Some(v) = r.ledger_vec.as_ref().filter(|_| r.feasible) {
@@ -5607,6 +5663,7 @@ fn main() {
                     None,
                 )
             });
+            cost.noise += second.as_ref().map_or(0, |x| x.path_years);
             // a candidate above the bar still feeds the noise estimate when it ran to the end:
             // its spread is a reading of the objective's own noise whatever its level. One the
             // bar cut short does not: a partial spread is not that reading
@@ -5644,22 +5701,24 @@ fn main() {
                 let paired: Option<(f64, Option<f64>)> = if c.common {
                     near.and_then(|i| {
                         let m = &arc[i];
-                        let mr =
-                            gen_reads
-                                .entry(held_key(&m.name, &m.dials))
-                                .or_insert_with(|| {
-                                    judge(
-                                        &world_for(&m.name),
-                                        &m.dials,
-                                        anchors,
-                                        transport.as_ref(),
-                                        c.paths,
-                                        c.years,
-                                        &gen_seeds,
-                                        &obj,
-                                        None,
-                                    )
-                                });
+                        let mr = match gen_reads.entry(held_key(&m.name, &m.dials)) {
+                            Entry::Occupied(e) => e.into_mut(),
+                            Entry::Vacant(e) => {
+                                let read = judge(
+                                    &world_for(&m.name),
+                                    &m.dials,
+                                    anchors,
+                                    transport.as_ref(),
+                                    c.paths,
+                                    c.years,
+                                    &gen_seeds,
+                                    &obj,
+                                    None,
+                                );
+                                cost.members += read.path_years;
+                                e.insert(read)
+                            }
+                        };
                         mr.feasible.then(|| (mr.score, pair_noise(&r, mr)))
                     })
                 } else {
@@ -5743,6 +5802,8 @@ fn main() {
         if c.reps == 1 {
             evals += 1;
         }
+        // THE GENERATION'S COST (`Cost`), the run's total beside it
+        path_years += cost.total();
         if c.race > 0 {
             append_tsv(
                 &c.out,
@@ -5785,8 +5846,26 @@ fn main() {
             g + 1,
             evals,
             (noise_sum, noise_n),
+            path_years,
             &settings,
             &ledger,
+        );
+        let finished = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
+        append_tsv(
+            &c.out,
+            "gens.tsv",
+            "gen\tfinished\tseconds\tchildren\trace\tmembers\tnoise\ttotal\tcumulative",
+            &[format!(
+                "{g}\t{finished:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{path_years}",
+                gen_t0.elapsed().as_secs_f64(),
+                cost.children,
+                cost.race,
+                cost.members,
+                cost.noise,
+                cost.total()
+            )],
         );
         if project.is_some() {
             write_held(&c.out, &arc, &held);
@@ -6260,6 +6339,7 @@ mod ledger_tests {
             3,
             7,
             (0.0, 0),
+            0,
             &[],
             &table,
         );
@@ -6376,6 +6456,7 @@ mod noise_tests {
             ledger: Vec::new(),
             ledger_vec: None,
             due: None,
+            path_years: 0,
         }
     }
 
@@ -6662,6 +6743,7 @@ mod membership_tests {
             held: f64::NAN,
             ledger: vec!["1:1".to_string()],
             ledger_vec: Some(Vec::new()),
+            path_years: 0,
             due: Some(Box::new(Due {
                 rows,
                 at: 1,

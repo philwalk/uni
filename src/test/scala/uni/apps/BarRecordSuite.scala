@@ -20,7 +20,7 @@ class BarRecordSuite extends FunSuite:
   def roundHalfAway(x: Double): Double = math.signum(x) * math.floor(math.abs(x) + 0.5)
 
   test("the bar records are the fixture's, with the intraday down/up") {
-    val rows = fixture("bars-2026-09-01.tsv")
+    val rows = fixture("bars-2026-11-02.tsv")
     assume(rows.nonEmpty, "fixture not present in this tree (source tarball?)")
     val stats = Vector("rangeMeanOverCcvol", "rangeAcf1", "rangeDownupIntraday", "volSd", "volCorrRange",
                        "overnightShare")

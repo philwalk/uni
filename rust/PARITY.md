@@ -168,13 +168,7 @@ The world block's optional keys are a second such table (`OPTIONAL_WORLD_KEYS` /
 -- `volPullStep` 0, the row 65 probes `recessStep` and `recessSteps` 0, the linear vol answer's
 `declineVol` 0, `declineVolHalf` 5, `drawdownVol` 0 and `declineVolAttack` 0, and the rate side's
 `yieldAnchor` 0 (written after `expAnchor`), `termPress` 0 (written after `termVol`) and the
-cycle's `cycleVol` 0 (written after `cycleYears`; Rust only, the twin's gap logged, so the twin does
-not run a world with it on). The twin's other logged gaps: the ledger's state-profile rows (a 38-row
-ledger against its 36), the bar volume rows' detrend (`detrended_log_volume` and
-`bars-2026-11-02.tsv` against the raw series and `bars-2026-09-01.tsv`), and the search
-harness's `-common` and `-race` (one seed set a generation with the paired admission, and the
-race read against the parent; the settings `seedRule` and `race`, which the twin's harness neither
-writes nor honours). A key is
+cycle's `cycleVol` 0 (written after `cycleYears`). A key is
 written only away from its off value (`declineVolHalf` only while `declineVol` is on,
 `declineVolAttack` only while either dial is), so adding a dial moves no frozen world's body or digest, and the
 loader appends each absent key after the body's own in the table's order, so both twins hand
