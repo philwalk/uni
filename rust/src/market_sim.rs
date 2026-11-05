@@ -2088,6 +2088,7 @@ fn recipe_0251_sp500(mut w: World) -> World {
     w.refuge_days = 1.3746700;
     w.lev_gain = 4.5653900;
     w.margin = 0.0079948400;
+    w.div_yield = 1.95;
     w
 }
 
@@ -13697,8 +13698,18 @@ pub const RECORD_BAND_CLUSTER_ROWS: [&str; 2] = ["clustering lag 1", "clustering
 /// The length in years of the record a row's `RecordBand` was read from: the horizon
 /// `horizon_readings` reads the model at, so a band is compared with histories as long as the one
 /// it is the spread of.
+/// THE RECENT ERA's rows (2026-11-05): read on `Anchors::recent_window` at `Anchors::recent_years`,
+/// the S&P's on CRSP 2009-2024 (`recordbands-2026-11-05.tsv`), the Nasdaq's on its equity window.
+pub const RECENT_ROWS: [&str; 4] = [
+    "equity vol %",
+    "variance ratio 20d",
+    "variance ratio 60d",
+    "variance ratio 120d",
+];
+
 pub fn record_band_years(a: Anchors, name: &str) -> usize {
-    let groups: [(&[&str], usize); 19] = [
+    let groups: [(&[&str], usize); 20] = [
+        (&RECENT_ROWS, a.recent_years),
         (&RECORD_BAND_CLUSTER_ROWS, a.cluster_years),
         (&RATE_BAND_ROWS, a.rate_years),
         (&RATE_AFTER_ROWS, a.rate_years),
@@ -19618,6 +19629,12 @@ pub struct Anchors {
     /// the window the Nasdaq set's levels were measured over); `None` where the graded window is
     /// the only one
     pub vol_state_reference: Option<[f64; 5]>,
+    /// THE RECENT ERA's record window and horizon (`RECENT_ROWS`, 2026-11-05): the rows whose
+    /// record trends across the century's windows (the S&P's short-horizon variance ratios fall
+    /// about two record-sds a decade and its vol rises), graded on the era the consumer trades
+    /// in, CRSP 2009-2024; the Nasdaq set's is its equity window, which is the recent era already
+    pub recent_window: &'static str,
+    pub recent_years: usize,
     pub cluster_window: &'static str,
     /// Window for the return-per-volatility anchor. Its own field because it is NOT the equity
     /// window: the S&P set takes r/v from CRSP 1954-2026 where its levels come from the S&P, and
@@ -19858,7 +19875,7 @@ pub struct Anchors {
     /// The dividend yield at fair value (%/yr), the record the `dividend yield %` row places each
     /// history's mean over `div_years` against when the `div_yield` dial is on, and the span of
     /// the record's annual means the report quotes — `dividend-2026-09-02.tsv`, the Shiller S&P
-    /// 1954-2023 and QQQ 2005-2026.
+    /// 2009-2023 (the recent era, 2026-11-05) and QQQ 2005-2026.
     pub div_yield: f64,
     pub div_yield_band: (f64, f64),
     pub div_years: usize,
@@ -20291,19 +20308,20 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
     },
 ];
 
-/// The S&P set's `RecordBand`s: `recordbands-2026-09-26.tsv`, CRSP total return 1954-2026 and, for
-/// the two clustering rows, the century -- each row on the window the set reads it over.
+/// The S&P set's `RecordBand`s: `recordbands-2026-11-05.tsv`, CRSP total return 1954-2026, for
+/// the two clustering rows the century and for the recent era's rows (`RECENT_ROWS`) 2009-2024 --
+/// each row on the window the set reads it over.
 const RECORD_BANDS_SP500: [RecordBand; 52] = [
     RecordBand {
         name: "equity vol %",
-        record: 16.820747,
+        record: 18.501241,
         q: [
-            13.754063, 14.781532, 15.328211, 15.629711, 15.857730, 16.031020, 16.183305, 16.324410,
-            16.456452, 16.583633, 16.697906, 16.812565, 16.935315, 17.059403, 17.189090, 17.330357,
-            17.487614, 17.650497, 17.851870, 18.111472, 18.507805, 19.239667, 21.407898,
+            12.423088, 14.154180, 15.049195, 15.621522, 16.039844, 16.370334, 16.657080, 16.933799,
+            17.179352, 17.417188, 17.648067, 17.878366, 18.112590, 18.352393, 18.585692, 18.851890,
+            19.132075, 19.452920, 19.830849, 20.314173, 21.000335, 22.357517, 25.260511,
         ],
-        joint_c: 0.496575,
-        joint: (14.513585, 19.631075),
+        joint_c: 0.496875,
+        joint: (13.666477, 23.109101),
     },
     RecordBand {
         name: "typical-year vol %",
@@ -20362,14 +20380,14 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
     },
     RecordBand {
         name: "variance ratio 60d",
-        record: 0.876738,
+        record: 0.616719,
         q: [
-            0.693214, 0.765817, 0.794978, 0.811740, 0.823918, 0.833535, 0.841679, 0.849244,
-            0.856154, 0.862373, 0.869116, 0.874894, 0.881017, 0.887269, 0.893804, 0.901049,
-            0.908621, 0.917151, 0.927484, 0.940381, 0.960600, 0.998670, 1.099491,
+            0.374908, 0.506215, 0.543498, 0.564412, 0.577513, 0.588421, 0.597396, 0.604788,
+            0.612066, 0.619055, 0.626114, 0.632844, 0.639487, 0.646164, 0.654017, 0.662197,
+            0.670848, 0.680978, 0.693334, 0.709469, 0.738335, 0.810562, 1.047163,
         ],
-        joint_c: 0.496575,
-        joint: (0.746460, 1.018957),
+        joint_c: 0.496875,
+        joint: (0.474967, 0.856186),
     },
     RecordBand {
         name: "downside vol excess %",
@@ -20440,14 +20458,14 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
     },
     RecordBand {
         name: "variance ratio 120d",
-        record: 0.898289,
+        record: 0.546172,
         q: [
-            0.588865, 0.703602, 0.752846, 0.780657, 0.799465, 0.814391, 0.827569, 0.839511,
-            0.850713, 0.861719, 0.871656, 0.881694, 0.891659, 0.901360, 0.911489, 0.923197,
-            0.935686, 0.949867, 0.965685, 0.986553, 1.017462, 1.078466, 1.293321,
+            0.269465, 0.363079, 0.406863, 0.433912, 0.452373, 0.467789, 0.482476, 0.495414,
+            0.507633, 0.519814, 0.531751, 0.544293, 0.556731, 0.569679, 0.583831, 0.598030,
+            0.614039, 0.632868, 0.655580, 0.684819, 0.732472, 0.819405, 1.091298,
         ],
-        joint_c: 0.496575,
-        joint: (0.680502, 1.113420),
+        joint_c: 0.496875,
+        joint: (0.338965, 0.877670),
     },
     RecordBand {
         name: "variance ratio 250d",
@@ -20462,14 +20480,14 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
     },
     RecordBand {
         name: "variance ratio 20d",
-        record: 0.891976,
+        record: 0.802867,
         q: [
-            0.773690, 0.821151, 0.840951, 0.851846, 0.859109, 0.865229, 0.870524, 0.875124,
-            0.879423, 0.883463, 0.887483, 0.891393, 0.895185, 0.899244, 0.903142, 0.907564,
-            0.912318, 0.917187, 0.923371, 0.931227, 0.943088, 0.964938, 1.019557,
+            0.608475, 0.680928, 0.713284, 0.731093, 0.742762, 0.753291, 0.761896, 0.769155,
+            0.776118, 0.782700, 0.788801, 0.794749, 0.801045, 0.807030, 0.813232, 0.819192,
+            0.825963, 0.832865, 0.841136, 0.851122, 0.866344, 0.899365, 1.025870,
         ],
-        joint_c: 0.496575,
-        joint: (0.810297, 0.975632),
+        joint_c: 0.496875,
+        joint: (0.660943, 0.924363),
     },
     RecordBand {
         name: "short rate %",
@@ -21462,6 +21480,8 @@ const SP500_ANCHORS: Anchors = Anchors {
     vol_state_window: "S&P / CRSP 1954-2026",
     vol_state_years: 72,
     vol_state_reference: None,
+    recent_window: "S&P / CRSP 2009-2024",
+    recent_years: 16,
     cluster_window: "CRSP 1926-2026, the century",
     cluster_years: 100,
     tail_window: "CRSP 1926-2026, the century",
@@ -21524,15 +21544,15 @@ const SP500_ANCHORS: Anchors = Anchors {
     post_rate_sd: 0.15,
     post_floor: 15.195221,
     post_floor_sd: 0.46,
-    // CRSP 1954-2026, lag-free (`recordbands-2026-10-20.tsv`): 16.82
-    vol: 16.8,
+    // CRSP 2009-2024, lag-free (`recordbands-2026-11-05.tsv`, the recent era): 18.50
+    vol: 18.5,
     vol_sd: 0.12,
     // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 14.22, where
     // calendar years read 12.87 (`yearvol-2026-09-15.tsv`, w1954); the S&P index's own daily
     // record is not in the fixture, and CRSP is the series the r/v row reads too.
     year_vol: 14.0,
     year_vol_sd: 0.11,
-    // CRSP 1954-2026, lag-free (`recordbands-2026-10-20.tsv`): 0.643 and 20.52, each row's own window
+    // CRSP 1954-2026, lag-free (`recordbands-2026-11-05.tsv`): 0.643 and 20.52, each row's own window
     ret_vol: 0.643,
     ret_vol_sd: 0.22,
     kurt: 20.5,
@@ -21557,9 +21577,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     // not a century's.
     worst_depth: -84.1,
     worst_depth_sd: 0.21,
-    // the record's own 5th-95th (15.33-18.51, recordbands-2026-10-20.tsv), rounded outward to
-    // whole percent: a level gate no narrower than what the record's history produces
-    vol_band: (15.0, 19.0),
+    // the record's own 5th-95th (15.05-21.00, recordbands-2026-11-05.tsv, 2009-2024), rounded
+    // outward to a tenth: a level gate no narrower than what the record's history produces
+    vol_band: (15.0, 21.1),
     // the old band's relative width, -12.4% / +12.4%, around the phase-averaged anchor
     year_vol_band: (12.3, 15.7),
     ret_vol_band: (0.31, 1.09),
@@ -21594,9 +21614,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     bond_depth_sd: 0.36,
     dd_refs: &DD_REFS_SP500,
     record_bands: &RECORD_BANDS_SP500,
-    div_yield: 2.95,
-    div_yield_band: (1.1, 5.8),
-    div_years: 70,
+    div_yield: 1.95,
+    div_yield_band: (1.3, 2.8),
+    div_years: 15,
     basket_ruler: None,
     sector_momentum: 0.003923,
     sector_momentum_band: (0.002111, 0.005480),
@@ -21653,6 +21673,8 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     vol_state_window: "French HiTec 1954-07-01..1999-03-09 + QQQ 1999-03-10..2026-08-20",
     vol_state_years: 72,
     vol_state_reference: Some(VOL_STATE_QQQ_RECORD),
+    recent_window: "QQQ 1999-2026",
+    recent_years: 27,
     cluster_window: "QQQ 1999-2026",
     cluster_years: 27,
     tail_window: "QQQ 1999-2026",
@@ -28728,13 +28750,12 @@ fn anchor_groups(a: Anchors) -> Vec<(&'static str, usize, Vec<&'static str>)> {
     clippy::too_many_lines,
     reason = "one group per record window, each listed in full where its rows are named"
 )]
-fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 24] {
+fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 25] {
     [
         (
             a.equity_window,
             a.equity_years,
             &[
-                "equity vol %",
                 "typical-year vol %",
                 "return per vol",
                 "kurtosis",
@@ -28755,6 +28776,9 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
         // The volatility state's five rows (item 62): one family on the set's own window, the
         // Nasdaq's the long tech record -- see `Anchors::vol_state_window`.
         (a.vol_state_window, a.vol_state_years, &VOL_STATE_ROWS),
+        // The recent era's rows (2026-11-05): the S&P's on CRSP 2009-2024, since on the century's
+        // windows these trend -- see `Anchors::recent_window`.
+        (a.recent_window, a.recent_years, &RECENT_ROWS),
         (
             a.cluster_window,
             a.cluster_years,
@@ -28809,16 +28833,7 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
         // `VAR_RATIO_BANDS`. The horizon is one instrument's record, as it is for the depth rungs, and
         // the target this group carries is a theory value rather than a reading, so `real@` here says
         // where 1.00 falls in the model's own spread of 25-year readings, not where a record does.
-        (
-            "equity funds + CRSP, 25y",
-            25,
-            &[
-                "variance ratio 60d",
-                "variance ratio 120d",
-                "variance ratio 250d",
-                "variance ratio 20d",
-            ],
-        ),
+        ("equity funds + CRSP, 25y", 25, &["variance ratio 250d"]),
         // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is
         // what each residual ratio in the fit was measured from.
         (
@@ -36863,9 +36878,10 @@ mod contract_tests {
         //                 the worst over a whole history.
         // `episode_anchor_tests` re-derives both and pins the evidence for what each one used to be.
         // A future move of any value here needs the same treatment: measured, recorded,
-        // re-derivable.
+        // re-derivable. `vol` moved a third time (2026-11-05): the row reads the recent era,
+        // CRSP 2009-2024, with its band; see `record_band_tests`.
         let a = SP500_ANCHORS;
-        assert_eq!(a.vol, 16.8); // the lag-free record, 2026-10-23
+        assert_eq!(a.vol, 18.5); // CRSP 2009-2024, lag-free, 2026-11-05
         assert_eq!(a.ret_vol, 0.643); // the lag-free record, 2026-10-23
         assert_eq!(a.kurt, 20.5); // the lag-free record, 2026-10-23
         assert_eq!(a.ac1, 0.285); // re-read lag-free 2026-10-23; see amplifier_anchor_tests
@@ -36873,7 +36889,7 @@ mod contract_tests {
         assert_eq!(a.crashes, 20.7);
         assert_eq!(a.med_depth, -21.5); // re-measured in 0.22.0, lag-free 2026-10-23; see episode_anchor_tests
         assert_eq!(a.worst_depth, -84.1); // re-anchored in 0.22.1; see episode_anchor_tests
-        assert_eq!(a.vol_band, (15.0, 19.0)); // the lag-free record's 5th-95th, 2026-10-23
+        assert_eq!(a.vol_band, (15.0, 21.1)); // the recent era's 5th-95th, 2026-11-05
         assert_eq!(a.ret_vol_band, (0.31, 1.09));
     }
 
@@ -41387,7 +41403,7 @@ mod record_band_tests {
                 .map(str::to_string)
                 .collect()
         };
-        let mut out = read("recordbands-2026-10-20.tsv");
+        let mut out = read("recordbands-2026-11-05.tsv");
         out.extend(read("rateafter-2026-09-30.tsv").into_iter().skip(1));
         out.extend(read("volexit-2026-10-20.tsv").into_iter().skip(1));
         out.extend(read("volstate-2026-10-20.tsv").into_iter().skip(1));
@@ -42009,6 +42025,29 @@ mod record_band_tests {
     /// long tech record at 72 years, not its 27-year equity window, the S&P's its equity window;
     /// the Nasdaq's reference readings are the QQQ window's records as the fixture reads them;
     /// and the family's reader and resampler are the five rows' own.
+    /// THE RECENT ERA's rows are one group on their own window (2026-11-05): the S&P's CRSP
+    /// 2009-2024 at 16 years, not its 72-year equity window; the Nasdaq's its equity window.
+    #[test]
+    fn the_recent_rows_read_their_own_window() {
+        let sp = anchors_named("sp500");
+        assert_eq!(sp.recent_years, 16);
+        assert_ne!(sp.recent_years, sp.equity_years);
+        for n in RECENT_ROWS {
+            assert_eq!(record_band_years(sp, n), sp.recent_years, "[{n}]");
+        }
+        assert!(
+            anchor_groups(sp).iter().any(|(w, y, ns)| {
+                *w == sp.recent_window && *y == sp.recent_years && ns == &RECENT_ROWS
+            }),
+            "the rows are one anchor group on their own window"
+        );
+        let nq = anchors_named("nasdaq");
+        assert_eq!(
+            (nq.recent_window, nq.recent_years),
+            (nq.equity_window, nq.equity_years)
+        );
+    }
+
     #[test]
     fn the_vol_state_rows_read_their_own_window_and_the_reference_is_the_qqq_windows() {
         let a = anchors_named("nasdaq");
@@ -42576,13 +42615,20 @@ mod record_band_tests {
                     .unwrap_or_else(|| panic!("fixture row [{set} {}] missing", b.name));
                 let window = line.split('\t').nth(3).expect("window");
                 let (from, to) = window.split_once("..").expect("a from..to window");
-                let year = |d: &str| d[..4].parse::<usize>().expect("a year");
+                // the whole years the window covers, counted in calendar months with both end
+                // months whole: a window closing on December 31st spans its last year entire
+                let ym = |d: &str| {
+                    let y: usize = d[..4].parse().expect("a year");
+                    let m: usize = d[5..7].parse().expect("a month");
+                    y * 12 + m
+                };
+                let span = (ym(to) - ym(from) + 1) / 12;
                 if CPI_CENTURY_ROWS.contains(&b.name) {
                     // rates per unit time read on the paths' own length: the century is longer
                     // than any path, and a share of months or a count a century does not depend
                     // on the window it is read over
                     assert!(
-                        record_band_years(a, b.name) <= year(to) - year(from),
+                        record_band_years(a, b.name) <= span,
                         "{set} {}: read within {window}",
                         b.name
                     );
@@ -42590,7 +42636,7 @@ mod record_band_tests {
                 }
                 assert_eq!(
                     record_band_years(a, b.name),
-                    year(to) - year(from),
+                    span,
                     "{set} {}: read over {window}",
                     b.name
                 );
@@ -44149,13 +44195,13 @@ mod dividend_tests {
         };
         let (sp, nq) = (anchors_named("sp500"), anchors_named("nasdaq"));
         assert!(
-            (sp.div_yield - value(&rs, "sp500", "Shiller-S&P", "1954-2023", "monthlyMean")).abs()
+            (sp.div_yield - value(&rs, "sp500", "Shiller-S&P", "2009-2023", "monthlyMean")).abs()
                 < 1e-9
         );
         assert!(
             (sp.div_yield_band.0
                 - outward(
-                    value(&rs, "sp500", "Shiller-S&P", "1954-2023", "annualMin"),
+                    value(&rs, "sp500", "Shiller-S&P", "2009-2023", "annualMin"),
                     false
                 ))
             .abs()
@@ -44164,7 +44210,7 @@ mod dividend_tests {
         assert!(
             (sp.div_yield_band.1
                 - outward(
-                    value(&rs, "sp500", "Shiller-S&P", "1954-2023", "annualMax"),
+                    value(&rs, "sp500", "Shiller-S&P", "2009-2023", "annualMax"),
                     true
                 ))
             .abs()
@@ -44240,7 +44286,7 @@ mod dividend_tests {
         assert_eq!(row.reads, want);
         assert_eq!(
             (SP500_ANCHORS.div_years, NASDAQ_ANCHORS.div_years),
-            (70, 21)
+            (15, 21)
         );
         assert!(IDENTITY_PARAMS.contains(&"divYield"));
         assert!(!calibrate_ranges().iter().any(|r| r.0 == "divYield"));

@@ -16,7 +16,7 @@ class RecordBandSuite extends FunSuite:
   /** the record-band fixture's rows, then the conditional rate rows' (`rateafter-2026-09-30.tsv`,
     * the same columns) without their header */
   private lazy val lines: Vector[String] =
-    fixtureLines("recordbands-2026-10-20.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
+    fixtureLines("recordbands-2026-11-05.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
       fixtureLines("volexit-2026-10-20.tsv").drop(1) ++ fixtureLines("volstate-2026-10-20.tsv").drop(1) ++
       fixtureLines("bond10-2026-10-05.tsv").drop(1) ++ fixtureLines("tips-2026-10-29.tsv").drop(1) ++
       fixtureLines("stockbond-2026-10-18.tsv").drop(1)
@@ -84,6 +84,21 @@ class RecordBandSuite extends FunSuite:
   // THE VOLATILITY STATE's rows are one family on their own window (item 62): the Nasdaq's the
   // long tech record at 72 years, not its 27-year equity window, the S&P's its equity window; the
   // Nasdaq's reference readings are the QQQ window's records as the fixture reads them.
+  // THE RECENT ERA's rows are one group on their own window (2026-11-05): the S&P's CRSP 2009-2024
+  // at 16 years, not its 72-year equity window; the Nasdaq's its equity window.
+  test("the recent rows read their own window") {
+    val sp = MarketSim.SP500Anchors
+    assertEquals(sp.recentYears, 16)
+    assertNotEquals(sp.recentYears, sp.equityYears)
+    for n <- MarketSim.RecentRows do
+      assertEquals(MarketSim.recordBandYears(sp, n), sp.recentYears, s"[$n]")
+    assert(MarketSim.anchorGroups(sp).exists((w, y, ns) =>
+        w == sp.recentWindow && y == sp.recentYears && ns == MarketSim.RecentRows),
+      "the rows are one anchor group on their own window")
+    val nq = MarketSim.NasdaqAnchors
+    assertEquals((nq.recentWindow, nq.recentYears), (nq.equityWindow, nq.equityYears))
+  }
+
   test("the vol state rows read their own window and the reference is the QQQ window's") {
     val a = MarketSim.NasdaqAnchors
     assertEquals(a.volStateYears, 72)
@@ -528,12 +543,15 @@ class RecordBandSuite extends FunSuite:
     for (set, a) <- sets; b <- a.recordBands do
       val r = lines.map(_.split('\t').toVector).find(r => r(0) == set && r(1) == b.name)
         .getOrElse(fail(s"fixture row [$set ${b.name}] missing"))
-      val years = r(3).split("\\.\\.").map(_.take(4).toInt)
+      // the whole years the window covers, counted in calendar months with both end months whole:
+      // a window closing on December 31st spans its last year entire
+      val ym = r(3).split("\\.\\.").map(d => d.take(4).toInt * 12 + d.slice(5, 7).toInt)
+      val span = (ym(1) - ym(0) + 1) / 12
       if MarketSim.CpiCenturyRows.contains(b.name) then
         // rates per unit time read on the paths' own length: the century is longer than any path
-        assert(MarketSim.recordBandYears(a, b.name) <= years(1) - years(0), s"$set ${b.name}: read within ${r(3)}")
+        assert(MarketSim.recordBandYears(a, b.name) <= span, s"$set ${b.name}: read within ${r(3)}")
       else
-        assertEquals(MarketSim.recordBandYears(a, b.name), years(1) - years(0),
+        assertEquals(MarketSim.recordBandYears(a, b.name), span,
           s"$set ${b.name}: read over ${r(3)}")
   }
 

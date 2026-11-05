@@ -190,9 +190,10 @@ class MarketSimContractSuite extends FunSuite:
     //                worst over a whole history.
     // `EpisodeAnchorSuite` re-derives both from `test-data/equity-anchors/episodes-2026-08-29.tsv`
     // and pins the evidence for what each one used to be. A future move of any value here needs the
-    // same treatment: measured, recorded, re-derivable.
+    // same treatment: measured, recorded, re-derivable. `vol` moved a third time (2026-11-05): the
+    // row reads the recent era, CRSP 2009-2024, with its band; see `RecordBandSuite`.
     val a = MarketSim.SP500Anchors
-    assertEquals(a.vol, 16.8)         // the lag-free record, 2026-10-23
+    assertEquals(a.vol, 18.5)         // CRSP 2009-2024, lag-free, 2026-11-05
     assertEquals(a.retVol, 0.643)     // the lag-free record, 2026-10-23
     assertEquals(a.kurt, 20.5)        // the lag-free record, 2026-10-23
     assertEquals(a.ac1, 0.285)        // re-read lag-free 2026-10-23; see AmplifierAnchorSuite
@@ -200,7 +201,7 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(a.crashes, 20.7)
     assertEquals(a.medDepth, -21.5)   // re-measured in 0.22.0, lag-free 2026-10-23; see above
     assertEquals(a.worstDepth, -84.1) // re-anchored in 0.22.1; see above
-    assertEquals(a.volBand, (15.0, 19.0)) // the lag-free record's 5th-95th, 2026-10-23
+    assertEquals(a.volBand, (15.0, 21.1)) // the recent era's 5th-95th, 2026-11-05
     assertEquals(a.retVolBand, (0.31, 1.09))
   }
 

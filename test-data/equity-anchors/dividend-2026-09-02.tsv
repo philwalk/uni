@@ -5,7 +5,8 @@
 #
 # Conventions.  Shiller: D/P from the monthly S&P data (ie_data.xls, 2023.09 vintage: Dividend is
 # the trailing 12-month total, Price the monthly level), in percent; the set's level is the monthly
-# mean over the equity window 1954-2023, the century and full-history means are context.  Fund
+# mean over the recent era 2009-2023 (2026-11-05; the yield trends down three record-sds a decade over
+# the century's windows), the 1954-2023, century and full-history means are context.  Fund
 # rows: the trailing-252-session distribution yield read off Yahoo's adjusted-close / close ratio
 # (the ratio compounds every distribution), averaged by calendar year.  QQQ paid nothing before
 # 2004 (annual yields 0.00 through 2003, 0.08 in 2004); a yield of an instrument that pays nothing
@@ -16,6 +17,9 @@
 #
 # Measured 2026-09-02.
 set	series	window	stat	value
+sp500	Shiller-S&P	2009-2023	monthlyMean	1.95
+sp500	Shiller-S&P	2009-2023	annualMin	1.38
+sp500	Shiller-S&P	2009-2023	annualMax	2.73
 sp500	Shiller-S&P	1954-2023	monthlyMean	2.95
 sp500	Shiller-S&P	1954-2023	annualMin	1.16
 sp500	Shiller-S&P	1954-2023	annualMax	5.71

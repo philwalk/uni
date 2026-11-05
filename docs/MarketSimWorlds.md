@@ -1062,8 +1062,9 @@ downside excess, the up-day share, leverage corr, the crash rate, median depth, 
 edge, the short rate's mean and time at the floor, and the bond's underwater share against its
 volatility — carries
 the record's reading and its spread over 20,000 moving one-year-block resamples of that record
-(`test-data/equity-anchors/recordbands-2026-09-26.tsv`: QQQ 1999-2026 for the Nasdaq set, CRSP
-1954-2026 for the S&P set, the century for its clustering rows, the federal funds rate over each
+(`test-data/equity-anchors/recordbands-2026-11-05.tsv`: QQQ 1999-2026 for the Nasdaq set, CRSP
+1954-2026 for the S&P set, the century for its clustering rows, the recent era 2009-2024 for its
+equity vol and its variance ratios at 20, 60 and 120 days, the federal funds rate over each
 set's own window for the rate rows, and TLT's 24 years for the bond row). `-validate` prints where the model
 falls among the resamples and the row's band, and flags the row outside it; since 0.25.0 the flag reports
 and does not grade — the record is graded by its placement among the model's own histories
@@ -1106,8 +1107,12 @@ beside it:
 | S&P crashes/century | 20.7 | 24.9 | it reconciles with both windows, between the century's 19.2 and 1954-2026's 24.9 |
 | S&P median depth % | −21.5 | −21.0 | the mean of the two middle of 18 episodes; the model's median takes the upper |
 
-The S&P's equity vol (16.8), kurtosis (20.5) and return per vol (0.643) are its lag-free 1954-2026
-record's.
+The S&P's kurtosis (20.5) and return per vol (0.643) are its lag-free 1954-2026 record's; its equity
+vol (18.5) and its variance ratios at 20, 60 and 120 days (0.80, 0.62, 0.55) are the recent era's,
+CRSP 2009-2024, read on the last sixteen years of each history: over the century's windows the
+short-horizon variance ratios fall about two record-sds a decade and the vol rises, so the whole
+record's average is a target the market left. The Nasdaq's are its equity window's, the recent era
+already.
 
 **The up-day share** — `up-day share %`, the share of moving sessions that rise — is the count half
 of the return asymmetry, which the downside excess cancels by construction. The record pins it: QQQ
@@ -1668,8 +1673,9 @@ How it is read:
   path's future), so a rich session yields less and the ensemble's pooled mean yield is the dial; the
   reported median path's mean reads about 0.9× of it (2.62 at 2.95, 0.69 at 0.78), valuation epochs skewing
   the path means; `-emit` gains `logTraded` (the total-return `price` deflated by the accrued yield —
-  `price` itself is unchanged) and `divYield`. Anchored 2.95 on Shiller's S&P 1954–2023 and 0.78 on QQQ
-  2005–2026 (`dividend-2026-09-02.tsv`); the level is graded when on. An identity parameter, never searched
+  `price` itself is unchanged) and `divYield`. Anchored 1.95 on Shiller's S&P 2009–2023 (the recent era: the
+  yield falls three record-sds a decade over the century's windows) and 0.78 on QQQ 2005–2026
+  (`dividend-2026-09-02.tsv`); the level is graded when on. An identity parameter, never searched
   | 0 (off) | | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X <
   1). The open is the bridge point at that share of the session, with the session's news jump and jump-
   channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on

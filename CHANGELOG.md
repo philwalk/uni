@@ -241,6 +241,15 @@ elsewhere) is retired; totals under it, the sets above through the Nasdaq's 68, 
 with these. A pooled total reads about 0.3 below its members' judge reads, the CRPS estimator's
 finite-sample term at 200 histories, so a set is compared with a set, never with a read.
 
+**The recent era's rows.** The S&P set's `equity vol %` and `variance ratio 20d`, `60d` and
+`120d` are graded on CRSP 2009-2024 (`recordbands-2026-11-05.tsv`; the rows read on the last
+sixteen years of each history, `Anchors::recent_window`), and its `dividend yield %` on
+Shiller's S&P 2009-2023 (1.95 from 2.95, the recipe's `-divyield` with it). Over the century's
+windows of the record the short-horizon variance ratios fall about two record-sds a decade, the
+vol rises and the yield falls three sds a decade (the stationarity table: every ledger row read
+on fifteen-year windows stepped five, with a stationary null), so the whole record's average is
+a target the market left; the Nasdaq's rows stay on its equity window, the recent era already.
+
 **QQQ's window placed from its own start.** The Nasdaq set's `reportedRows` gain the volatility
 state's five rows (`downside vol excess %`, `vol-timing edge pts/yr`, `vol-exit timing pts/yr`,
 `vol-exit 3x interaction pts/yr`, `high-vol fifth return pts/yr`) on QQQ 1999-2026, placed among

@@ -88,9 +88,9 @@ class DividendSuite extends FunSuite:
     val rs = rows(Fixture)
     assume(rs.nonEmpty, s"$Fixture absent")
     val sp = MarketSim.SP500Anchors; val nq = MarketSim.NasdaqAnchors
-    assertEqualsDouble(sp.divYield, value(rs, "sp500", "Shiller-S&P", "1954-2023", "monthlyMean"), 1e-9)
-    assertEqualsDouble(sp.divYieldBand._1, outward(value(rs, "sp500", "Shiller-S&P", "1954-2023", "annualMin"), up = false), 1e-9)
-    assertEqualsDouble(sp.divYieldBand._2, outward(value(rs, "sp500", "Shiller-S&P", "1954-2023", "annualMax"), up = true), 1e-9)
+    assertEqualsDouble(sp.divYield, value(rs, "sp500", "Shiller-S&P", "2009-2023", "monthlyMean"), 1e-9)
+    assertEqualsDouble(sp.divYieldBand._1, outward(value(rs, "sp500", "Shiller-S&P", "2009-2023", "annualMin"), up = false), 1e-9)
+    assertEqualsDouble(sp.divYieldBand._2, outward(value(rs, "sp500", "Shiller-S&P", "2009-2023", "annualMax"), up = true), 1e-9)
     assertEqualsDouble(nq.divYield, value(rs, "nasdaq", "QQQ", "2005-2026", "annualMean"), 1e-9)
     assertEqualsDouble(nq.divYieldBand._1, outward(value(rs, "nasdaq", "QQQ", "2005-2026", "annualMin"), up = false), 1e-9)
     assertEqualsDouble(nq.divYieldBand._2, outward(value(rs, "nasdaq", "QQQ", "2005-2026", "annualMax"), up = true), 1e-9)
@@ -103,21 +103,26 @@ class DividendSuite extends FunSuite:
     // At the verdict horizon: the yield is normalized by the century's mean fundamental/price, and
     // a 20-year path's own mean sits well below it, so a short ensemble reads the dial low.
     val a = MarketSim.SP500Anchors
-    def placed(w: MarketSim.World): (MarketSim.WorldStats, Option[MarketSim.HistoryRow]) =
+    def placed(w: MarketSim.World): (Vector[MarketSim.Path], MarketSim.WorldStats, Option[MarketSim.HistoryRow]) =
       val sims = MarketSim.simPaths(w, 4, 100, MarketSim.DefaultSeed)
       val st   = MarketSim.measure(sims, 100)
-      (st, MarketSim.historyRows(a, st, sims, 100, 4, MarketSim.DefaultSeed, w).find(_.name == MarketSim.DividendRow))
-    val (off, offRow) = placed(MarketSim.Defaults)
+      (sims, st, MarketSim.historyRows(a, st, sims, 100, 4, MarketSim.DefaultSeed, w).find(_.name == MarketSim.DividendRow))
+    val (_, off, offRow) = placed(MarketSim.Defaults)
     assert(off.divYieldMean.isNaN && offRow.isEmpty,
       "a dividends-off world must carry no dividend row, or its verdict is not byte-identical")
     assert(!MarketSim.gateChecks(a, off).exists(_._1.startsWith("dividend yield")))
-    val (on, onRow) = placed(MarketSim.Defaults.copy(divYield = a.divYield))
+    val (sims, on, onRow) = placed(MarketSim.Defaults.copy(divYield = a.divYield))
     val row = onRow.getOrElse(fail("no dividend row with the dial on"))
     assertEquals(row.record, Some(a.divYield))
     assertEquals(row.horizon, a.divYears)
-    assert(row.reads.size == 4 && row.reads.forall(r => r > a.divYieldBand._1 && r < a.divYieldBand._2),
-      s"the anchored dial reads inside the record's annual means: mean ${on.divYieldMean}, reads ${row.reads}")
-    val (_, farRow) = placed(MarketSim.Defaults.copy(divYield = 9.0))
+    // each read is the history's mean session yield over the record's years (the Rust twin's check;
+    // a century's fifteen-year means wander past one era's annual extremes)
+    val want = sims.map { p =>
+      val v = p.divYield.drop(p.divYield.length - a.divYears * MarketSim.DaysPerYear)
+      v.sum / v.length
+    }
+    assertEquals(row.reads, want)
+    val (_, _, farRow) = placed(MarketSim.Defaults.copy(divYield = 9.0))
     assert(farRow.exists(_.reads.forall(_ > a.divYieldBand._2)),
       "a yield outside the record's annual means reads outside them on every history")
     assert(MarketSim.IdentityParams.contains("divYield"))
