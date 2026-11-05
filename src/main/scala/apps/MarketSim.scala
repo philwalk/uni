@@ -2673,16 +2673,19 @@ object MarketSim:
     * doubling months %` 3.9), membership p 0.91, every class passing on every read and by the margin
     * on 40 more.
     *
-    * `0.25.1-nasdaq` (2026-11-03), as the S&P's: `yieldAnchor` 0.63 and `termPress` 1, the rate and
-    * bond side re-solved around them, on the Nasdaq's own era the breakeven premium's innovation too,
-    * and every dial that read no worse at the 0.25.0 value returned to it; the cycle's increment in
-    * the vol state (`cycleVol` 1) as the form's convention, inert on this recipe's rows; then
-    * re-solved in small steps around that world with the vol, recession, valuation, news and policy
-    * families kept moved by the family read-back (the recession's rate 0.22 from 0.14,
-    * `valueCapFall` 0.96 from 0.06, `volPull` 0 from 0.14) and the jump, boom, drift, rates and
-    * leverage families at the earlier values.  41.41 against 43.30 on the judge's seeds with `bond
-    * stress share %` reported (`NasdaqEraRows`), membership on every read; its 65-member set
-    * significantly better than the 68 under the release rule.  Both literals are the Rust twin's
+    * `0.25.1-nasdaq` (2026-11-04), as the S&P's: `yieldAnchor` 0.63 and `termPress` 1, the rate and
+    * bond side re-solved around them, on the Nasdaq's own era the breakeven premium's innovation too;
+    * the cycle's increment in the vol state (`cycleVol` 1) as the form's convention; the vol,
+    * recession and policy families re-solved in small steps (`volPull` 0, the recession's rate 0.22,
+    * `policyGrowth` 0.14); then six families re-solved around that world and kept moved by the
+    * family read-back, 44 dials: the leverage (`stress` 3.60, `levGain` 4.14), the news (`newsRate`
+    * 10.6, `newsSize` 0.019), the boom (`boomLen` 2.85), the vol's answer to the drawdown
+    * (`drawdownVol` 0.43 with `declineVol` 0.006, the drawdown term alone), the valuation
+    * (`valueCapFall` 0.009, `cycleSd` 0, `cycleYears` 7.4) and the jumps (`jumpSkew` 0.039); the
+    * drift and rates families at the 0.25.0 values.  37.29 against 41.40 for the recipe before them
+    * on the judge's seeds with `bond stress share %` reported (`NasdaqEraRows`), membership on every
+    * read; its 66-member set 37.60 against the 65's 43.39 under the release rule, -5.79
+    * [-6.65, -4.66], one set miss against four.  Both literals are the Rust twin's
     * `recipe_0251_sp500` and `recipe_0251_nasdaq`, field for field. */
   val Recipes0251: Vector[(String, World, String)] =
     def base(name: String): World =
@@ -2701,27 +2704,35 @@ object MarketSim:
             "sp500"),
            ("0.25.1-nasdaq",
             nq.copy(depth = 13.224673, fundVol = 0.044375247, rateMean = 0.034508216, volOfVol = 0.023850037,
-                    leverage = 0.073934322, downShock = 0.0078867012, newsRate = 23.339485,
-                    newsSize = 0.011463959, newsLev = 50.103847, newsRevert = 0.19529314,
-                    newsScale = 0.16353965, newsBond = 0.24905600, newsBondSkip = 0.26802600,
+                    leverage = 0.073934322, downShock = 0.0078867012, newsRate = 10.604823,
+                    newsSize = 0.019395897, newsLev = 48.578664, newsRevert = 0.25214262,
+                    newsScale = 0.20534687, newsBond = 0.24905600, newsBondSkip = 0.26802600,
                     creditRegime = 0.41509177, creditRegimeRate = 1.9723187, slowBondInfl = 0.48413900,
-                    noiseSkew = 0.080950629, newsFlip = 0.65157012, valuePull = 0.069324529,
+                    noiseSkew = 0.080950629, newsFlip = 0.62375512, valuePull = 0.04018758,
                     recessRate = 0.21895030, recessSize = 0.28870908, recessLen = 1.6165895,
                     recessRecover = 0.81961500, recessNews = 1.0000000, recessVol = 0.087203338,
                     recessReprice = 0.93024541, recessShape = 1.4366029, recessRecMult = 1.6326685,
                     recessCredit = 0.14289759, recessInfl = 0.36623394, volPull = 0.0000000,
-                    beliefShare = 0.60206332, beliefYears = 1.6289685, beliefLeak = 0.30413936,
-                    capYears = 3.5726920, cycleSd = 0.061943798, cycleYears = 9.8175170, easing = 0.083490492,
-                    floorhold = 0.071394237, refuge = 0.10451699, refugeDays = 0.41558600, levGain = 6.3588392,
-                    slowVol = 0.99315148, inflSize = 0.039406294,
+                    beliefShare = 0.60810974, beliefYears = 1.7664339, beliefLeak = 0.33165348,
+                    capYears = 3.6298149, cycleSd = 0.0, cycleYears = 7.3727797, easing = 0.083490492,
+                    floorhold = 0.071394237, refuge = 0.10451699, refugeDays = 0.41558600, levGain = 4.1352583,
+                    slowVol = 0.99315148, inflSize = 0.039406294, stress = 3.5980618, jumpSkew = 0.03861811,
+                    jumpVar = 0.093198762, jumpRate = 0.0046262668, margin = 0.0051318237, boomRate = 1.4475567,
+                    boomSize = 1.7665797, boomLen = 2.8461738, boomFade = 2.4166132, bustAmp = 0.16722518,
+                    crowdImpact = 0.14932099, delevRate = 1.2022333, delevFrom = 5.035704, delevSize = 0.083384574,
+                    delevLen = 0.14169131, overshoot = 0.72723862, overshootRate = 0.28696161,
+                    recoveryDrag = 0.49878993, recoveryFloor = 0.21831132,
                     ext = nq.ext.copy(cycleVol = 1.0000000, termPremium = 0.090792400, cpiNoise = 0.0072135904,
                                       deflProb = 0.22407948, deflSize = 0.039985707, termVol = 0.0056821201,
-                                      termPress = 1.0000000, brkVol = 0.0026305000, cpiNoiseLevel = 0.88145193,
+                                      termPress = 1.0000000, brkVol = 0.0033537566, cpiNoiseLevel = 0.88145193,
                                       policyGrowth = 0.13724604, yieldBeta = 0.028855859, yieldLag = 24.417600,
                                       expAnchor = 0.49777614, yieldAnchor = 0.63363114,
-                                      volFeedback = 0.53585228, valueCap = 0.19382860,
-                                      valueCapFall = 0.95538454, recessSpread = 0.13515143,
-                                      recessTransient = 0.18119246, noiseScale = 1.5835440)),
+                                      volFeedback = 0.53585228, valueCap = 0.067949828,
+                                      valueCapFall = 0.008910197, recessSpread = 0.13515143,
+                                      recessTransient = 0.18119246, noiseScale = 1.5835440,
+                                      brkNominal = 0.09121763, spikeRate = 0.26011936, spikeSize = 0.0067448357,
+                                      crowdAdjust = 1.1635638, declineVol = 0.0061280698, declineVolHalf = 2.9085325,
+                                      drawdownVol = 0.43049723, declineVolAttack = 0.051778296)),
             "nasdaq"))
 
   val Recipes: Vector[(String, World, String)] =

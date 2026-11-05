@@ -306,7 +306,7 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
 was searched under it. **The 0.25.1 sets** are the two to draw from now: `0.25.1-sp500.json` (65 members) and
-`0.25.1-nasdaq.json` (65), member 0 the recipe itself, every member one the set loop admitted under
+`0.25.1-nasdaq.json` (66), member 0 the recipe itself, every member one the set loop admitted under
 the membership rule on four fresh seeds at 200 × 100 that clears the margin on 40 more, its
 `coverageWeight` over those members, and scored against the 0.25.0 sets under the
 release rule (the CHANGELOG has the numbers and the set misses). The 0.25.0 sets were judged before the
@@ -339,9 +339,10 @@ Pooling holds the test at 0.10 at any number of
 reads, because the record and every history are exchangeable. The reads share one record, so four
 separate passes reject a typical history 18–21% of the time, and Fisher's combination of the four
 p's 17–19%; pooled, 10% (the sets before 0.24.5 predate the channels' grading and the placement;
-keep them for their worlds, not as sets). As a set, the release rule decides: the record's CRPS under the set's pooled single-history
-predictive, summed over every graded row in a fixed yardstick and bootstrapped over members, is
-significantly below the outgoing set's. A median member's distance cannot test a sampled dial: it
+keep them for their worlds, not as sets). As a set, the release rule decides: the ledger over the set's pooled histories (every member's
+four judge reads pooled, every ledger row in the record's resample scale with its knee and sign
+term, as a member is judged), bootstrapped over members, is significantly below the outgoing set's,
+and no row the outgoing set places inside its pooled central 95% falls outside the new set's. A median member's distance cannot test a sampled dial: it
 rewards members bunched at the record, and it passed a set whose members all leaned one way. The
 members' source worlds were searched at that same read, 200 × 100 with every class gated: a search
 at fewer paths or under 100 years, or gating realism and mechanism alone, admits mostly members the
@@ -1271,13 +1272,13 @@ How it is read:
   histories enough; the default 200 decide every unit of both recipes. The realism bounds, the
   mechanism rows, the `valuation dispersion` band (the record has no observable fair value) and a
   client ruler's basket bands stay.
-- **Choosing among members** is the release rule's: the record's CRPS under each member's single
-  histories summed over the graded rows, each in its yardstick (the record's own resample sd where
-  the row carries a record band, else the reference world's history sd); placement controls the size
+- **Choosing among members** is the release rule's: the ledger, the record's CRPS under each member's
+  histories summed over every ledger row in the record's resample scale with its knee and sign
+  term; placement controls the size
   of the test and cannot see a world that is right on average and too wide. As a set, each row
   also reports the record's percentile among the members' pooled single histories, and a row
-  outside the central 95% is a set miss the release rule reports: a lean no member fails on its
-  own but every member shares. The search admits a
+  outside the central 95% is a set miss the release rule reports (a lean no member fails on its
+  own but every member shares), and a set passes only where it adds none. The search admits a
   candidate only if its bounds pass on every read and the placement passes once over all its reads'
   histories pooled (the seed worlds exempt, as from `-gap`, so a re-solve can start from the recipe
   that fails it), and ranks it by that CRPS. An archive written under the per-read placement does not
@@ -2481,17 +2482,19 @@ no worse at the 0.25.0 value returned to it; 39.2 and 34.4 on the judge's seeds 
 the cycle's increment in the vol state (`-cyclevol` 1) with the spiral's stress and the jump family
 re-solved around it (`-stress` 3.03, `-jumpvar` 0.130, `-jumprate` 0.0023, `-jumpskew` 0.80, `-volofvol`
 0.017): on the 36-row ledger 40.5 against 42.3 for the recipe with the increment constant, the vol-process
-rows at the record, p 0.91; the Nasdaq's carries the convention too, inert on its rows, and is then
-re-solved in small steps around its set's member 0 with five dial families kept moved by the family
-read-back (the vol, the recession, the valuation, the news and the policy rule; the recession's rate 0.22
-from 0.14, `-valuecapfall` 0.96 from 0.06, `-volpull` 0): 41.41 against 43.30 on the judge's seeds, the
-profit declines a century at 12.7 from 8.9 against the record's 13.8, the decline length's median 0.30
-further from it. Each set is the members one round of the loop admitted around its recipe that clear the
-margin, 65 and 65, neither with a set miss (the S&P loop holds the vol feedback and the jump rate at the
-recipe's values, which carry the valuation wings the convention's objective no longer holds up); the sets
-bred before the convention (56 and 37) significantly better than the 0.25.0 sets, the S&P set bred under
-it within sampling error of those and the Nasdaq's re-solved set significantly better than the 68 bred
-under it (the CHANGELOG has the numbers).
+rows at the record, p 0.91; the Nasdaq's carries the convention too, inert on its rows, and is then re-
+solved around its set's member 0 and read back by family, first in small steps with the vol, the recession
+and the policy rule kept (`-volpull` 0, the recession's rate 0.22 from 0.14, `-policygrowth` 0.14), then
+from the flagged search's best with six families kept, 44 dials: the leverage (`-stress` 3.60, `-levgain`
+4.14), the news (`-newsrate` 10.6 from 23.3), the boom (`-boomlen` 2.85), the vol's answer to the drawdown
+(`-drawdownvol` 0.43 with `-declinevol` 0.006, the drawdown term alone), the valuation (`-valuecapfall`
+0.009, `-cyclesd` 0) and the jumps (`-jumpskew` 0.039): 37.29 against 41.40 on the judge's seeds. Each set
+is the members one round of the loop admitted around its recipe that clear the margin, 65 and 66 (the S&P
+loop holds the vol feedback and the jump rate at the recipe's values, which carry the valuation wings the
+convention's objective no longer holds up); over every ledger row the S&P set misses `vol coupling monthly
+corr` and the Nasdaq set `vol doubling months %`; the sets bred before the convention (56 and 37)
+significantly better than the 0.25.0 sets, the S&P set bred under it within sampling error of those, and
+each Nasdaq re-solve's set significantly better than the set before it (the CHANGELOG has the numbers).
 
 **`0.25.0-sp500` and `0.25.0-nasdaq`** are each member 0 of its `0.25.0` set, a world admitted
 under the membership rule with every class passing on each of four fresh seeds at 200 × 100. The

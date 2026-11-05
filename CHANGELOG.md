@@ -183,24 +183,41 @@ row among the rows: the S&P's 56-member set 55.36 to 51.97, −3.39 [−4.38, �
 37-member set 59.55 to 56.55, −3.00 [−4.57, −1.56]. The sets bred under it score within sampling
 error of those: `0.25.1-sp500.json` (65 members) 50.93 to 51.29, +0.35 [−0.41, +1.15], and
 the Nasdaq's 68-member set 56.32 to 57.39, +1.07 [−0.45, +2.52], the rows scored predating the
-vol-process rows. The Nasdaq recipe is then re-solved in small steps around that set's member 0
-(each move 0.02 of a dial's width, the disaster family, `spreadDd` and `discountLag` held) and read
-back by family: a family of dials stays moved only where returning it together costs more than
-the seeds' noise. Five of the ten stay moved, 49 dials: the vol (`-noisescale` 1.58, `-volofvol`
-0.024, `-volfeedback` 0.54, `-volpull` 0 from 0.14, `-noiseskew` 0.08 from 0), the recession (its
-rate 0.22 from 0.14, size 0.29 from 0.22, length 1.6 years, vol 0.087 from 0.13, the spread's
-share 0.14 from 0.21), the valuation (`-valuecapfall` 0.96 from 0.06, `-cyclesd` 0.062 from 0.10,
-`-cycleyears` 9.8), the news and the policy rule (`-policygrowth` 0.14 from 0.18, `-expanchor`
-0.50 from 0.54); the jump, boom, drift, rates and leverage families return. On the judge's seeds
-41.41 against 43.30: `profit declines a century` 12.7 from 8.9 (record 13.8), `bar overnight
-share`, `vol coupling monthly` and `z beyond 3 sds calm/high` 0.2–0.3 nearer the record each;
-`decline length p50` 0.30 further (0.73 against the record's 0.25), `vol doubling months %` 0.15,
-and `tips vs bond10 corr` 0.42 on a sharp row (0.83 against 0.81) from the rates family's return.
-Its set, `0.25.1-nasdaq.json` (65 members), scores significantly better than the 68 under the
-release rule on the rows as they now stand, 57.39 to 53.44, −3.94 [−5.09, −2.76] (sums on more
-rows than the earlier ones, not comparable with them); neither set has a set miss. Each outgoing
-0.25.0 set had one set miss, the real yield's inflation link at 0.1% and 0.3%; no 0.25.1 set has
-one. They are the worlds to pin in place of the 0.25.0 recipes.
+vol-process rows.
+The Nasdaq recipe is then re-solved around that set's member 0 and read back by family (a
+family of dials stays moved only where returning it together costs more than the seeds' noise):
+first in small steps with the vol, recession and policy families kept (`-noisescale` 1.58,
+`-volofvol` 0.024, `-volfeedback` 0.54, `-volpull` 0 from 0.14, `-noiseskew` 0.08 from 0; the
+recession's rate 0.22 from 0.14, size 0.29 from 0.22, length 1.6 years, vol 0.087 from 0.13,
+the spread's share 0.14 from 0.21; `-policygrowth` 0.14 from 0.18, `-expanchor` 0.50 from
+0.54), then from the flagged search's best with six families kept, 44 dials: the leverage
+(`-stress` 3.60 from 3.33, `-levgain` 4.14 from 6.36), the news (`-newsrate` 10.6 from 23.3,
+`-newssize` 0.019 from 0.011), the boom (`-boomlen` 2.85 from 1.24), the vol's answer to the
+drawdown (`-drawdownvol` 0.43 with `-declinevol` 0.006: the drawdown term alone, the
+mechanism's first use in the Nasdaq world), the valuation (`-valuecapfall` 0.009, `-cyclesd` 0,
+`-cycleyears` 7.4) and the jumps (`-jumpskew` 0.039 from 0.094); the drift and rates families
+stay at the 0.25.0 values. On the judge's seeds 37.29 against 41.40 for the recipe before those
+six (−4.17 ± 0.25 on twelve fresh seeds). Its set, `0.25.1-nasdaq.json` (66 members), scores
+significantly better than the 65 bred around the recipe before them under the release rule as
+it now reads (the next entry), 43.39 to 37.60, −5.79 [−6.65, −4.66]: `z beyond 3 sds %` and `z
+beyond 4 sds %` 1.7 and 1.5 nearer the record and `vol coupling monthly corr` 0.7, at the cost
+of `bubble coupling 3y` 0.6 and `log vol autocorr 12m` 0.4; that 65 scores better than the 68
+before it, 46.95 to 43.39, −3.56 [−5.09, −2.74]. The 68 and the 65 each miss four rows (`vol
+coupling monthly corr`, `z beyond 3 sds %`, `z beyond 4 sds %`, `vol doubling months %`), the
+66 one, `vol doubling months %`; the S&P set misses `vol coupling monthly corr`. Each outgoing
+0.25.0 set had one set miss, the real yield's inflation link at 0.1% and 0.3%. They are the
+worlds to pin in place of the 0.25.0 recipes. **The release rule reads the ledger.** A set's
+score is the ledger over the set's pooled histories: every member's four judge reads
+(`-validate -seeds 1,2,3,4 -historyrows`) pooled, every ledger row in the record's resample
+scale with its knee and sign term as a member is judged, the interval bootstrapped over
+members. A set is significantly better when the interval of its difference from the outgoing
+set excludes zero, and it passes only where it misses no row the outgoing set does not (a set
+miss is the record outside the pooled central 95% on a row). The yardstick the earlier set
+scores summed in (the record's resample sd where a row had one, the outgoing set's predictive
+sd elsewhere) is retired; totals under it, the sets above through the Nasdaq's 68, do not
+compare with these. A pooled total reads about 0.3 below its members' judge reads, the CRPS
+estimator's finite-sample term at 200 histories, so a set is compared with a set, never with a
+read.
 
 **QQQ's window placed from its own start.** The Nasdaq set's `reportedRows` gain the volatility
 state's five rows (`downside vol excess %`, `vol-timing edge pts/yr`, `vol-exit timing pts/yr`,
