@@ -99,6 +99,25 @@ class RecordBandSuite extends FunSuite:
     assertEquals((nq.recentWindow, nq.recentYears), (nq.equityWindow, nq.equityYears))
   }
 
+  test("the S&P reports the century read of the recent rows") {
+    // graded on the recent era, the four rows keep their whole-record read beside it, never graded
+    val sp      = MarketSim.SP500Anchors
+    val century = sp.reported.filter(_.family == MarketSim.RowFamily.Recent)
+    assertEquals(century.size, 1)
+    val r = century.head
+    assertEquals(r.years, sp.equityYears)
+    assertEquals(r.window, sp.equityWindow)
+    assertEquals(r.start, MarketSim.WindowStart.Last)
+    assertEquals(r.records.size, MarketSim.RecentRows.size)
+    assertEquals(MarketSim.RowFamily.Recent.rows, MarketSim.RecentRows)
+    assert(r.records(0) < sp.vol, "the century's vol sits below the recent era's")
+    for (k, q) <- Vector((1, 20), (2, 60), (3, 120)) do
+      val b = sp.recordBands.find(_.name == s"variance ratio ${q}d").getOrElse(fail("a recent-era band"))
+      assert(r.records(k) > b.record, s"variance ratio ${q}d: the century's sits above the recent era's")
+    assert(MarketSim.NasdaqAnchors.reported.forall(_.family != MarketSim.RowFamily.Recent),
+      "the Nasdaq grades the rows on the recent era already")
+  }
+
   test("the vol state rows read their own window and the reference is the QQQ window's") {
     val a = MarketSim.NasdaqAnchors
     assertEquals(a.volStateYears, 72)

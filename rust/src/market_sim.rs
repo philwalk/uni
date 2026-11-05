@@ -19927,6 +19927,10 @@ pub enum RowFamily {
     /// `VOL_STATE_ROWS`, `vol_state_of` on the window's sessions, their joint band at the
     /// family's own level (`VOL_STATE_REPORTED_ALPHA`)
     VolState,
+    /// `RECENT_ROWS` read as the banded rows read them (`stats_of_reads` on each history alone),
+    /// their joint band at `RECENT_REPORTED_ALPHA`: the century read of rows graded on the recent
+    /// era
+    Recent,
 }
 
 impl RowFamily {
@@ -19938,6 +19942,7 @@ impl RowFamily {
             Self::MultiYear => &MULTI_YEAR_ROWS,
             Self::Coupling => &["bubble coupling 3y"],
             Self::VolState => &VOL_STATE_ROWS,
+            Self::Recent => &RECENT_ROWS,
         }
     }
 }
@@ -19974,6 +19979,19 @@ pub struct ReportedRecord {
 /// and QQQ, the last two inside the window the consumer's rules were selected on. Records from
 /// `timing-2026-09-30.tsv`, `bubblebust-2026-09-24.tsv`, `multiyear-2026-09-29.tsv` and
 /// `volstate-2026-10-20.tsv`.
+/// THE S&P'S REPORTED RECORD: the century read of the rows the set grades on the recent era
+/// (`RECENT_ROWS`, CRSP 2009-2024): `equity vol %` and the variance ratios at 20, 60 and 120 days
+/// on CRSP 1954-2026 (`recordbands-2026-10-20.tsv`, the file the recent era's replaced), placed
+/// among the world's histories of the equity window's length. Never graded: it shows what the
+/// recent-era grades cost against the whole record.
+const SP500_REPORTED: [ReportedRecord; 1] = [ReportedRecord {
+    family: RowFamily::Recent,
+    window: "S&P / CRSP 1954-2026",
+    years: 72,
+    start: WindowStart::Last,
+    records: &[16.820747, 0.891976, 0.876738, 0.898289],
+}];
+
 /// THE S&P SET's era rows (`Anchors::era_rows`): the TIPS era's breakeven rows, which its
 /// 1954-2026 inflation persistence cannot hold.
 pub const SP500_ERA_ROWS: [&str; 4] = [
@@ -21630,7 +21648,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     sector_pair_corr_mid: -0.030675,
     sector_market_sd: 0.052916,
     channel_dials: SP500_CHANNEL_DIALS,
-    reported: &[],
+    reported: &SP500_REPORTED,
     era_rows: &SP500_ERA_ROWS,
 };
 
@@ -24485,6 +24503,9 @@ pub struct ReportedRow {
 /// (`volstate-2026-10-20.tsv`).
 const VOL_STATE_REPORTED_ALPHA: f64 = 0.05;
 
+/// The family-wise level the recent rows' century read is banded at when reported.
+const RECENT_REPORTED_ALPHA: f64 = 0.05;
+
 /// The valuation gap ln(price / fundamental) a session is in the top `pct` percent of the
 /// world's sessions at: the gaps pooled over every session of every path, the value with
 /// ceil(pct% of them) at or above it, each by `ln_det` so the twins cut alike. A non-finite gap
@@ -24564,6 +24585,25 @@ fn reported_rows_on(rec: &ReportedRecord, sims: &[Path], window: &str) -> Vec<Re
                 .map(|p| vol_state_of(&vol_state_days_of_path(p)))
                 .collect();
             let bands = joint_edges(&r, VOL_STATE_REPORTED_ALPHA);
+            (r.iter().map(|x| x.to_vec()).collect(), bands)
+        }
+        RowFamily::Recent => {
+            let nd = PathNeeds::of_rows(&RECENT_ROWS);
+            let per = path_reads(sims, rec.years, nd);
+            let r: Vec<[f64; 4]> = sims
+                .par_iter()
+                .zip(&per)
+                .map(|(p, rd)| {
+                    let s = stats_of_reads(
+                        std::slice::from_ref(p),
+                        std::slice::from_ref(rd),
+                        rec.years,
+                        nd,
+                    );
+                    [s.vol * 100.0, vr_of(&s, 20), vr_of(&s, 60), vr_of(&s, 120)]
+                })
+                .collect();
+            let bands = joint_edges(&r, RECENT_REPORTED_ALPHA);
             (r.iter().map(|x| x.to_vec()).collect(), bands)
         }
     };
@@ -42045,6 +42085,43 @@ mod record_band_tests {
         assert_eq!(
             (nq.recent_window, nq.recent_years),
             (nq.equity_window, nq.equity_years)
+        );
+    }
+
+    #[test]
+    fn the_sp500_reports_the_century_read_of_the_recent_rows() {
+        // graded on the recent era, the four rows keep their whole-record read beside it, never
+        // graded: `RowFamily::Recent` on the equity window, one record, in `RECENT_ROWS` order
+        let sp = anchors_named("sp500");
+        let century: Vec<&ReportedRecord> = sp
+            .reported
+            .iter()
+            .filter(|r| r.family == RowFamily::Recent)
+            .collect();
+        assert_eq!(century.len(), 1);
+        let r = century[0];
+        assert_eq!(r.years, sp.equity_years);
+        assert_eq!(r.window, sp.equity_window);
+        assert_eq!(r.start, WindowStart::Last);
+        assert_eq!(r.records.len(), RECENT_ROWS.len());
+        assert_eq!(RowFamily::Recent.rows(), &RECENT_ROWS);
+        // the century's vol sits below the recent era's, its variance ratios above: the trends
+        // the re-target followed
+        assert!(r.records[0] < sp.vol);
+        for (k, q) in [(1, 20), (2, 60), (3, 120)] {
+            let b = sp
+                .record_bands
+                .iter()
+                .find(|b| b.name == format!("variance ratio {q}d"))
+                .expect("a recent-era band");
+            assert!(r.records[k] > b.record, "variance ratio {q}d");
+        }
+        assert!(
+            anchors_named("nasdaq")
+                .reported
+                .iter()
+                .all(|r| r.family != RowFamily::Recent),
+            "the Nasdaq grades the rows on the recent era already"
         );
     }
 

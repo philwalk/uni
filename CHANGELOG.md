@@ -249,6 +249,22 @@ windows of the record the short-horizon variance ratios fall about two record-sd
 vol rises and the yield falls three sds a decade (the stationarity table: every ledger row read
 on fifteen-year windows stepped five, with a stationary null), so the whole record's average is
 a target the market left; the Nasdaq's rows stay on its equity window, the recent era already.
+The four rows' century read (CRSP 1954-2026: 16.8, 0.89, 0.88, 0.90) is reported beside their
+grades, placed among the world's 72-year histories, never graded (`RowFamily::Recent`).
+
+**A ledger row's scale carries its measured era spread.** The stationarity table reads every
+ledger row with a windowable derivation on fifteen-year windows of its record stepped five, with
+the whole record block-resampled as a stationary null: a row's width excess is how far the
+windows disagree beyond their own resample bands, in the row's resample sd. The row table's
+scale is widened by it, `scale' = sqrt(scale^2 + excess^2)`, the knee kept in scale units and the
+resolution as it was, so a miss inside the eras' disagreement earns the search nothing and the
+sign term is unchanged. A row widens only by a spread measured on that row: a row the table
+cannot read on windows keeps its resample scale, and an event row (the bond crash, the
+post-trough rows) never widens, its few episodes being its uncertainty already. 105 world-rows
+widen (median factor 1.75; the S&P's short rate 4.4, rate floor share 3.9, stock-bond corr
+monthly 3.3; the Nasdaq's `z beyond 3 sds %` 2.7). Ledger totals are not comparable across the
+change: the installed S&P set reads 36.9 under it against 44.8 before, the Nasdaq's 26.1 against
+33.0, the misses unchanged.
 
 **QQQ's window placed from its own start.** The Nasdaq set's `reportedRows` gain the volatility
 state's five rows (`downside vol excess %`, `vol-timing edge pts/yr`, `vol-exit timing pts/yr`,

@@ -1111,8 +1111,9 @@ The S&P's kurtosis (20.5) and return per vol (0.643) are its lag-free 1954-2026 
 vol (18.5) and its variance ratios at 20, 60 and 120 days (0.80, 0.62, 0.55) are the recent era's,
 CRSP 2009-2024, read on the last sixteen years of each history: over the century's windows the
 short-horizon variance ratios fall about two record-sds a decade and the vol rises, so the whole
-record's average is a target the market left. The Nasdaq's are its equity window's, the recent era
-already.
+record's average is a target the market left; the century read of the four rows (16.8, 0.89, 0.88,
+0.90 on 1954-2026) is reported beside them, placed among the world's 72-year histories, never graded.
+The Nasdaq's are its equity window's, the recent era already.
 
 **The up-day share** — `up-day share %`, the share of moving sessions that rise — is the count half
 of the return asymmetry, which the downside excess cancels by construction. The record pins it: QQQ

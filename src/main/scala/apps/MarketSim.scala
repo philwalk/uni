@@ -9716,6 +9716,9 @@ object MarketSim:
     /** `VolStateRows`, `volStateOf` on the window's sessions, their joint band at the family's own
       * level (`VolStateReportedAlpha`) */
     case VolState
+    /** `RecentRows` read as the banded rows read them (`statsOfReads` on each history alone), their
+      * joint band at `RecentReportedAlpha`: the century read of rows graded on the recent era */
+    case Recent
 
     /** The family's row names, in its readings' order. */
     def rows: Vector[String] = this match
@@ -9723,6 +9726,7 @@ object MarketSim:
       case MultiYear => MultiYearRows
       case Coupling  => Vector("bubble coupling 3y")
       case VolState  => VolStateRows
+      case Recent    => RecentRows
 
   /** WHERE A REPORTED RECORD'S WINDOW OPENS on a path: at the path's last `years` (the record's
     * windows end together, `recordWindow`), or at the first session with `years` left whose valuation
@@ -10194,6 +10198,14 @@ object MarketSim:
     * printing them together. */
   /** THE S&P SET's era rows (`Anchors.eraRows`): the TIPS era's breakeven rows, which its
     * 1954-2026 inflation persistence cannot hold. */
+  /** THE S&P'S REPORTED RECORD: the century read of the rows the set grades on the recent era
+    * (`RecentRows`, CRSP 2009-2024): `equity vol %` and the variance ratios at 20, 60 and 120 days on
+    * CRSP 1954-2026 (`recordbands-2026-10-20.tsv`, the file the recent era's replaced), placed among
+    * the world's histories of the equity window's length.  Never graded: it shows what the
+    * recent-era grades cost against the whole record. */
+  val Sp500Reported: Vector[ReportedRecord] = Vector(
+    ReportedRecord(RowFamily.Recent, "S&P / CRSP 1954-2026", 72, Vector(16.820747, 0.891976, 0.876738, 0.898289)))
+
   val Sp500EraRows: Vector[String] =
     Vector("breakeven monthly change sd pp", "breakeven own change sd pp", "breakeven vs yield corr monthly",
            "tips vs bond10 corr")
@@ -10299,7 +10311,7 @@ object MarketSim:
     sectorXsSd = 0.030770, sectorPairCorr = 0.698582, sectorPairCorrWorst = 0.560800, sectorPairCorrMid = -0.030675,
     sectorMarketSd = 0.052916,
     channelDials = Sp500ChannelDials,
-    reported = Vector.empty, eraRows = Sp500EraRows)
+    reported = Sp500Reported, eraRows = Sp500EraRows)
 
   /** The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full
     * history, 1999-03-10 to 2026-08-20 (27.4 years).
@@ -16109,6 +16121,9 @@ object MarketSim:
     * (`volstate-2026-10-20.tsv`). */
   val VolStateReportedAlpha: Double = 0.05
 
+  /** The family-wise level the recent rows' century read is banded at when reported. */
+  val RecentReportedAlpha: Double = 0.05
+
   /** The valuation gap ln(price / fundamental) a session is in the top `pct` percent of the world's
     * sessions at: the gaps pooled over every session of every path, the value with ceil(pct% of
     * them) at or above it, each by `lnDet` so the twins cut alike.  A non-finite gap is left out;
@@ -16147,6 +16162,14 @@ object MarketSim:
       case RowFamily.VolState =>
         val r = parMap(sims)(p => volStateOf(volStateDaysOfPath(p)))
         (r, jointEdges(r, 5, VolStateReportedAlpha))
+      case RowFamily.Recent =>
+        val nd  = PathNeeds.ofRows(RecentRows)
+        val per = pathReads(sims, rec.years, nd)
+        val r = parMap(sims.indices.toVector) { k =>
+          val s = statsOfReads(Vector(sims(k)), Vector(per(k)), rec.years, nd)
+          Vector(s.vol * 100.0, vrOf(s, 20), vrOf(s, 60), vrOf(s, 120))
+        }
+        (r, jointEdges(r, 4, RecentReportedAlpha))
     rec.family.rows.indices.toVector.map { k =>
       val real = rec.records(k)
       val xs = reads.map(_(k)).filter(x => !x.isNaN)
