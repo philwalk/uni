@@ -140,7 +140,8 @@ wedge flip, never observed, would desynchronise the stream after it (see
 `numpy_rng_parity.rs`). Making them deterministic would end the NumPy match where
 `exp_det`'s ~2 ulp differ from C's; the decision is twin identity against NumPy identity.
 
-One state-level exception is on record, unexplained: on `0.25.1-nasdaq` at `-paths 8 -years 40 -seed 7`,
+One state-level exception is on record, unexplained: on the `0.25.1-nasdaq` recipe of 2026-11-04 (the
+family point, since re-solved; the recipe now installed shows it nowhere) at `-paths 8 -years 40 -seed 7`,
 path 4's policy rate differs between the twins by one ulp on four sessions of its 1927, seen in
 `-emitvolparts`' `markdown` cell (`discount` x the rate's excess, 2.8e-17) and the `rounding` cell
 that closes the row; the log price absorbs it (its ulp is sixteen times larger), so the emitted

@@ -2091,111 +2091,116 @@ fn recipe_0251_sp500(mut w: World) -> World {
     w
 }
 
-/// `0.25.1-nasdaq`: member 0 of `0.25.1-nasdaq.json` (2026-11-04), as the S&P's: `yield_anchor`
+/// `0.25.1-nasdaq`: member 0 of `0.25.1-nasdaq.json` (2026-11-05), as the S&P's: `yield_anchor`
 /// 0.63 and `term_press` 1, the rate and bond side re-solved around them, on the Nasdaq's own era
 /// the breakeven premium's innovation too; the cycle's increment in the vol state (`cycle_vol` 1)
-/// as the form's convention; the vol, recession and policy families re-solved in small steps
-/// (`vol_pull` 0, the recession's rate 0.22, `policy_growth` 0.14); then six families re-solved
-/// around that world and kept moved by the family read-back, 44 dials: the leverage (`stress`
-/// 3.60, `lev_gain` 4.14), the news (`news_rate` 10.6, `news_size` 0.019), the boom (`boom_len`
-/// 2.85), the vol's answer to the drawdown (`drawdown_vol` 0.43 with `decline_vol` 0.006, the
-/// drawdown term alone), the valuation (`value_cap_fall` 0.009, `cycle_sd` 0, `cycle_years` 7.4)
-/// and the jumps (`jump_skew` 0.039); the drift and rates families at the 0.25.0 values. 37.29
-/// against 41.40 for the recipe before them on the judge's seeds with `bond stress share %`
-/// reported (`NASDAQ_ERA_ROWS`), membership on every read; its 66-member set 37.60 against the
-/// 65's 43.39 under the release rule, -5.79 [-6.65, -4.66], one set miss against four.
+/// as the form's convention; the vol, recession and policy families re-solved in small steps; six
+/// families re-solved around that world (the leverage, the news, the boom, the vol's answer to the
+/// drawdown, the valuation, the jumps: 37.29 against 41.40); then seven families re-solved around
+/// that point and kept whole by the family read-back, 59 dials: the vol (`vol_feedback` 0.25 from
+/// 0.54, `vol_pull` 0.15 from 0, `slow_vol` 0.82), the policy rule (`policy_growth` 0 from 0.14,
+/// `credit_regime` 0.20 from 0.42), the vol's answer to the drawdown (`drawdown_vol` 0.86 from 0.43,
+/// `decline_vol` 0.052 from 0.006), the valuation (`belief_share` 0.71, `cap_years` 2.9), the news
+/// (`news_rate` 7.6 from 10.6, `news_scale` 0.34), the recession (rate 0.31 from 0.22, `recess_vol`
+/// 0 from 0.087, `recess_credit` 0.04) and the boom (`boom_len` 1.9 from 2.85); the jumps, leverage,
+/// rates and drift families at the point before them. 31.30 against 37.29 for that point on the
+/// judge's seeds with `bond stress share %` reported (`NASDAQ_ERA_ROWS`), membership on every
+/// read; its 37-member set 32.97 against the 66's 37.60 under the release rule, -4.63 [-5.77,
+/// -3.38]; one set miss, `decline length p50 y long` (the record at the pool's 1.6% point), the
+/// 66's `vol doubling months %` cleared.
 fn recipe_0251_nasdaq(mut w: World) -> World {
-    w.depth = 13.224673;
-    w.fund_vol = 0.044375247;
+    w.depth = 13.496906;
+    w.fund_vol = 0.044888026;
     w.rate_mean = 0.034508216;
-    w.vol_of_vol = 0.023850037;
-    w.leverage = 0.073934322;
-    w.down_shock = 0.0078867012;
-    w.news_rate = 10.604823;
-    w.news_size = 0.019395897;
-    w.news_lev = 48.578664;
-    w.news_revert = 0.25214262;
-    w.news_scale = 0.20534687;
+    w.vol_of_vol = 0.024148935;
+    w.leverage = 0.079123047;
+    w.down_shock = 0.00022523643;
+    w.news_rate = 7.624891;
+    w.news_size = 0.024258837;
+    w.news_lev = 39.547822;
+    w.news_revert = 0.23752839;
+    w.news_scale = 0.33630068;
     w.news_bond = 0.24905600;
     w.news_bond_skip = 0.26802600;
-    w.credit_regime = 0.41509177;
-    w.credit_regime_rate = 1.9723187;
+    w.credit_regime = 0.19926532;
+    w.credit_regime_rate = 1.6578246;
     w.slow_bond_infl = 0.48413900;
-    w.noise_skew = 0.080950629;
-    w.news_flip = 0.62375512;
-    w.value_pull = 0.04018758;
-    w.recess_rate = 0.21895030;
-    w.recess_size = 0.28870908;
-    w.recess_len = 1.6165895;
-    w.recess_recover = 0.81961500;
+    w.noise_skew = 0.16350944;
+    w.news_flip = 0.65915399;
+    w.value_pull = 0.01924059;
+    w.recess_rate = 0.30511416;
+    w.recess_size = 0.24720789;
+    w.recess_len = 1.5143282;
+    w.recess_recover = 0.84716992;
     w.recess_news = 1.0000000;
-    w.recess_vol = 0.087203338;
-    w.recess_reprice = 0.93024541;
-    w.recess_shape = 1.4366029;
-    w.recess_rec_mult = 1.6326685;
-    w.recess_credit = 0.14289759;
-    w.recess_infl = 0.36623394;
-    w.vol_pull = 0.0000000;
-    w.belief_share = 0.60810974;
-    w.belief_years = 1.7664339;
-    w.belief_leak = 0.33165348;
-    w.cap_years = 3.6298149;
+    w.recess_vol = 0.0;
+    w.recess_reprice = 0.91365258;
+    w.recess_shape = 1.5017152;
+    w.recess_rec_mult = 1.5790117;
+    w.recess_credit = 0.037939692;
+    w.recess_infl = 0.36695218;
+    w.vol_pull = 0.14505733;
+    w.belief_share = 0.712548;
+    w.belief_years = 2.0010612;
+    w.belief_leak = 0.32513571;
+    w.cap_years = 2.9336493;
     w.cycle_sd = 0.0;
-    w.cycle_years = 7.3727797;
+    w.cycle_years = 8.1364908;
     w.cycle_vol = 1.0000000;
     w.term_premium = 0.090792400;
-    w.cpi_noise = 0.0072135904;
-    w.defl_prob = 0.22407948;
-    w.defl_size = 0.039985707;
+    w.cpi_noise = 0.0088475645;
+    w.defl_prob = 0.22970631;
+    w.defl_size = 0.042314495;
     w.term_vol = 0.0056821201;
     w.term_press = 1.0000000;
     w.brk_vol = 0.0033537566;
-    w.cpi_noise_level = 0.88145193;
-    w.policy_growth = 0.13724604;
+    w.cpi_noise_level = 0.81946259;
+    w.policy_growth = 0.0;
     w.yield_beta = 0.028855859;
     w.yield_lag = 24.417600;
-    w.exp_anchor = 0.49777614;
+    w.exp_anchor = 0.43698579;
     w.yield_anchor = 0.63363114;
-    w.vol_feedback = 0.53585228;
-    w.value_cap = 0.067949828;
-    w.value_cap_fall = 0.008910197;
-    w.recess_spread = 0.13515143;
-    w.recess_transient = 0.18119246;
-    w.easing = 0.083490492;
-    w.floorhold = 0.071394237;
+    w.vol_feedback = 0.24874898;
+    w.value_cap = 0.057041288;
+    w.value_cap_fall = 0.01460255;
+    w.recess_spread = 0.15041412;
+    w.recess_transient = 0.24414122;
+    w.easing = 0.074934795;
+    w.floorhold = 0.078657839;
     w.refuge = 0.10451699;
     w.refuge_days = 0.41558600;
     w.lev_gain = 4.1352583;
-    w.noise_scale = 1.5835440;
-    w.slow_vol = 0.99315148;
-    w.infl_size = 0.039406294;
+    w.noise_scale = 1.5334019;
+    w.slow_vol = 0.81823688;
+    w.infl_size = 0.040984028;
     w.stress = 3.5980618;
     w.jump_skew = 0.03861811;
     w.jump_var = 0.093198762;
     w.jump_rate = 0.0046262668;
     w.margin = 0.0051318237;
-    w.boom_rate = 1.4475567;
-    w.boom_size = 1.7665797;
-    w.boom_len = 2.8461738;
-    w.boom_fade = 2.4166132;
-    w.bust_amp = 0.16722518;
+    w.boom_rate = 1.0697937;
+    w.boom_size = 1.7194009;
+    w.boom_len = 1.924756;
+    w.boom_fade = 2.4789944;
+    w.bust_amp = 0.17763277;
     w.crowd_adjust = 1.1635638;
     w.crowd_impact = 0.14932099;
     w.delev_rate = 1.2022333;
     w.delev_from = 5.035704;
     w.delev_size = 0.083384574;
     w.delev_len = 0.14169131;
-    w.overshoot = 0.72723862;
-    w.overshoot_rate = 0.28696161;
+    w.overshoot = 0.85783691;
+    w.overshoot_rate = 0.32824799;
     w.recovery_drag = 0.49878993;
     w.recovery_floor = 0.21831132;
     w.spike_rate = 0.26011936;
     w.spike_size = 0.0067448357;
     w.brk_nominal = 0.09121763;
-    w.decline_vol = 0.0061280698;
-    w.decline_vol_half = 2.9085325;
-    w.drawdown_vol = 0.43049723;
-    w.decline_vol_attack = 0.051778296;
+    w.decline_vol = 0.051980829;
+    w.decline_vol_half = 3.8943863;
+    w.drawdown_vol = 0.86336817;
+    w.decline_vol_attack = 0.076862136;
+    w.recess_base = 1.2553621;
     w
 }
 

@@ -155,36 +155,36 @@ century, the level process's tail. The power is the recipes' convention at 1 (a 
 never searched; the world key `cycleVol`, written only when on); 0 is bit-identical, so every
 earlier world reads as before.
 
-**The 0.25.1 recipes and sets.** `0.25.1-sp500` and `0.25.1-nasdaq` are the 0.25.0 recipes under
-the one-expectation form (`-yieldanchor` 0.73 / 0.63) and the vol regime (`-termpress` 1),
-re-solved around them: on both, the expectation's anchoring, the calm vol, the CPI noise exponent,
-the policy rule's growth weight, the rate's mean and the refuge; on the S&P the term premium and the
-bond's news and slow legs; on the Nasdaq the breakeven premium's innovation, the yield's beta, the
-vol feedback and the leverage gain. Every dial that read no worse at the 0.25.0 value returned to
-it. On the judge's seeds and the 29-row ledger 39.2 against the 0.25.0 S&P recipe's 46.5, and 34.4
-against the 0.25.0 Nasdaq recipe's 42.8 with the era row reported; membership p 0.94 / 0.91, every
-class passing on every read, and by the margin on 40 more (the closest clause, the valuation
-spread's stationarity, 5.6 and 4.8 sds clear). The S&P recipe then carries the cycle's increment in
-the vol state (`-cyclevol` 1) with the spiral's stress and the jump family re-solved around it
-(`-stress` 3.03, `-jumpvar` 0.130, `-jumprate` 0.0023, `-jumpskew` 0.80, `-volofvol` 0.017; every
-other dial read no worse at its earlier value): on the 36-row ledger 40.5 against 42.3 for the
-same recipe with the increment constant, the vol-process rows at the record (`z beyond 3 sds %`
-1.33 in its band from 1.25, `z beyond 4 sds %` 0.41, `log vol sd` 0.46, `vol doubling months %`
-3.9, the wings and the dispersion unmoved), the bar's range and the 60-day variance ratio 0.03 and
-0.08 further from the record, membership p 0.91. The Nasdaq recipe carries the convention too,
-inert on its rows (its innovation gap is the noise and bust channels'). Each recipe is member 0 of
-its set, and each set is the members one round of the loop admitted around its recipe that clear
-the margin under the audited bounds; under the convention the S&P loop holds the vol feedback and
-the jump rate at the recipe's values beside the record's pins, since the cycle in the vol state
-leaves the objective indifferent to the feedback and the valuation wings are carried by it (a set
-bred without the pin lost a quarter of the upper wing's months). The sets bred before the
-convention scored significantly better than the 0.25.0 sets under the release rule, the hazard
-row among the rows: the S&P's 56-member set 55.36 to 51.97, −3.39 [−4.38, −2.50], the Nasdaq's
-37-member set 59.55 to 56.55, −3.00 [−4.57, −1.56]. The sets bred under it score within sampling
-error of those: `0.25.1-sp500.json` (65 members) 50.93 to 51.29, +0.35 [−0.41, +1.15], and
-the Nasdaq's 68-member set 56.32 to 57.39, +1.07 [−0.45, +2.52], the rows scored predating the
-vol-process rows.
-The Nasdaq recipe is then re-solved around that set's member 0 and read back by family (a
+**The 0.25.1 recipes and sets.** `0.25.1-sp500` and `0.25.1-nasdaq` are the 0.25.0 recipes
+under the one-expectation form (`-yieldanchor` 0.73 / 0.63) and the vol regime (`-termpress`
+1), re-solved around them: on both, the expectation's anchoring, the calm vol, the CPI noise
+exponent, the policy rule's growth weight, the rate's mean and the refuge; on the S&P the term
+premium and the bond's news and slow legs; on the Nasdaq the breakeven premium's innovation,
+the yield's beta, the vol feedback and the leverage gain. Every dial that read no worse at the
+0.25.0 value returned to it. On the judge's seeds and the 29-row ledger 39.2 against the 0.25.0
+S&P recipe's 46.5, and 34.4 against the 0.25.0 Nasdaq recipe's 42.8 with the era row reported;
+membership p 0.94 / 0.91, every class passing on every read, and by the margin on 40 more (the
+closest clause, the valuation spread's stationarity, 5.6 and 4.8 sds clear). The S&P recipe
+then carries the cycle's increment in the vol state (`-cyclevol` 1) with the spiral's stress
+and the jump family re-solved around it (`-stress` 3.03, `-jumpvar` 0.130, `-jumprate` 0.0023,
+`-jumpskew` 0.80, `-volofvol` 0.017; every other dial read no worse at its earlier value): on
+the 36-row ledger 40.5 against 42.3 for the same recipe with the increment constant, the vol-
+process rows at the record (`z beyond 3 sds %` 1.33 in its band from 1.25, `z beyond 4 sds %`
+0.41, `log vol sd` 0.46, `vol doubling months %` 3.9, the wings and the dispersion unmoved),
+the bar's range and the 60-day variance ratio 0.03 and 0.08 further from the record, membership
+p 0.91. The Nasdaq recipe carries the convention too, inert on its rows (its innovation gap is
+the noise and bust channels'). Each recipe is member 0 of its set, and each set is the members
+one round of the loop admitted around its recipe that clear the margin under the audited
+bounds; under the convention the S&P loop holds the vol feedback and the jump rate at the
+recipe's values beside the record's pins, since the cycle in the vol state leaves the objective
+indifferent to the feedback and the valuation wings are carried by it (a set bred without the
+pin lost a quarter of the upper wing's months). The sets bred before the convention scored
+significantly better than the 0.25.0 sets under the release rule, the hazard row among the
+rows: the S&P's 56-member set 55.36 to 51.97, −3.39 [−4.38, −2.50], the Nasdaq's 37-member set
+59.55 to 56.55, −3.00 [−4.57, −1.56]. The sets bred under it score within sampling error of
+those: `0.25.1-sp500.json` (65 members) 50.93 to 51.29, +0.35 [−0.41, +1.15], and the Nasdaq's
+68-member set 56.32 to 57.39, +1.07 [−0.45, +2.52], the rows scored predating the vol-process
+rows. The Nasdaq recipe is then re-solved around that set's member 0 and read back by family (a
 family of dials stays moved only where returning it together costs more than the seeds' noise):
 first in small steps with the vol, recession and policy families kept (`-noisescale` 1.58,
 `-volofvol` 0.024, `-volfeedback` 0.54, `-volpull` 0 from 0.14, `-noiseskew` 0.08 from 0; the
@@ -195,29 +195,51 @@ the spread's share 0.14 from 0.21; `-policygrowth` 0.14 from 0.18, `-expanchor` 
 `-newssize` 0.019 from 0.011), the boom (`-boomlen` 2.85 from 1.24), the vol's answer to the
 drawdown (`-drawdownvol` 0.43 with `-declinevol` 0.006: the drawdown term alone, the
 mechanism's first use in the Nasdaq world), the valuation (`-valuecapfall` 0.009, `-cyclesd` 0,
-`-cycleyears` 7.4) and the jumps (`-jumpskew` 0.039 from 0.094); the drift and rates families
-stay at the 0.25.0 values. On the judge's seeds 37.29 against 41.40 for the recipe before those
-six (−4.17 ± 0.25 on twelve fresh seeds). Its set, `0.25.1-nasdaq.json` (66 members), scores
-significantly better than the 65 bred around the recipe before them under the release rule as
-it now reads (the next entry), 43.39 to 37.60, −5.79 [−6.65, −4.66]: `z beyond 3 sds %` and `z
-beyond 4 sds %` 1.7 and 1.5 nearer the record and `vol coupling monthly corr` 0.7, at the cost
-of `bubble coupling 3y` 0.6 and `log vol autocorr 12m` 0.4; that 65 scores better than the 68
-before it, 46.95 to 43.39, −3.56 [−5.09, −2.74]. The 68 and the 65 each miss four rows (`vol
-coupling monthly corr`, `z beyond 3 sds %`, `z beyond 4 sds %`, `vol doubling months %`), the
-66 one, `vol doubling months %`; the S&P set misses `vol coupling monthly corr`. Each outgoing
-0.25.0 set had one set miss, the real yield's inflation link at 0.1% and 0.3%. They are the
-worlds to pin in place of the 0.25.0 recipes. **The release rule reads the ledger.** A set's
-score is the ledger over the set's pooled histories: every member's four judge reads
-(`-validate -seeds 1,2,3,4 -historyrows`) pooled, every ledger row in the record's resample
-scale with its knee and sign term as a member is judged, the interval bootstrapped over
-members. A set is significantly better when the interval of its difference from the outgoing
-set excludes zero, and it passes only where it misses no row the outgoing set does not (a set
-miss is the record outside the pooled central 95% on a row). The yardstick the earlier set
-scores summed in (the record's resample sd where a row had one, the outgoing set's predictive
-sd elsewhere) is retired; totals under it, the sets above through the Nasdaq's 68, do not
-compare with these. A pooled total reads about 0.3 below its members' judge reads, the CRPS
-estimator's finite-sample term at 200 histories, so a set is compared with a set, never with a
-read.
+`-cycleyears` 7.4) and the jumps (`-jumpskew` 0.039 from 0.094); 37.29 against 41.40 for the
+recipe before those six on the judge's seeds (−4.17 ± 0.25 on twelve fresh seeds). Then once
+more around that point with seven families kept whole, 59 dials: the vol (`-volfeedback` 0.25
+from 0.54, `-volpull` 0.15 from 0, `-slowvol` 0.82 from 0.99), the policy rule (`-policygrowth`
+0 from 0.14, `-creditregime` 0.20 from 0.42), the vol's answer to the drawdown (`-drawdownvol`
+0.86 from 0.43, `-declinevol` 0.052 from 0.006), the valuation (`-beliefshare` 0.71 from 0.61,
+`-capyears` 2.9 from 3.6), the news (`-newsrate` 7.6 from 10.6, `-newsscale` 0.34 from 0.21),
+the recession (rate 0.31 from 0.22, `-recessvol` 0 from 0.087, `-recesscredit` 0.04 from 0.14)
+and the boom (`-boomlen` 1.9 from 2.85); the jumps, leverage, rates and drift families unmoved:
+31.30 against 37.29 on the judge's seeds (−6.51 ± 0.26 on twelve fresh seeds), 93 rows nearer
+the record and 46 further: `z beyond 4 sds %` 0.34 from 0.24 at the record, `z beyond 3 sds %`
+1.40 from 1.17 against 1.34, `vol-exit spells a century` 58 from 67 against 50, `vol coupling
+monthly corr` −0.24 from −0.21 against −0.29 and `kurtosis` 12.0 from 13.4 against 9.6, at the
+cost of `cpi 4%+ spells per century` 26 from 18 against 19, `clustering lag 20` 0.18 from 0.21
+against 0.25, `vol-exit cash earned pts/yr` 0.30 from 0.35 against 0.67 and `rate floor share
+%` 20 from 29 against 37. Its set, `0.25.1-nasdaq.json` (37 members), scores 32.97 against the
+66's 37.60 under the release rule as it now reads (the next entry), −4.63 [−5.77, −3.38]; the
+66 scored 37.60 against the 65's 43.39, −5.79 [−6.65, −4.66], and the 65 43.39 against the 68's
+46.95, −3.56 [−5.09, −2.74]. Set misses: the 68 and the 65 four rows each (`vol coupling
+monthly corr`, `z beyond 3 sds %`, `z beyond 4 sds %`, `vol doubling months %`); the 66 `vol
+doubling months %` (the record at the pool's 1.4% point); the 37 `decline length p50 y long`
+(the record's three-month median decline at the pool's 1.6% point, at the 66's 3.5%), and `vol
+doubling months %` no longer (4.7%); the S&P set `vol coupling monthly corr`. The 37's miss is
+the open item on the Nasdaq world: its declines run longer than the record's at every point of
+this line, and no dial setting shortens them without paying elsewhere. Each outgoing 0.25.0 set
+had one set miss, the real yield's inflation link at 0.1% and 0.3%. They are the worlds to pin
+in place of the 0.25.0 recipes. **The release rule reads the ledger.** A set's score is the
+ledger over the set's pooled histories: every member's four judge reads (`-validate -seeds
+1,2,3,4 -historyrows`) pooled, every ledger row in the record's resample scale with its knee
+and sign term as a member is judged, the interval bootstrapped over members. Three tests
+install a set: its total is significantly below the installed set's (the interval of the
+difference excludes zero); on no row does the record fall beyond the pool's 0.5% tail on its
+own side (under the 0.5% point or over the 99.5%) with the whole interval of that quantile
+beyond it, a feature of the record made effectively impossible, which no total buys; and no row
+the installed set reports as a miss sits deeper in the new set beyond noise (the new set's
+share of histories at or beyond the record, with its whole interval, below the installed
+set's). A set miss is the record outside the pool's central 95% on a row; the entry that
+installs a set names every miss with its placement beside the installed set's, the fixed ones
+too. A miss a set adds or carries is an open item on its world, a diagnosis of the mechanism
+behind it with either a mechanism that closes it or a ruling that accepts the lean; the world's
+next adoption waits on an item for each of its misses. The yardstick the earlier set scores
+summed in (the record's resample sd where a row had one, the outgoing set's predictive sd
+elsewhere) is retired; totals under it, the sets above through the Nasdaq's 68, do not compare
+with these. A pooled total reads about 0.3 below its members' judge reads, the CRPS estimator's
+finite-sample term at 200 histories, so a set is compared with a set, never with a read.
 
 **QQQ's window placed from its own start.** The Nasdaq set's `reportedRows` gain the volatility
 state's five rows (`downside vol excess %`, `vol-timing edge pts/yr`, `vol-exit timing pts/yr`,
