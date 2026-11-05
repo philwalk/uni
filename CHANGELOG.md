@@ -197,11 +197,10 @@ share`, `vol coupling monthly` and `z beyond 3 sds calm/high` 0.2–0.3 nearer t
 `decline length p50` 0.30 further (0.73 against the record's 0.25), `vol doubling months %` 0.15,
 and `tips vs bond10 corr` 0.42 on a sharp row (0.83 against 0.81) from the rates family's return.
 Its set, `0.25.1-nasdaq.json` (65 members), scores significantly better than the 68 under the
-release rule on the rows as they now stand, 59.88 to 53.44, −6.44 [−7.61, −5.27] (sums on more
-rows than the earlier ones, not comparable with them); on the split-adjusted volume rows the 68
-had one set miss, `bar volume vs range` at 0.2%, and the 65 has none. Each outgoing 0.25.0 set had
-one set miss, the real yield's inflation link at 0.1% and 0.3%; no 0.25.1 set has one. They are the
-worlds to pin in place of the 0.25.0 recipes.
+release rule on the rows as they now stand, 57.39 to 53.44, −3.94 [−5.09, −2.76] (sums on more
+rows than the earlier ones, not comparable with them); neither set has a set miss. Each outgoing
+0.25.0 set had one set miss, the real yield's inflation link at 0.1% and 0.3%; no 0.25.1 set has
+one. They are the worlds to pin in place of the 0.25.0 recipes.
 
 **QQQ's window placed from its own start.** The Nasdaq set's `reportedRows` gain the volatility
 state's five rows (`downside vol excess %`, `vol-timing edge pts/yr`, `vol-exit timing pts/yr`,
