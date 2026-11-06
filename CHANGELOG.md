@@ -241,16 +241,27 @@ elsewhere) is retired; totals under it, the sets above through the Nasdaq's 68, 
 with these. A pooled total reads about 0.3 below its members' judge reads, the CRPS estimator's
 finite-sample term at 200 histories, so a set is compared with a set, never with a read.
 
-**The recent era's rows.** The S&P set's `equity vol %` and `variance ratio 20d`, `60d` and
-`120d` are graded on CRSP 2009-2024 (`recordbands-2026-11-05.tsv`; the rows read on the last
-sixteen years of each history, `Anchors::recent_window`), and its `dividend yield %` on
-Shiller's S&P 2009-2023 (1.95 from 2.95, the recipe's `-divyield` with it). Over the century's
-windows of the record the short-horizon variance ratios fall about two record-sds a decade, the
-vol rises and the yield falls three sds a decade (the stationarity table: every ledger row read
-on fifteen-year windows stepped five, with a stationary null), so the whole record's average is
-a target the market left; the Nasdaq's rows stay on its equity window, the recent era already.
-The four rows' century read (CRSP 1954-2026: 16.8, 0.89, 0.88, 0.90) is reported beside their
-grades, placed among the world's 72-year histories, never graded (`RowFamily::Recent`).
+**The recent era's rows.** The S&P set's `equity vol %` and the three short variance-ratio rungs
+are graded on CRSP 2009-2024 (`recordbands-2026-11-06.tsv`; the rows read on the last sixteen
+years of each history, `Anchors::recent_window`), and its `dividend yield %` on Shiller's S&P
+2009-2023 (1.95 from 2.95, the recipe's `-divyield` with it). Over the century's windows of the
+record the short-horizon variance ratios fall about two record-sds a decade, the vol rises and the
+yield falls three sds a decade (the stationarity table: every ledger row read on fifteen-year
+windows stepped five, with a stationary null), so the whole record's average is a target the
+market left; the Nasdaq's rows stay on its equity window, the recent era already. The rungs the
+S&P grades there are `variance ratio 20d outside declines`, `60d outside declines` and `120d
+outside declines` (`variance_ratio_outside_declines`): the same phase-averaged ratio on the
+window's returns with the days of every 20% fall from the running peak removed, peak through
+trough. The recent window's whole ratio is its declines' draw: the record's 2009-2024 reads 0.62
+at 60 days whole and 0.78 outside its five declines, and the model's sixteen-year windows read
+0.78 whole and 0.81 outside, so a whole-ratio target asks the typical window to carry no
+recession-led slide, which only the vol-state and recession dials can deliver and the vol
+coupling pays for. The declines themselves are graded on the whole record by the century rows.
+The whole 20, 60 and 120-day rungs return to the century (CRSP 1954-2026: 0.89, 0.88, 0.90), and
+the four recent rows' century read (16.8; outside the declines 0.93, 0.91, 0.91) is reported
+beside their grades, placed among the world's 72-year histories, never graded
+(`RowFamily::Recent`). The Nasdaq carries the three ordinary-time rungs on its own window beside
+its whole ones (0.82, 0.97, 1.19 on QQQ 1999-2026).
 
 **A ledger row's scale carries its measured era spread.** The stationarity table reads every
 ledger row with a windowable derivation on fifteen-year windows of its record stepped five, with

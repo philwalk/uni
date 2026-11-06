@@ -10420,6 +10420,50 @@ pub fn variance_ratio(r: &[f64], q: usize) -> f64 {
     }
 }
 
+/// THE DECLINE `variance_ratio_outside_declines` removes: a fall of the price from its running peak
+/// of this much or more, in percent (`episodes`' depth).
+pub const OUTSIDE_DECLINES_PCT: f64 = 20.0;
+
+/// `variance_ratio` ON THE RETURNS OUTSIDE THE WINDOW'S DECLINES (2026-11-06): the price the returns
+/// compound to (rebuilt with `exp_det`, as `series_readings` rebuilds it) is searched for every fall
+/// of `OUTSIDE_DECLINES_PCT` or more from its running peak (`episodes`: the trough is the low before
+/// the peak is regained, or the series' end); the returns from the peak through the trough are
+/// dropped and the rest laid end to end and read as one series. The statistic the S&P's recent-era
+/// variance-ratio rows grade: the era's reversal in the ordinary time, without one window's draw
+/// of declines, which the century rows grade on the whole record (the record's 2009-2024 window
+/// reads 0.63 at 60 days whole and 0.78 outside its five declines; the model's windows of its
+/// kind read the same). A series with no such fall reads the whole ratio, bit for bit. A
+/// resample's declines are its own: one function reads the record, its resamples and a model path.
+#[must_use]
+pub fn variance_ratio_outside_declines(r: &[f64], q: usize) -> f64 {
+    variance_ratio(&outside_declines(r), q)
+}
+
+/// The returns of `r` outside its declines (`variance_ratio_outside_declines`); a copy of `r` when
+/// it has none. Return `k` carries the price from `px[k]` to `px[k + 1]`, so a fall from the peak
+/// at `px[p]` to the trough at `px[t]` is the returns `r[p..t]`.
+fn outside_declines(r: &[f64]) -> Vec<f64> {
+    let mut px = Vec::with_capacity(r.len() + 1);
+    let mut c = 0.0;
+    px.push(exp_det(c));
+    for x in r {
+        c += x;
+        px.push(exp_det(c));
+    }
+    let eps = episodes(&px, OUTSIDE_DECLINES_PCT);
+    if eps.is_empty() {
+        return r.to_vec();
+    }
+    let mut out = Vec::with_capacity(r.len());
+    let mut from = 0usize;
+    for e in &eps {
+        out.extend_from_slice(&r[from..e.peak]);
+        from = e.trough;
+    }
+    out.extend_from_slice(&r[from..]);
+    out
+}
+
 /// cov(a,b) / (sigma_a * sigma_b), in unnormalised sums — written as the formula. `MatD`'s
 /// arithmetic (`MatD::sum`'s accumulators, the centred values squared as `power(2)` squares
 /// them) without its temporaries or its parallel sums: this runs inside the per-path loops,
@@ -10699,6 +10743,11 @@ pub struct WorldStats {
     pub vr60: f64,
     pub vr120: f64,
     pub vr250: f64,
+    /// the short rungs on the returns outside the path's 20% declines
+    /// (`variance_ratio_outside_declines`): the S&P's recent-era rows
+    pub vr20_out: f64,
+    pub vr60_out: f64,
+    pub vr120_out: f64,
     /// the percentile of each `VAR_RATIO_250_ERAS` record among the paths' 250-session readings
     /// over the era's own length, the run's where that is shorter; NaN under
     /// `EXTREME_MIN_HISTORIES` paths. A set grades the one of its eras nearest the run's length.
@@ -13169,7 +13218,7 @@ fn lev_corr_of(r: &[f64]) -> f64 {
 /// THE RECORD BANDS' rows: every fidelity target whose model reading is a per-path statistic of
 /// the equity price alone, so the same function reads a model path, a record and a resample of the
 /// record. In `series_readings`' order, which the fixture and `RecordBand` literals follow.
-pub const RECORD_BAND_ROWS: [&str; 16] = [
+pub const RECORD_BAND_ROWS: [&str; 19] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -13186,6 +13235,9 @@ pub const RECORD_BAND_ROWS: [&str; 16] = [
     "variance ratio 120d",
     "variance ratio 250d",
     "variance ratio 20d",
+    "variance ratio 20d outside declines",
+    "variance ratio 60d outside declines",
+    "variance ratio 120d outside declines",
 ];
 
 /// THE RATE BANDS' rows: the fidelity rows read from the short rate's path alone
@@ -13698,8 +13750,8 @@ pub const RECORD_BAND_CLUSTER_ROWS: [&str; 2] = ["clustering lag 1", "clustering
 /// The length in years of the record a row's `RecordBand` was read from: the horizon
 /// `horizon_readings` reads the model at, so a band is compared with histories as long as the one
 /// it is the spread of.
-/// THE RECENT ERA's rows (2026-11-05): read on `Anchors::recent_window` at `Anchors::recent_years`,
-/// the S&P's on CRSP 2009-2024 (`recordbands-2026-11-05.tsv`), the Nasdaq's on its equity window.
+/// THE RECENT ERA's rows (2026-11-05), `Anchors::recent_rows`: read on `Anchors::recent_window` at
+/// `Anchors::recent_years`. The Nasdaq's, on its equity window, which is the recent era already.
 pub const RECENT_ROWS: [&str; 4] = [
     "equity vol %",
     "variance ratio 20d",
@@ -13707,9 +13759,34 @@ pub const RECENT_ROWS: [&str; 4] = [
     "variance ratio 120d",
 ];
 
+/// THE S&P's recent-era rows, on CRSP 2009-2024 (`recordbands-2026-11-06.tsv`): the vol and the
+/// three short variance-ratio rungs read outside the window's 20% declines
+/// (`variance_ratio_outside_declines`, 2026-11-06), so the rows carry the era's reversal and not
+/// one window's draw of declines; the whole rungs are graded on the century.
+pub const SP500_RECENT_ROWS: [&str; 4] = [
+    "equity vol %",
+    "variance ratio 20d outside declines",
+    "variance ratio 60d outside declines",
+    "variance ratio 120d outside declines",
+];
+
+/// The short variance-ratio rungs a set grades on its EQUITY window rather than its recent one
+/// (`Anchors::equity_vr_rows`): the S&P's whole rungs, on the century, and the Nasdaq's
+/// ordinary-time rungs, on its equity window.
+pub const WHOLE_SHORT_RUNGS: [&str; 3] = [
+    "variance ratio 20d",
+    "variance ratio 60d",
+    "variance ratio 120d",
+];
+pub const OUTSIDE_DECLINES_RUNGS: [&str; 3] = [
+    "variance ratio 20d outside declines",
+    "variance ratio 60d outside declines",
+    "variance ratio 120d outside declines",
+];
+
 pub fn record_band_years(a: Anchors, name: &str) -> usize {
     let groups: [(&[&str], usize); 20] = [
-        (&RECENT_ROWS, a.recent_years),
+        (a.recent_rows, a.recent_years),
         (&RECORD_BAND_CLUSTER_ROWS, a.cluster_years),
         (&RATE_BAND_ROWS, a.rate_years),
         (&RATE_AFTER_ROWS, a.rate_years),
@@ -13880,7 +13957,7 @@ impl RecordBand {
 /// apply to them, on the price the returns trace. Two readings are taken directly rather than
 /// through the price: the annual return is the returns' own sum, and the price is rebuilt with
 /// `exp_det`, so the twins' episodes agree to the bit.
-pub fn series_readings(r: &[f64]) -> [f64; 16] {
+pub fn series_readings(r: &[f64]) -> [f64; 19] {
     let dpy = DAYS_PER_YEAR as f64;
     let years = r.len() as f64 / dpy;
     let vol = (MatD::apply(r).power(2).mean() * dpy).sqrt();
@@ -13895,6 +13972,7 @@ pub fn series_readings(r: &[f64]) -> [f64; 16] {
     }
     let eps = episodes(&px, 15.0);
     let depths: Vec<f64> = eps.iter().map(|e| e.depth_pct).collect();
+    let outside = outside_declines(r);
     [
         vol * 100.0,
         year_vol_of(r) * 100.0,
@@ -13917,6 +13995,9 @@ pub fn series_readings(r: &[f64]) -> [f64; 16] {
         variance_ratio(r, 120),
         variance_ratio(r, 250),
         variance_ratio(r, 20),
+        variance_ratio(&outside, 20),
+        variance_ratio(&outside, VAR_RATIO_Q),
+        variance_ratio(&outside, 120),
     ]
 }
 
@@ -13929,7 +14010,7 @@ pub fn record_resamples(
     resamples: usize,
     seed: u64,
     block_years: Option<usize>,
-) -> Vec<[f64; 16]> {
+) -> Vec<[f64; 19]> {
     block_resamples(r, block_years, resamples, seed, series_readings)
 }
 
@@ -17813,6 +17894,9 @@ struct PathRead {
     lev: [f64; 3],
     /// variance ratios at q = 20, `VAR_RATIO_Q`, 120 and 250
     vr: [f64; 4],
+    /// the same at 20, `VAR_RATIO_Q` and 120 on the returns outside the path's 20% declines
+    /// (`variance_ratio_outside_declines`)
+    vr_out: [f64; 3],
     /// the 250-session ratio over each `VAR_RATIO_250_ERAS` era's length, the path's where that is
     /// shorter
     vr250_eras: [f64; VAR_RATIO_250_ERAS.len()],
@@ -18274,6 +18358,16 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
         } else {
             [f64::NAN; 4]
         },
+        vr_out: if eq {
+            let outside = outside_declines(&r);
+            [
+                variance_ratio(&outside, 20),
+                variance_ratio(&outside, VAR_RATIO_Q),
+                variance_ratio(&outside, 120),
+            ]
+        } else {
+            [f64::NAN; 3]
+        },
         vr250_eras: if rest {
             VAR_RATIO_250_ERAS.map(|(_, era_years, _)| {
                 let m = (era_years * dpy).round() as usize;
@@ -18529,6 +18623,9 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
         vr60: med_by(|p| p.vr[1]),
         vr120: med_by(|p| p.vr[2]),
         vr250: med_by(|p| p.vr[3]),
+        vr20_out: med_by(|p| p.vr_out[0]),
+        vr60_out: med_by(|p| p.vr_out[1]),
+        vr120_out: med_by(|p| p.vr_out[2]),
         vr250_record_pcts: std::array::from_fn(|e| {
             let xs: Vec<f64> = per
                 .iter()
@@ -19635,6 +19732,11 @@ pub struct Anchors {
     /// in, CRSP 2009-2024; the Nasdaq set's is its equity window, which is the recent era already
     pub recent_window: &'static str,
     pub recent_years: usize,
+    /// the rows read there: `SP500_RECENT_ROWS` or `RECENT_ROWS`
+    pub recent_rows: &'static [&'static str],
+    /// the short variance-ratio rungs read on the equity window instead: `WHOLE_SHORT_RUNGS` for
+    /// the S&P, `OUTSIDE_DECLINES_RUNGS` for the Nasdaq
+    pub equity_vr_rows: &'static [&'static str],
     pub cluster_window: &'static str,
     /// Window for the return-per-volatility anchor. Its own field because it is NOT the equity
     /// window: the S&P set takes r/v from CRSP 1954-2026 where its levels come from the S&P, and
@@ -19927,9 +20029,9 @@ pub enum RowFamily {
     /// `VOL_STATE_ROWS`, `vol_state_of` on the window's sessions, their joint band at the
     /// family's own level (`VOL_STATE_REPORTED_ALPHA`)
     VolState,
-    /// `RECENT_ROWS` read as the banded rows read them (`stats_of_reads` on each history alone),
-    /// their joint band at `RECENT_REPORTED_ALPHA`: the century read of rows graded on the recent
-    /// era
+    /// `SP500_RECENT_ROWS` read as the banded rows read them (`stats_of_reads` on each history
+    /// alone), their joint band at `RECENT_REPORTED_ALPHA`: the century read of the rows the S&P
+    /// grades on the recent era
     Recent,
 }
 
@@ -19942,7 +20044,7 @@ impl RowFamily {
             Self::MultiYear => &MULTI_YEAR_ROWS,
             Self::Coupling => &["bubble coupling 3y"],
             Self::VolState => &VOL_STATE_ROWS,
-            Self::Recent => &RECENT_ROWS,
+            Self::Recent => &SP500_RECENT_ROWS,
         }
     }
 }
@@ -19980,16 +20082,16 @@ pub struct ReportedRecord {
 /// `timing-2026-09-30.tsv`, `bubblebust-2026-09-24.tsv`, `multiyear-2026-09-29.tsv` and
 /// `volstate-2026-10-20.tsv`.
 /// THE S&P'S REPORTED RECORD: the century read of the rows the set grades on the recent era
-/// (`RECENT_ROWS`, CRSP 2009-2024): `equity vol %` and the variance ratios at 20, 60 and 120 days
-/// on CRSP 1954-2026 (`recordbands-2026-10-20.tsv`, the file the recent era's replaced), placed
-/// among the world's histories of the equity window's length. Never graded: it shows what the
-/// recent-era grades cost against the whole record.
+/// (`SP500_RECENT_ROWS`, CRSP 2009-2024): `equity vol %` and the variance ratios at 20, 60 and 120
+/// days outside the declines, on CRSP 1954-2026 lag-free (`recordbands-2026-11-06.tsv`'s century
+/// run), placed among the world's histories of the equity window's length. Never graded: it shows
+/// what the recent-era grades cost against the whole record.
 const SP500_REPORTED: [ReportedRecord; 1] = [ReportedRecord {
     family: RowFamily::Recent,
     window: "S&P / CRSP 1954-2026",
     years: 72,
     start: WindowStart::Last,
-    records: &[16.820747, 0.891976, 0.876738, 0.898289],
+    records: &[16.820747, 0.929212, 0.910645, 0.908589],
 }];
 
 /// THE S&P SET's era rows (`Anchors::era_rows`): the TIPS era's breakeven rows, which its
@@ -20326,10 +20428,10 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
     },
 ];
 
-/// The S&P set's `RecordBand`s: `recordbands-2026-11-05.tsv`, CRSP total return 1954-2026, for
+/// The S&P set's `RecordBand`s: `recordbands-2026-11-06.tsv`, CRSP total return 1954-2026, for
 /// the two clustering rows the century and for the recent era's rows (`RECENT_ROWS`) 2009-2024 --
 /// each row on the window the set reads it over.
-const RECORD_BANDS_SP500: [RecordBand; 52] = [
+const RECORD_BANDS_SP500: [RecordBand; 55] = [
     RecordBand {
         name: "equity vol %",
         record: 18.501241,
@@ -20338,8 +20440,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             17.179352, 17.417188, 17.648067, 17.878366, 18.112590, 18.352393, 18.585692, 18.851890,
             19.132075, 19.452920, 19.830849, 20.314173, 21.000335, 22.357517, 25.260511,
         ],
-        joint_c: 0.496875,
-        joint: (13.666477, 23.109101),
+        joint_c: 0.497175,
+        joint: (13.647092, 23.194112),
     },
     RecordBand {
         name: "typical-year vol %",
@@ -20349,8 +20451,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             13.654744, 13.766653, 13.987344, 14.149909, 14.250427, 14.379994, 14.493633, 14.615026,
             14.703818, 14.798243, 14.901537, 15.100966, 15.429237, 15.962256, 17.877783,
         ],
-        joint_c: 0.496575,
-        joint: (12.318597, 16.619338),
+        joint_c: 0.497125,
+        joint: (12.284184, 16.674130),
     },
     RecordBand {
         name: "return per vol",
@@ -20360,8 +20462,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             0.580360, 0.597822, 0.614042, 0.630378, 0.646003, 0.662528, 0.680268, 0.698571,
             0.718152, 0.740436, 0.765043, 0.799177, 0.849823, 0.941706, 1.163062,
         ],
-        joint_c: 0.496575,
-        joint: (0.292071, 0.999415),
+        joint_c: 0.497125,
+        joint: (0.285258, 1.007838),
     },
     RecordBand {
         name: "kurtosis",
@@ -20371,8 +20473,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             16.237802, 17.984438, 18.901179, 19.666440, 20.365129, 21.123409, 22.030061, 23.221480,
             24.805752, 26.521613, 28.202123, 30.318715, 33.636590, 40.454596, 60.057727,
         ],
-        joint_c: 0.496575,
-        joint: (6.858491, 43.781260),
+        joint_c: 0.497125,
+        joint: (6.812119, 44.775604),
     },
     RecordBand {
         name: "clustering lag 1",
@@ -20382,8 +20484,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             0.272551, 0.276041, 0.279575, 0.282815, 0.286047, 0.289397, 0.292923, 0.296412,
             0.300373, 0.304673, 0.309511, 0.315627, 0.324835, 0.342696, 0.386289,
         ],
-        joint_c: 0.497275,
-        joint: (0.208310, 0.353488),
+        joint_c: 0.497675,
+        joint: (0.207595, 0.354937),
     },
     RecordBand {
         name: "clustering lag 20",
@@ -20393,19 +20495,19 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             0.182214, 0.185415, 0.188224, 0.190994, 0.193608, 0.196405, 0.199244, 0.202056,
             0.205043, 0.208665, 0.212552, 0.217531, 0.224367, 0.236556, 0.267489,
         ],
-        joint_c: 0.497275,
-        joint: (0.127862, 0.245254),
+        joint_c: 0.497675,
+        joint: (0.126466, 0.246319),
     },
     RecordBand {
         name: "variance ratio 60d",
-        record: 0.616719,
+        record: 0.876738,
         q: [
-            0.374908, 0.506215, 0.543498, 0.564412, 0.577513, 0.588421, 0.597396, 0.604788,
-            0.612066, 0.619055, 0.626114, 0.632844, 0.639487, 0.646164, 0.654017, 0.662197,
-            0.670848, 0.680978, 0.693334, 0.709469, 0.738335, 0.810562, 1.047163,
+            0.693214, 0.765817, 0.794978, 0.811740, 0.823918, 0.833535, 0.841679, 0.849244,
+            0.856154, 0.862373, 0.869116, 0.874894, 0.881017, 0.887269, 0.893804, 0.901049,
+            0.908621, 0.917151, 0.927484, 0.940381, 0.960600, 0.998670, 1.099491,
         ],
-        joint_c: 0.496875,
-        joint: (0.474967, 0.856186),
+        joint_c: 0.497125,
+        joint: (0.744924, 1.023820),
     },
     RecordBand {
         name: "downside vol excess %",
@@ -20415,8 +20517,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             0.831648, 1.212033, 1.573876, 1.930377, 2.281021, 2.666235, 3.084421, 3.509860,
             3.973919, 4.493450, 5.077572, 5.892127, 7.068838, 9.397716, 16.871394,
         ],
-        joint_c: 0.496575,
-        joint: (-4.916067, 10.571132),
+        joint_c: 0.497125,
+        joint: (-5.030438, 10.833293),
     },
     RecordBand {
         name: "up-day share %",
@@ -20426,8 +20528,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             54.022862, 54.085560, 54.150653, 54.212696, 54.273316, 54.337674, 54.400132, 54.470562,
             54.545455, 54.629884, 54.725903, 54.844919, 55.029423, 55.354981, 56.159560,
         ],
-        joint_c: 0.496575,
-        joint: (52.853844, 55.538462),
+        joint_c: 0.497125,
+        joint: (52.826147, 55.568394),
     },
     RecordBand {
         name: "leverage corr",
@@ -20437,8 +20539,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             -0.096974, -0.095399, -0.093953, -0.092578, -0.091189, -0.089797, -0.088396, -0.087026,
             -0.085359, -0.083509, -0.081599, -0.079119, -0.075323, -0.067743, -0.038151,
         ],
-        joint_c: 0.496575,
-        joint: (-0.127600, -0.063131),
+        joint_c: 0.497125,
+        joint: (-0.128172, -0.062459),
     },
     RecordBand {
         name: "crashes/century",
@@ -20448,7 +20550,7 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             23.481693, 23.481693, 24.862969, 24.862969, 24.862969, 26.244245, 26.244245, 27.625521,
             27.625521, 29.006797, 29.006797, 30.388073, 31.769349, 35.913177, 45.582109,
         ],
-        joint_c: 0.496575,
+        joint_c: 0.497125,
         joint: (13.812760, 37.294453),
     },
     RecordBand {
@@ -20460,8 +20562,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             -21.053196, -20.993105, -20.747571, -20.642216, -20.446132, -20.308346, -19.557597,
             -19.060289, -16.376040,
         ],
-        joint_c: 0.496575,
-        joint: (-34.216281, -18.519014),
+        joint_c: 0.497125,
+        joint: (-34.216281, -18.324086),
     },
     RecordBand {
         name: "vol-timing edge pts/yr",
@@ -20471,19 +20573,19 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             -4.566252, -4.405279, -4.243637, -4.078243, -3.915902, -3.744587, -3.580413, -3.404275,
             -3.211935, -2.999224, -2.753603, -2.437495, -1.960218, -1.051621, 1.521998,
         ],
-        joint_c: 0.496575,
-        joint: (-7.415949, -0.554688),
+        joint_c: 0.497125,
+        joint: (-7.500622, -0.479531),
     },
     RecordBand {
         name: "variance ratio 120d",
-        record: 0.546172,
+        record: 0.898289,
         q: [
-            0.269465, 0.363079, 0.406863, 0.433912, 0.452373, 0.467789, 0.482476, 0.495414,
-            0.507633, 0.519814, 0.531751, 0.544293, 0.556731, 0.569679, 0.583831, 0.598030,
-            0.614039, 0.632868, 0.655580, 0.684819, 0.732472, 0.819405, 1.091298,
+            0.588865, 0.703602, 0.752846, 0.780657, 0.799465, 0.814391, 0.827569, 0.839511,
+            0.850713, 0.861719, 0.871656, 0.881694, 0.891659, 0.901360, 0.911489, 0.923197,
+            0.935686, 0.949867, 0.965685, 0.986553, 1.017462, 1.078466, 1.293321,
         ],
-        joint_c: 0.496875,
-        joint: (0.338965, 0.877670),
+        joint_c: 0.497125,
+        joint: (0.676202, 1.119698),
     },
     RecordBand {
         name: "variance ratio 250d",
@@ -20493,19 +20595,52 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             0.833068, 0.847955, 0.864081, 0.879754, 0.894937, 0.910538, 0.925839, 0.943557,
             0.963226, 0.984672, 1.009977, 1.041935, 1.094619, 1.192717, 1.610316,
         ],
-        joint_c: 0.496575,
-        joint: (0.594513, 1.251512),
+        joint_c: 0.497125,
+        joint: (0.591996, 1.254110),
     },
     RecordBand {
         name: "variance ratio 20d",
-        record: 0.802867,
+        record: 0.891976,
         q: [
-            0.608475, 0.680928, 0.713284, 0.731093, 0.742762, 0.753291, 0.761896, 0.769155,
-            0.776118, 0.782700, 0.788801, 0.794749, 0.801045, 0.807030, 0.813232, 0.819192,
-            0.825963, 0.832865, 0.841136, 0.851122, 0.866344, 0.899365, 1.025870,
+            0.773690, 0.821151, 0.840951, 0.851846, 0.859109, 0.865229, 0.870524, 0.875124,
+            0.879423, 0.883463, 0.887483, 0.891393, 0.895185, 0.899244, 0.903142, 0.907564,
+            0.912318, 0.917187, 0.923371, 0.931227, 0.943088, 0.964938, 1.019557,
         ],
-        joint_c: 0.496875,
-        joint: (0.660943, 0.924363),
+        joint_c: 0.497125,
+        joint: (0.808437, 0.977706),
+    },
+    RecordBand {
+        name: "variance ratio 20d outside declines",
+        record: 0.797311,
+        q: [
+            0.583653, 0.673055, 0.709950, 0.730348, 0.744431, 0.755728, 0.765335, 0.773859,
+            0.781435, 0.789373, 0.796355, 0.803208, 0.809838, 0.816958, 0.824290, 0.832216,
+            0.840726, 0.849086, 0.859169, 0.872756, 0.892695, 0.932635, 1.053908,
+        ],
+        joint_c: 0.497175,
+        joint: (0.646263, 0.957087),
+    },
+    RecordBand {
+        name: "variance ratio 60d outside declines",
+        record: 0.780260,
+        q: [
+            0.375232, 0.493791, 0.553468, 0.590959, 0.620616, 0.646846, 0.670680, 0.693359,
+            0.714048, 0.733583, 0.751967, 0.769553, 0.788722, 0.807828, 0.827083, 0.846328,
+            0.867890, 0.891876, 0.918618, 0.952952, 1.003152, 1.097612, 1.307729,
+        ],
+        joint_c: 0.497175,
+        joint: (0.461928, 1.148150),
+    },
+    RecordBand {
+        name: "variance ratio 120d outside declines",
+        record: 0.861660,
+        q: [
+            0.280879, 0.395700, 0.472535, 0.522692, 0.564548, 0.603851, 0.640126, 0.676089,
+            0.711223, 0.741352, 0.772211, 0.801179, 0.830153, 0.860484, 0.891319, 0.922036,
+            0.955703, 0.991349, 1.037311, 1.089563, 1.173798, 1.327699, 1.817541,
+        ],
+        joint_c: 0.497175,
+        joint: (0.354104, 1.412160),
     },
     RecordBand {
         name: "short rate %",
@@ -20515,8 +20650,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             4.470442, 4.524520, 4.573902, 4.620935, 4.669148, 4.717381, 4.771603, 4.827784,
             4.889457, 4.956948, 5.038634, 5.141448, 5.290178, 5.573231, 6.381581,
         ],
-        joint_c: 0.497225,
-        joint: (3.561732, 5.806048),
+        joint_c: 0.497625,
+        joint: (3.550529, 5.820185),
     },
     RecordBand {
         name: "rate floor share %",
@@ -20526,8 +20661,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             13.074957, 13.575383, 14.086457, 14.576235, 15.044719, 15.561116, 16.072189, 16.615204,
             17.243399, 17.908859, 18.728705, 19.734881, 21.268101, 24.382453, 31.079642,
         ],
-        joint_c: 0.497225,
-        joint: (4.998935, 26.192504),
+        joint_c: 0.497625,
+        joint: (4.860520, 26.501278),
     },
     RecordBand {
         name: "bond depth vs vol",
@@ -20537,8 +20672,8 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
             1.050809, 1.094922, 1.139144, 1.183328, 1.226545, 1.273320, 1.323439, 1.375117,
             1.435521, 1.499504, 1.570602, 1.657597, 1.785308, 1.965573, 2.304314,
         ],
-        joint_c: 0.497375,
-        joint: (0.370719, 2.074886),
+        joint_c: 0.497725,
+        joint: (0.362744, 2.083262),
     },
     RecordBand {
         name: "post-trough rate %",
@@ -20906,7 +21041,7 @@ const RECORD_BANDS_SP500: [RecordBand; 52] = [
 ];
 
 /// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ 1999-03-11..2026-08-20.
-const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
+const RECORD_BANDS_NASDAQ: [RecordBand; 55] = [
     RecordBand {
         name: "equity vol %",
         record: 26.901577,
@@ -20915,8 +21050,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             25.575208, 25.933828, 26.295105, 26.644481, 27.006345, 27.360214, 27.761210, 28.142004,
             28.557870, 29.048477, 29.609973, 30.314645, 31.408600, 33.344450, 38.171757,
         ],
-        joint_c: 0.495625,
-        joint: (19.901372, 34.168670),
+        joint_c: 0.496325,
+        joint: (19.782505, 34.261932),
     },
     RecordBand {
         name: "typical-year vol %",
@@ -20926,8 +21061,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             19.432688, 19.564064, 19.701482, 19.854883, 19.941735, 20.137221, 20.451535, 20.913599,
             21.279221, 21.646616, 22.343636, 22.857745, 23.444964, 24.674639, 34.834256,
         ],
-        joint_c: 0.495625,
-        joint: (16.095590, 26.282722),
+        joint_c: 0.496325,
+        joint: (16.064397, 26.841626),
     },
     RecordBand {
         name: "return per vol",
@@ -20937,8 +21072,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             0.272005, 0.298493, 0.328610, 0.356969, 0.387892, 0.416830, 0.447033, 0.480692,
             0.515387, 0.552254, 0.597192, 0.653093, 0.741078, 0.899654, 1.220561,
         ],
-        joint_c: 0.495625,
-        joint: (-0.174480, 0.963258),
+        joint_c: 0.496325,
+        joint: (-0.186050, 0.977850),
     },
     RecordBand {
         name: "kurtosis",
@@ -20948,8 +21083,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             9.015805, 9.168505, 9.321964, 9.484194, 9.639484, 9.806452, 9.972343, 10.150002,
             10.336830, 10.564881, 10.827992, 11.171733, 11.720846, 12.734709, 16.207478,
         ],
-        joint_c: 0.495625,
-        joint: (6.340955, 13.249198),
+        joint_c: 0.496325,
+        joint: (6.236003, 13.325948),
     },
     RecordBand {
         name: "clustering lag 1",
@@ -20959,8 +21094,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             0.277222, 0.281234, 0.285201, 0.288836, 0.292466, 0.295868, 0.299370, 0.303208,
             0.307275, 0.311632, 0.316687, 0.322957, 0.332082, 0.349404, 0.393200,
         ],
-        joint_c: 0.495625,
-        joint: (0.183166, 0.355912),
+        joint_c: 0.496325,
+        joint: (0.178960, 0.357498),
     },
     RecordBand {
         name: "clustering lag 20",
@@ -20970,8 +21105,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             0.212243, 0.216783, 0.220706, 0.224758, 0.228607, 0.232376, 0.236301, 0.240175,
             0.244480, 0.249019, 0.254204, 0.260077, 0.268726, 0.284754, 0.335159,
         ],
-        joint_c: 0.495625,
-        joint: (0.108526, 0.292013),
+        joint_c: 0.496325,
+        joint: (0.105489, 0.293156),
     },
     RecordBand {
         name: "variance ratio 60d",
@@ -20981,8 +21116,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             0.789056, 0.798778, 0.808301, 0.816911, 0.825511, 0.834846, 0.844107, 0.853961,
             0.864270, 0.875894, 0.889136, 0.906583, 0.931117, 0.982527, 1.086122,
         ],
-        joint_c: 0.495625,
-        joint: (0.605156, 0.999994),
+        joint_c: 0.496325,
+        joint: (0.600867, 1.005501),
     },
     RecordBand {
         name: "downside vol excess %",
@@ -21003,8 +21138,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             54.521625, 54.631518, 54.740061, 54.840588, 54.944574, 55.048812, 55.155316, 55.270821,
             55.395579, 55.526431, 55.678509, 55.874636, 56.166181, 56.691423, 58.066860,
         ],
-        joint_c: 0.495625,
-        joint: (52.618563, 56.899563),
+        joint_c: 0.496325,
+        joint: (52.566346, 56.932926),
     },
     RecordBand {
         name: "leverage corr",
@@ -21014,8 +21149,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             -0.115678, -0.111994, -0.108430, -0.104824, -0.101165, -0.097354, -0.093575, -0.089341,
             -0.084974, -0.080282, -0.074603, -0.067438, -0.056780, -0.037189, 0.001314,
         ],
-        joint_c: 0.495625,
-        joint: (-0.172421, -0.028397),
+        joint_c: 0.496325,
+        joint: (-0.173570, -0.026488),
     },
     RecordBand {
         name: "crashes/century",
@@ -21025,7 +21160,7 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             29.200463, 29.200463, 32.850521, 32.850521, 32.850521, 36.500579, 36.500579, 40.150637,
             40.150637, 43.800695, 43.800695, 47.450753, 51.100811, 58.400927, 73.001159,
         ],
-        joint_c: 0.495625,
+        joint_c: 0.496325,
         joint: (3.650058, 62.050985),
     },
     RecordBand {
@@ -21037,8 +21172,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             -22.768316, -21.764667, -21.285608, -19.542987, -18.285740, -17.266635, -16.104397,
             -15.859029, -15.000011,
         ],
-        joint_c: 0.495625,
-        joint: (-91.781581, -15.609339),
+        joint_c: 0.496325,
+        joint: (-92.597135, -15.609339),
     },
     RecordBand {
         name: "vol-timing edge pts/yr",
@@ -21059,8 +21194,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             0.814282, 0.831841, 0.849017, 0.865293, 0.882173, 0.899942, 0.916731, 0.934867,
             0.953161, 0.974375, 0.999842, 1.030191, 1.075804, 1.161100, 1.335886,
         ],
-        joint_c: 0.495625,
-        joint: (0.502454, 1.191545),
+        joint_c: 0.496325,
+        joint: (0.494596, 1.198985),
     },
     RecordBand {
         name: "variance ratio 250d",
@@ -21070,8 +21205,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             0.852794, 0.880536, 0.907210, 0.934726, 0.960711, 0.989172, 1.017198, 1.048521,
             1.082140, 1.121157, 1.166464, 1.225195, 1.317712, 1.487674, 1.877279,
         ],
-        joint_c: 0.495625,
-        joint: (0.437579, 1.572481),
+        joint_c: 0.496325,
+        joint: (0.430084, 1.584316),
     },
     RecordBand {
         name: "variance ratio 20d",
@@ -21081,8 +21216,41 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             0.784482, 0.789780, 0.794907, 0.799694, 0.804643, 0.809806, 0.814935, 0.820691,
             0.826983, 0.833694, 0.841554, 0.851648, 0.866307, 0.895700, 0.970213,
         ],
-        joint_c: 0.495625,
-        joint: (0.697875, 0.909747),
+        joint_c: 0.496325,
+        joint: (0.695812, 0.912784),
+    },
+    RecordBand {
+        name: "variance ratio 20d outside declines",
+        record: 0.820662,
+        q: [
+            0.551472, 0.701004, 0.731132, 0.748152, 0.759584, 0.768396, 0.776307, 0.783913,
+            0.790566, 0.797268, 0.803580, 0.809705, 0.816185, 0.823204, 0.830225, 0.837538,
+            0.846113, 0.854962, 0.865855, 0.879831, 0.901477, 0.949443, 1.455109,
+        ],
+        joint_c: 0.496325,
+        joint: (0.686375, 0.982612),
+    },
+    RecordBand {
+        name: "variance ratio 60d outside declines",
+        record: 0.973564,
+        q: [
+            0.335545, 0.599189, 0.666598, 0.704651, 0.732481, 0.753457, 0.772113, 0.789420,
+            0.804488, 0.818958, 0.833397, 0.847723, 0.863307, 0.877086, 0.891499, 0.908013,
+            0.926512, 0.946320, 0.970870, 1.001901, 1.048928, 1.150477, 2.427140,
+        ],
+        joint_c: 0.496325,
+        joint: (0.567810, 1.205105),
+    },
+    RecordBand {
+        name: "variance ratio 120d outside declines",
+        record: 1.190278,
+        q: [
+            0.262850, 0.501312, 0.591752, 0.650680, 0.695044, 0.729827, 0.762549, 0.791833,
+            0.818513, 0.844791, 0.870474, 0.896434, 0.920927, 0.947068, 0.974440, 1.003072,
+            1.032800, 1.066393, 1.106594, 1.159860, 1.243594, 1.409728, 3.794735,
+        ],
+        joint_c: 0.496325,
+        joint: (0.458425, 1.494488),
     },
     RecordBand {
         name: "short rate %",
@@ -21092,8 +21260,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             1.905629, 1.953942, 1.997838, 2.043160, 2.090443, 2.138789, 2.189316, 2.242692,
             2.300256, 2.364969, 2.440335, 2.535389, 2.677798, 2.958886, 3.576963,
         ],
-        joint_c: 0.496525,
-        joint: (1.103040, 3.116154),
+        joint_c: 0.497025,
+        joint: (1.097027, 3.124087),
     },
     RecordBand {
         name: "rate floor share %",
@@ -21103,8 +21271,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             35.358190, 36.475353, 37.606480, 38.709677, 39.743053, 40.860215, 42.019271, 43.178327,
             44.477028, 45.971233, 47.674906, 49.783550, 52.981427, 59.460969, 75.715682,
         ],
-        joint_c: 0.496525,
-        joint: (16.268678, 62.393520),
+        joint_c: 0.497025,
+        joint: (15.779919, 62.812456),
     },
     RecordBand {
         name: "bond depth vs vol",
@@ -21114,8 +21282,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 52] = [
             1.050809, 1.094922, 1.139144, 1.183328, 1.226545, 1.273320, 1.323439, 1.375117,
             1.435521, 1.499504, 1.570602, 1.657597, 1.785308, 1.965573, 2.304314,
         ],
-        joint_c: 0.497075,
-        joint: (0.373351, 2.071095),
+        joint_c: 0.497525,
+        joint: (0.365574, 2.077169),
     },
     RecordBand {
         name: "post-trough rate %",
@@ -21500,6 +21668,8 @@ const SP500_ANCHORS: Anchors = Anchors {
     vol_state_reference: None,
     recent_window: "S&P / CRSP 2009-2024",
     recent_years: 16,
+    recent_rows: &SP500_RECENT_ROWS,
+    equity_vr_rows: &WHOLE_SHORT_RUNGS,
     cluster_window: "CRSP 1926-2026, the century",
     cluster_years: 100,
     tail_window: "CRSP 1926-2026, the century",
@@ -21693,6 +21863,8 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     vol_state_reference: Some(VOL_STATE_QQQ_RECORD),
     recent_window: "QQQ 1999-2026",
     recent_years: 27,
+    recent_rows: &RECENT_ROWS,
+    equity_vr_rows: &OUTSIDE_DECLINES_RUNGS,
     cluster_window: "QQQ 1999-2026",
     cluster_years: 27,
     tail_window: "QQQ 1999-2026",
@@ -21989,6 +22161,28 @@ fn fit_targets_all(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             (|st: &WorldStats| st.vr20) as StatFn,
             1.00,
             wgt(1.0, a.vr60_sd),
+        ),
+        // THE ORDINARY TIME (2026-11-06): the three short rungs on the returns outside the
+        // window's 20% declines (`variance_ratio_outside_declines`), the S&P's recent-era rows: the
+        // era's reversal without one window's draw of declines, which the century rows grade on
+        // the whole record. The theory value and the weights are the whole rungs'.
+        (
+            "variance ratio 20d outside declines",
+            (|st: &WorldStats| st.vr20_out) as StatFn,
+            1.00,
+            wgt(1.0, a.vr60_sd),
+        ),
+        (
+            "variance ratio 60d outside declines",
+            (|st: &WorldStats| st.vr60_out) as StatFn,
+            1.00,
+            wgt(1.0, a.vr60_sd),
+        ),
+        (
+            "variance ratio 120d outside declines",
+            (|st: &WorldStats| st.vr120_out) as StatFn,
+            1.00,
+            wgt(3.0, a.vr60_sd),
         ),
         // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind),
         // vr60 is the signed MEAN's persistence — this pair is the signed SECOND moment. Graded
@@ -22962,7 +23156,7 @@ pub const EXTREME_NAN_ROWS: [(&str, f64); 1] =
     [("vol-exit 3x interaction pts/yr", f64::NEG_INFINITY)];
 
 /// `RECORD_BAND_ROWS` less the two rows the volatility state's family prices (`VOL_STATE_ROWS`).
-pub const RECORD_BAND_PLACEMENT_ROWS: [&str; 14] = [
+pub const RECORD_BAND_PLACEMENT_ROWS: [&str; 17] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -22977,6 +23171,9 @@ pub const RECORD_BAND_PLACEMENT_ROWS: [&str; 14] = [
     "variance ratio 120d",
     "variance ratio 250d",
     "variance ratio 20d",
+    "variance ratio 20d outside declines",
+    "variance ratio 60d outside declines",
+    "variance ratio 120d outside declines",
 ];
 
 /// The declared row families the placement scores as units, less the horizon lists
@@ -24588,7 +24785,7 @@ fn reported_rows_on(rec: &ReportedRecord, sims: &[Path], window: &str) -> Vec<Re
             (r.iter().map(|x| x.to_vec()).collect(), bands)
         }
         RowFamily::Recent => {
-            let nd = PathNeeds::of_rows(&RECENT_ROWS);
+            let nd = PathNeeds::of_rows(&SP500_RECENT_ROWS);
             let per = path_reads(sims, rec.years, nd);
             let r: Vec<[f64; 4]> = sims
                 .par_iter()
@@ -24600,7 +24797,7 @@ fn reported_rows_on(rec: &ReportedRecord, sims: &[Path], window: &str) -> Vec<Re
                         rec.years,
                         nd,
                     );
-                    [s.vol * 100.0, vr_of(&s, 20), vr_of(&s, 60), vr_of(&s, 120)]
+                    [s.vol * 100.0, s.vr20_out, s.vr60_out, s.vr120_out]
                 })
                 .collect();
             let bands = joint_edges(&r, RECENT_REPORTED_ALPHA);
@@ -28309,7 +28506,7 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 51] = [
+const EQUITY_TARGETS: [&str; 54] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -28320,6 +28517,9 @@ const EQUITY_TARGETS: [&str; 51] = [
     "variance ratio 120d",
     "variance ratio 250d",
     "variance ratio 20d",
+    "variance ratio 20d outside declines",
+    "variance ratio 60d outside declines",
+    "variance ratio 120d outside declines",
     "downside vol excess %",
     "up-day share %",
     "vol-timing edge pts/yr",
@@ -28790,7 +28990,7 @@ fn anchor_groups(a: Anchors) -> Vec<(&'static str, usize, Vec<&'static str>)> {
     clippy::too_many_lines,
     reason = "one group per record window, each listed in full where its rows are named"
 )]
-fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 25] {
+fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 26] {
     [
         (
             a.equity_window,
@@ -28818,7 +29018,10 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
         (a.vol_state_window, a.vol_state_years, &VOL_STATE_ROWS),
         // The recent era's rows (2026-11-05): the S&P's on CRSP 2009-2024, since on the century's
         // windows these trend -- see `Anchors::recent_window`.
-        (a.recent_window, a.recent_years, &RECENT_ROWS),
+        (a.recent_window, a.recent_years, a.recent_rows),
+        // the short rungs the set grades on its equity window (2026-11-06): the S&P's whole
+        // rungs, the Nasdaq's ordinary-time rungs -- see `Anchors::equity_vr_rows`
+        (a.equity_window, a.equity_years, a.equity_vr_rows),
         (
             a.cluster_window,
             a.cluster_years,
@@ -34783,7 +34986,7 @@ mod block_tests {
     #[test]
     fn a_one_year_block_is_the_daily_resamplers_own() {
         let r = series(3000);
-        let bits = |v: &[[f64; 16]]| -> Vec<u64> {
+        let bits = |v: &[[f64; 19]]| -> Vec<u64> {
             v.iter()
                 .flat_map(|x| x.iter().map(|y| y.to_bits()))
                 .collect()
@@ -41443,7 +41646,7 @@ mod record_band_tests {
                 .map(str::to_string)
                 .collect()
         };
-        let mut out = read("recordbands-2026-11-05.tsv");
+        let mut out = read("recordbands-2026-11-06.tsv");
         out.extend(read("rateafter-2026-09-30.tsv").into_iter().skip(1));
         out.extend(read("volexit-2026-10-20.tsv").into_iter().skip(1));
         out.extend(read("volstate-2026-10-20.tsv").into_iter().skip(1));
@@ -42072,12 +42275,24 @@ mod record_band_tests {
         let sp = anchors_named("sp500");
         assert_eq!(sp.recent_years, 16);
         assert_ne!(sp.recent_years, sp.equity_years);
-        for n in RECENT_ROWS {
+        assert_eq!(sp.recent_rows, &SP500_RECENT_ROWS);
+        for n in SP500_RECENT_ROWS {
             assert_eq!(record_band_years(sp, n), sp.recent_years, "[{n}]");
+        }
+        for n in [
+            "variance ratio 20d",
+            "variance ratio 60d",
+            "variance ratio 120d",
+        ] {
+            assert_eq!(
+                record_band_years(sp, n),
+                sp.equity_years,
+                "[{n}] on the century"
+            );
         }
         assert!(
             anchor_groups(sp).iter().any(|(w, y, ns)| {
-                *w == sp.recent_window && *y == sp.recent_years && ns == &RECENT_ROWS
+                *w == sp.recent_window && *y == sp.recent_years && ns == &SP500_RECENT_ROWS
             }),
             "the rows are one anchor group on their own window"
         );
@@ -42086,6 +42301,7 @@ mod record_band_tests {
             (nq.recent_window, nq.recent_years),
             (nq.equity_window, nq.equity_years)
         );
+        assert_eq!(nq.recent_rows, &RECENT_ROWS);
     }
 
     #[test]
@@ -42103,18 +42319,20 @@ mod record_band_tests {
         assert_eq!(r.years, sp.equity_years);
         assert_eq!(r.window, sp.equity_window);
         assert_eq!(r.start, WindowStart::Last);
-        assert_eq!(r.records.len(), RECENT_ROWS.len());
-        assert_eq!(RowFamily::Recent.rows(), &RECENT_ROWS);
-        // the century's vol sits below the recent era's, its variance ratios above: the trends
-        // the re-target followed
+        assert_eq!(r.records.len(), SP500_RECENT_ROWS.len());
+        assert_eq!(RowFamily::Recent.rows(), &SP500_RECENT_ROWS);
+        // the century's vol sits below the recent era's: the trend the re-target followed
         assert!(r.records[0] < sp.vol);
         for (k, q) in [(1, 20), (2, 60), (3, 120)] {
             let b = sp
                 .record_bands
                 .iter()
-                .find(|b| b.name == format!("variance ratio {q}d"))
+                .find(|b| b.name == format!("variance ratio {q}d outside declines"))
                 .expect("a recent-era band");
-            assert!(r.records[k] > b.record, "variance ratio {q}d");
+            assert!(
+                r.records[k].is_finite() && b.record.is_finite(),
+                "variance ratio {q}d"
+            );
         }
         assert!(
             anchors_named("nasdaq")
@@ -42333,6 +42551,37 @@ mod record_band_tests {
     }
 
     #[test]
+    fn the_ordinary_time_ratio_drops_the_declines_and_nothing_else() {
+        // `RecordBandSuite` pins the same series: a change here is a change there
+        // no 20% fall: the whole ratio, bit for bit
+        let calm: Vec<f64> = (0..3000).map(|i| 0.002 * ((i % 7) as f64 - 3.0)).collect();
+        assert_eq!(outside_declines(&calm), calm);
+        assert_eq!(
+            variance_ratio_outside_declines(&calm, 60).to_bits(),
+            variance_ratio(&calm, 60).to_bits()
+        );
+        // a 30% (log 0.35) fall over ten sessions, regained over eight, between calm stretches:
+        // the fall's ten returns go, every other return stays in order; a second fall the series
+        // ends inside is dropped through its trough, the end
+        let mut r: Vec<f64> = vec![0.001; 300];
+        r.extend(std::iter::repeat_n(-0.035, 10));
+        r.extend(std::iter::repeat_n(0.05, 8));
+        r.extend(std::iter::repeat_n(0.001, 300));
+        r.extend(std::iter::repeat_n(-0.03, 9));
+        let kept = outside_declines(&r);
+        let mut expect: Vec<f64> = r[..300].to_vec();
+        expect.extend_from_slice(&r[310..618]);
+        assert_eq!(kept, expect);
+        assert_eq!(kept.len(), r.len() - 19);
+        // the same rows through `series_readings`: the three ordinary-time rungs are the ratio of
+        // the kept returns
+        let read = series_readings(&r);
+        assert_eq!(read[16], variance_ratio(&kept, 20));
+        assert_eq!(read[17], variance_ratio(&kept, VAR_RATIO_Q));
+        assert_eq!(read[18], variance_ratio(&kept, 120));
+    }
+
+    #[test]
     fn a_pinned_series_reads_the_same_in_both_twins() {
         // `RecordBandSuite` pins these same values; a change here is a change there
         let r = pinned_series();
@@ -42355,6 +42604,9 @@ mod record_band_tests {
                 0.6469573924082413,
                 0.46904973503687153,
                 0.8833716844931516,
+                0.8943270631110527,
+                0.6089983492024865,
+                0.5064339955719278,
             ]
         );
         assert_eq!(year_vol_phase_mean(&r), 16.862007639884688);
@@ -42381,7 +42633,7 @@ mod record_band_tests {
         assert_eq!(share, 6.004366812227074);
         assert_eq!(share_med, 5.858806404657933);
         let reads = record_resamples(&r, 40, 7, None);
-        let meds: Vec<f64> = (0..16)
+        let meds: Vec<f64> = (0..19)
             .map(|k| med(&reads.iter().map(|x| x[k]).collect::<Vec<f64>>()))
             .collect();
         assert_eq!(
@@ -42403,6 +42655,9 @@ mod record_band_tests {
                 0.6332136135562098,
                 0.5270138283992784,
                 0.8999023015224383,
+                0.8517750647589285,
+                0.7837385884301116,
+                0.7408734305624011,
             ]
         );
         let crashes: Vec<f64> = reads.iter().map(|x| x[10]).collect();

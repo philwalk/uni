@@ -6733,6 +6733,45 @@ object MarketSim:
       if den <= 0 then Double.NaN else (za * zb).sum / den
 
   /** recovered < 0 marks an episode still under water at path end: depth known, shape not. */
+  /** THE DECLINE `varianceRatioOutsideDeclines` removes: a fall of the price from its running peak of
+    * this much or more, in percent (`episodes`' depth). */
+  val OutsideDeclinesPct: Double = 20.0
+
+  /** `varianceRatio` ON THE RETURNS OUTSIDE THE WINDOW'S DECLINES (2026-11-06): the price the returns
+    * compound to (rebuilt with `expDet`, as `seriesReadings` rebuilds it) is searched for every fall of
+    * `OutsideDeclinesPct` or more from its running peak (`episodes`: the trough is the low before the
+    * peak is regained, or the series' end); the returns from the peak through the trough are dropped
+    * and the rest laid end to end and read as one series.  The statistic the S&P's recent-era
+    * variance-ratio rows grade: the era's reversal in the ordinary time, without one window's draw of
+    * declines, which the century rows grade on the whole record.  A series with no such fall reads the
+    * whole ratio, bit for bit.  A resample's declines are its own: one function reads the record, its
+    * resamples and a model path. */
+  def varianceRatioOutsideDeclines(r: Array[Double], q: Int): Double =
+    varianceRatio(outsideDeclines(r), q)
+
+  /** The returns of `r` outside its declines (`varianceRatioOutsideDeclines`); `r` itself when it has
+    * none.  Return `k` carries the price from `px(k)` to `px(k + 1)`, so a fall from the peak at
+    * `px(p)` to the trough at `px(t)` is the returns `r(p until t)`. */
+  def outsideDeclines(r: Array[Double]): Array[Double] =
+    val px = new Array[Double](r.length + 1)
+    var c = 0.0
+    px(0) = expDet(c)
+    var i = 0
+    while i < r.length do
+      c += r(i)
+      px(i + 1) = expDet(c)
+      i += 1
+    val eps = episodes(px, OutsideDeclinesPct)
+    if eps.isEmpty then r
+    else
+      val out = scala.collection.mutable.ArrayBuilder.make[Double]
+      var from = 0
+      for e <- eps do
+        out.addAll(r.slice(from, e.peak))
+        from = e.trough
+      out.addAll(r.slice(from, r.length))
+      out.result()
+
   final case class Episode(peak: Int, trough: Int, recovered: Int, depthPct: Double):
     def censored: Boolean = recovered < 0
     def fallDays: Int     = trough - peak
@@ -8248,6 +8287,10 @@ object MarketSim:
                               lev20: Double = Double.NaN,
                               vr20: Double, vr60: Double,   // SIGNED-return persistence at each
                               vr120: Double, vr250: Double, // rung of `VarRatioLadder` -- `varianceRatio`
+                              // the short rungs on the returns outside the path's 20% declines
+                              // (`varianceRatioOutsideDeclines`): the S&P's recent-era rows
+                              vr20Out: Double = Double.NaN, vr60Out: Double = Double.NaN,
+                              vr120Out: Double = Double.NaN,
                               // the percentile of each `VarRatio250Eras` record among the
                               // paths' 250-session readings over the era's own length, the run's
                               // where that is shorter; NaN under `ExtremeMinHistories` paths.  A
@@ -8665,6 +8708,9 @@ object MarketSim:
     ac: Vector[Double],      // clustering at lags 1, 20, 5 and 60
     lev: Vector[Double],     // the leverage profile at lags 1, 5 and 20
     vr: Vector[Double],      // variance ratios at q = 20, VarRatioQ, 120 and 250
+    // the same at 20, VarRatioQ and 120 on the returns outside the path's 20% declines
+    // (`varianceRatioOutsideDeclines`)
+    vrOut: Vector[Double],
     // the 250-session ratio over each `VarRatio250Eras` era's length, the path's where that is shorter
     vr250Eras: Vector[Double],
     retAc1: Double, annRet: Double, divYield: Double,
@@ -8817,6 +8863,10 @@ object MarketSim:
       ac   = if nd.cluster || rest then autocorrsAbs(r, Vector(1, 20, 5, 60)) else nan4,
       lev  = if eq then Vector(levAbs(r, 1), levAbs(r, 5), levAbs(r, 20)) else Vector.fill(3)(Double.NaN),
       vr   = if eq then Vector(varianceRatio(r, 20), varianceRatio(r, VarRatioQ), varianceRatio(r, 120), vr250) else nan4,
+      vrOut = if eq then
+                val outside = outsideDeclines(r)
+                Vector(varianceRatio(outside, 20), varianceRatio(outside, VarRatioQ), varianceRatio(outside, 120))
+              else Vector(Double.NaN, Double.NaN, Double.NaN),
       vr250Eras =
         if rest then
           VarRatio250Eras.map { (_, eraYears, _) =>
@@ -8941,6 +8991,9 @@ object MarketSim:
       vr60  = med(per.map(_.vr(1))),
       vr120 = med(per.map(_.vr(2))),
       vr250 = med(per.map(_.vr(3))),
+      vr20Out  = med(per.map(_.vrOut(0))),
+      vr60Out  = med(per.map(_.vrOut(1))),
+      vr120Out = med(per.map(_.vrOut(2))),
       vr250RecordPcts = VarRatio250Eras.indices.toVector.map { e =>
         val xs = per.map(_.vr250Eras(e)).filter(x => !x.isNaN && !x.isInfinite)
         if xs.length < ExtremeMinHistories then Double.NaN
@@ -9509,6 +9562,10 @@ object MarketSim:
     // trends across the century's windows, graded on the era the consumer trades in, CRSP 2009-2024;
     // the Nasdaq set's is its equity window, which is the recent era already
     recentWindow: String, recentYears: Int,
+    recentRows: Vector[String],                  // the rows read there: `Sp500RecentRows` or `RecentRows`
+    // the short variance-ratio rungs read on the equity window instead: `WholeShortRungs` for the
+    // S&P, `OutsideDeclinesRungs` for the Nasdaq
+    equityVrRows: Vector[String],
     clusterWindow: String, clusterYears: Int,    // clustering is horizon-sensitive and reads its own
     // The TAIL reads its own window too, and for a sharper reason than horizon-sensitivity: the
     // deepest episode is the one statistic a window can DELETE.  Across the committed fixture the
@@ -9726,7 +9783,7 @@ object MarketSim:
       case MultiYear => MultiYearRows
       case Coupling  => Vector("bubble coupling 3y")
       case VolState  => VolStateRows
-      case Recent    => RecentRows
+      case Recent    => Sp500RecentRows
 
   /** WHERE A REPORTED RECORD'S WINDOW OPENS on a path: at the path's last `years` (the record's
     * windows end together, `recordWindow`), or at the first session with `years` left whose valuation
@@ -9872,61 +9929,70 @@ object MarketSim:
   lazy val RecordBandsSp500: Vector[RecordBand] = Vector(
     RecordBand("equity vol %", 18.501241,
       Vector(12.423088, 14.154180, 15.049195, 15.621522, 16.039844, 16.370334, 16.657080, 16.933799, 17.179352, 17.417188, 17.648067, 17.878366, 18.112590, 18.352393, 18.585692, 18.851890, 19.132075, 19.452920, 19.830849, 20.314173, 21.000335, 22.357517, 25.260511),
-      0.496875, (13.666477, 23.109101)),
+      0.497175, (13.647092, 23.194112)),
     RecordBand("typical-year vol %", 14.006915,
       Vector(11.556472, 12.531283, 12.920723, 13.107670, 13.210511, 13.310495, 13.413434, 13.521989, 13.654744, 13.766653, 13.987344, 14.149909, 14.250427, 14.379994, 14.493633, 14.615026, 14.703818, 14.798243, 14.901537, 15.100966, 15.429237, 15.962256, 17.877783),
-      0.496575, (12.318597, 16.619338)),
+      0.497125, (12.284184, 16.674130)),
     RecordBand("return per vol", 0.642868,
       Vector(0.088725, 0.335585, 0.419972, 0.466367, 0.498614, 0.521400, 0.542910, 0.562300, 0.580360, 0.597822, 0.614042, 0.630378, 0.646003, 0.662528, 0.680268, 0.698571, 0.718152, 0.740436, 0.765043, 0.799177, 0.849823, 0.941706, 1.163062),
-      0.496575, (0.292071, 0.999415)),
+      0.497125, (0.285258, 1.007838)),
     RecordBand("kurtosis", 20.523346,
       Vector(5.752405, 7.287199, 9.132716, 10.459835, 11.450039, 12.338158, 13.237927, 14.346062, 16.237802, 17.984438, 18.901179, 19.666440, 20.365129, 21.123409, 22.030061, 23.221480, 24.805752, 26.521613, 28.202123, 30.318715, 33.636590, 40.454596, 60.057727),
-      0.496575, (6.858491, 43.781260)),
+      0.497125, (6.812119, 44.775604)),
     RecordBand("clustering lag 1", 0.286219,
       Vector(0.190034, 0.220253, 0.238919, 0.248664, 0.255388, 0.260720, 0.265096, 0.269024, 0.272551, 0.276041, 0.279575, 0.282815, 0.286047, 0.289397, 0.292923, 0.296412, 0.300373, 0.304673, 0.309511, 0.315627, 0.324835, 0.342696, 0.386289),
-      0.497275, (0.208310, 0.353488)),
+      0.497675, (0.207595, 0.354937)),
     RecordBand("clustering lag 20", 0.209525,
       Vector(0.108155, 0.138002, 0.153372, 0.161840, 0.167468, 0.172028, 0.175771, 0.179207, 0.182214, 0.185415, 0.188224, 0.190994, 0.193608, 0.196405, 0.199244, 0.202056, 0.205043, 0.208665, 0.212552, 0.217531, 0.224367, 0.236556, 0.267489),
-      0.497275, (0.127862, 0.245254)),
-    RecordBand("variance ratio 60d", 0.616719,
-      Vector(0.374908, 0.506215, 0.543498, 0.564412, 0.577513, 0.588421, 0.597396, 0.604788, 0.612066, 0.619055, 0.626114, 0.632844, 0.639487, 0.646164, 0.654017, 0.662197, 0.670848, 0.680978, 0.693334, 0.709469, 0.738335, 0.810562, 1.047163),
-      0.496875, (0.474967, 0.856186)),
+      0.497675, (0.126466, 0.246319)),
+    RecordBand("variance ratio 60d", 0.876738,
+      Vector(0.693214, 0.765817, 0.794978, 0.811740, 0.823918, 0.833535, 0.841679, 0.849244, 0.856154, 0.862373, 0.869116, 0.874894, 0.881017, 0.887269, 0.893804, 0.901049, 0.908621, 0.917151, 0.927484, 0.940381, 0.960600, 0.998670, 1.099491),
+      0.497125, (0.744924, 1.023820)),
     RecordBand("downside vol excess %", 2.067075,
       Vector(-7.190142, -4.087398, -2.442985, -1.576274, -0.947413, -0.424222, 0.028640, 0.420089, 0.831648, 1.212033, 1.573876, 1.930377, 2.281021, 2.666235, 3.084421, 3.509860, 3.973919, 4.493450, 5.077572, 5.892127, 7.068838, 9.397716, 16.871394),
-      0.496575, (-4.916067, 10.571132)),
+      0.497125, (-5.030438, 10.833293)),
     RecordBand("up-day share %", 54.275665,
       Vector(51.993848, 53.039464, 53.394909, 53.578889, 53.699022, 53.794582, 53.882508, 53.954740, 54.022862, 54.085560, 54.150653, 54.212696, 54.273316, 54.337674, 54.400132, 54.470562, 54.545455, 54.629884, 54.725903, 54.844919, 55.029423, 55.354981, 56.159560),
-      0.496575, (52.853844, 55.538462)),
+      0.497125, (52.826147, 55.568394)),
     RecordBand("leverage corr", -0.091278,
       Vector(-0.144169, -0.122699, -0.113006, -0.108099, -0.105070, -0.102577, -0.100445, -0.098555, -0.096974, -0.095399, -0.093953, -0.092578, -0.091189, -0.089797, -0.088396, -0.087026, -0.085359, -0.083509, -0.081599, -0.079119, -0.075323, -0.067743, -0.038151),
-      0.496575, (-0.127600, -0.063131)),
+      0.497125, (-0.128172, -0.062459)),
     RecordBand("crashes/century", 24.862969,
       Vector(8.287656, 15.194036, 17.956588, 19.337865, 20.719141, 20.719141, 22.100417, 22.100417, 23.481693, 23.481693, 24.862969, 24.862969, 24.862969, 26.244245, 26.244245, 27.625521, 27.625521, 29.006797, 29.006797, 30.388073, 31.769349, 35.913177, 45.582109),
-      0.496575, (13.812760, 37.294453)),
+      0.497125, (13.812760, 37.294453)),
     RecordBand("median depth %", -20.993105,
       Vector(-43.522128, -33.243777, -30.251849, -27.760786, -26.819929, -25.827254, -25.085998, -24.312907, -23.450989, -22.720029, -22.196834, -21.981851, -21.981851, -21.637968, -21.053196, -20.993105, -20.747571, -20.642216, -20.446132, -20.308346, -19.557597, -19.060289, -16.376040),
-      0.496575, (-34.216281, -18.519014)),
+      0.497125, (-34.216281, -18.324086)),
     RecordBand("vol-timing edge pts/yr", -4.498379,
       Vector(-8.628549, -6.982706, -6.153416, -5.702227, -5.401016, -5.160316, -4.936200, -4.742593, -4.566252, -4.405279, -4.243637, -4.078243, -3.915902, -3.744587, -3.580413, -3.404275, -3.211935, -2.999224, -2.753603, -2.437495, -1.960218, -1.051621, 1.521998),
-      0.496575, (-7.415949, -0.554688)),
-    RecordBand("variance ratio 120d", 0.546172,
-      Vector(0.269465, 0.363079, 0.406863, 0.433912, 0.452373, 0.467789, 0.482476, 0.495414, 0.507633, 0.519814, 0.531751, 0.544293, 0.556731, 0.569679, 0.583831, 0.598030, 0.614039, 0.632868, 0.655580, 0.684819, 0.732472, 0.819405, 1.091298),
-      0.496875, (0.338965, 0.877670)),
+      0.497125, (-7.500622, -0.479531)),
+    RecordBand("variance ratio 120d", 0.898289,
+      Vector(0.588865, 0.703602, 0.752846, 0.780657, 0.799465, 0.814391, 0.827569, 0.839511, 0.850713, 0.861719, 0.871656, 0.881694, 0.891659, 0.901360, 0.911489, 0.923197, 0.935686, 0.949867, 0.965685, 0.986553, 1.017462, 1.078466, 1.293321),
+      0.497125, (0.676202, 1.119698)),
     RecordBand("variance ratio 250d", 0.897728,
       Vector(0.508798, 0.629503, 0.696058, 0.733633, 0.759450, 0.782051, 0.800883, 0.817179, 0.833068, 0.847955, 0.864081, 0.879754, 0.894937, 0.910538, 0.925839, 0.943557, 0.963226, 0.984672, 1.009977, 1.041935, 1.094619, 1.192717, 1.610316),
-      0.496575, (0.594513, 1.251512)),
-    RecordBand("variance ratio 20d", 0.802867,
-      Vector(0.608475, 0.680928, 0.713284, 0.731093, 0.742762, 0.753291, 0.761896, 0.769155, 0.776118, 0.782700, 0.788801, 0.794749, 0.801045, 0.807030, 0.813232, 0.819192, 0.825963, 0.832865, 0.841136, 0.851122, 0.866344, 0.899365, 1.025870),
-      0.496875, (0.660943, 0.924363)),
+      0.497125, (0.591996, 1.254110)),
+    RecordBand("variance ratio 20d", 0.891976,
+      Vector(0.773690, 0.821151, 0.840951, 0.851846, 0.859109, 0.865229, 0.870524, 0.875124, 0.879423, 0.883463, 0.887483, 0.891393, 0.895185, 0.899244, 0.903142, 0.907564, 0.912318, 0.917187, 0.923371, 0.931227, 0.943088, 0.964938, 1.019557),
+      0.497125, (0.808437, 0.977706)),
+    RecordBand("variance ratio 20d outside declines", 0.797311,
+      Vector(0.583653, 0.673055, 0.709950, 0.730348, 0.744431, 0.755728, 0.765335, 0.773859, 0.781435, 0.789373, 0.796355, 0.803208, 0.809838, 0.816958, 0.824290, 0.832216, 0.840726, 0.849086, 0.859169, 0.872756, 0.892695, 0.932635, 1.053908),
+      0.497175, (0.646263, 0.957087)),
+    RecordBand("variance ratio 60d outside declines", 0.780260,
+      Vector(0.375232, 0.493791, 0.553468, 0.590959, 0.620616, 0.646846, 0.670680, 0.693359, 0.714048, 0.733583, 0.751967, 0.769553, 0.788722, 0.807828, 0.827083, 0.846328, 0.867890, 0.891876, 0.918618, 0.952952, 1.003152, 1.097612, 1.307729),
+      0.497175, (0.461928, 1.148150)),
+    RecordBand("variance ratio 120d outside declines", 0.861660,
+      Vector(0.280879, 0.395700, 0.472535, 0.522692, 0.564548, 0.603851, 0.640126, 0.676089, 0.711223, 0.741352, 0.772211, 0.801179, 0.830153, 0.860484, 0.891319, 0.922036, 0.955703, 0.991349, 1.037311, 1.089563, 1.173798, 1.327699, 1.817541),
+      0.497175, (0.354104, 1.412160)),
     RecordBand("short rate %", 4.595174,
       Vector(3.172289, 3.724572, 3.985210, 4.123637, 4.212128, 4.284050, 4.352584, 4.413407, 4.470442, 4.524520, 4.573902, 4.620935, 4.669148, 4.717381, 4.771603, 4.827784, 4.889457, 4.956948, 5.038634, 5.141448, 5.290178, 5.573231, 6.381581),
-      0.497225, (3.561732, 5.806048)),
+      0.497625, (3.550529, 5.820185)),
     RecordBand("rate floor share %", 14.565588,
       Vector(2.507453, 6.308560, 8.507240, 9.774276, 10.642036, 11.355409, 11.983603, 12.537266, 13.074957, 13.575383, 14.086457, 14.576235, 15.044719, 15.561116, 16.072189, 16.615204, 17.243399, 17.908859, 18.728705, 19.734881, 21.268101, 24.382453, 31.079642),
-      0.497225, (4.998935, 26.192504)),
+      0.497625, (4.860520, 26.501278)),
     RecordBand("bond depth vs vol", 1.029058,
       Vector(0.144525, 0.471084, 0.647434, 0.752934, 0.828321, 0.889520, 0.948798, 1.000965, 1.050809, 1.094922, 1.139144, 1.183328, 1.226545, 1.273320, 1.323439, 1.375117, 1.435521, 1.499504, 1.570602, 1.657597, 1.785308, 1.965573, 2.304314),
-      0.497375, (0.370719, 2.074886)),
+      0.497725, (0.362744, 2.083262)),
     RecordBand("post-trough rate %", 4.224745,
       Vector(1.961030, 2.964704, 3.373106, 3.595469, 3.745815, 3.865696, 3.975277, 4.062419, 4.151005, 4.234489, 4.314806, 4.393044, 4.474837, 4.557970, 4.643530, 4.737062, 4.836704, 4.948505, 5.088520, 5.257873, 5.537747, 6.061255, 7.496693),
       0.496975, (2.723711, 6.481711)),
@@ -10032,61 +10098,70 @@ object MarketSim:
   lazy val RecordBandsNasdaq: Vector[RecordBand] = Vector(
     RecordBand("equity vol %", 26.901577,
       Vector(16.978037, 20.483349, 22.226065, 23.163097, 23.809253, 24.323456, 24.768740, 25.187079, 25.575208, 25.933828, 26.295105, 26.644481, 27.006345, 27.360214, 27.761210, 28.142004, 28.557870, 29.048477, 29.609973, 30.314645, 31.408600, 33.344450, 38.171757),
-      0.495625, (19.901372, 34.168670)),
+      0.496325, (19.782505, 34.261932)),
     RecordBand("typical-year vol %", 19.966713,
       Vector(13.846234, 16.530707, 17.397078, 17.811599, 18.258337, 18.684510, 18.960351, 19.291152, 19.432688, 19.564064, 19.701482, 19.854883, 19.941735, 20.137221, 20.451535, 20.913599, 21.279221, 21.646616, 22.343636, 22.857745, 23.444964, 24.674639, 34.834256),
-      0.495625, (16.095590, 26.282722)),
+      0.496325, (16.064397, 26.841626)),
     RecordBand("return per vol", 0.380553,
       Vector(-0.403388, -0.129890, 0.005006, 0.082489, 0.131686, 0.172962, 0.208764, 0.243087, 0.272005, 0.298493, 0.328610, 0.356969, 0.387892, 0.416830, 0.447033, 0.480692, 0.515387, 0.552254, 0.597192, 0.653093, 0.741078, 0.899654, 1.220561),
-      0.495625, (-0.174480, 0.963258)),
+      0.496325, (-0.186050, 0.977850)),
     RecordBand("kurtosis", 9.554070,
       Vector(4.711036, 6.775437, 7.594671, 7.971104, 8.252674, 8.487022, 8.688472, 8.854258, 9.015805, 9.168505, 9.321964, 9.484194, 9.639484, 9.806452, 9.972343, 10.150002, 10.336830, 10.564881, 10.827992, 11.171733, 11.720846, 12.734709, 16.207478),
-      0.495625, (6.340955, 13.249198)),
+      0.496325, (6.236003, 13.325948)),
     RecordBand("clustering lag 1", 0.292768,
       Vector(0.105961, 0.200377, 0.232370, 0.246569, 0.255754, 0.262515, 0.268260, 0.272927, 0.277222, 0.281234, 0.285201, 0.288836, 0.292466, 0.295868, 0.299370, 0.303208, 0.307275, 0.311632, 0.316687, 0.322957, 0.332082, 0.349404, 0.393200),
-      0.495625, (0.183166, 0.355912)),
+      0.496325, (0.178960, 0.357498)),
     RecordBand("clustering lag 20", 0.248802,
       Vector(0.046058, 0.124547, 0.160758, 0.177522, 0.187920, 0.195602, 0.201786, 0.207376, 0.212243, 0.216783, 0.220706, 0.224758, 0.228607, 0.232376, 0.236301, 0.240175, 0.244480, 0.249019, 0.254204, 0.260077, 0.268726, 0.284754, 0.335159),
-      0.495625, (0.108526, 0.292013)),
+      0.496325, (0.105489, 0.293156)),
     RecordBand("variance ratio 60d", 0.831558,
       Vector(0.514834, 0.632326, 0.689445, 0.719287, 0.739068, 0.754811, 0.768353, 0.778940, 0.789056, 0.798778, 0.808301, 0.816911, 0.825511, 0.834846, 0.844107, 0.853961, 0.864270, 0.875894, 0.889136, 0.906583, 0.931117, 0.982527, 1.086122),
-      0.495625, (0.605156, 0.999994)),
+      0.496325, (0.600867, 1.005501)),
     RecordBand("downside vol excess %", -0.716855,
       Vector(-8.865430, -5.628937, -4.349303, -3.632041, -3.087756, -2.677692, -2.323176, -1.993556, -1.686335, -1.377387, -1.082031, -0.791293, -0.490629, -0.211476, 0.111208, 0.458877, 0.824863, 1.253073, 1.737321, 2.399476, 3.398037, 5.304031, 11.208056),
       0.491175, (-5.770913, 5.394613)),
     RecordBand("up-day share %", 54.777163,
       Vector(50.867980, 52.901721, 53.463614, 53.774410, 53.982816, 54.143003, 54.283217, 54.407693, 54.521625, 54.631518, 54.740061, 54.840588, 54.944574, 55.048812, 55.155316, 55.270821, 55.395579, 55.526431, 55.678509, 55.874636, 56.166181, 56.691423, 58.066860),
-      0.495625, (52.618563, 56.899563)),
+      0.496325, (52.566346, 56.932926)),
     RecordBand("leverage corr", -0.107111,
       Vector(-0.195599, -0.165953, -0.148921, -0.139763, -0.133214, -0.128036, -0.123638, -0.119485, -0.115678, -0.111994, -0.108430, -0.104824, -0.101165, -0.097354, -0.093575, -0.089341, -0.084974, -0.080282, -0.074603, -0.067438, -0.056780, -0.037189, 0.001314),
-      0.495625, (-0.172421, -0.028397)),
+      0.496325, (-0.173570, -0.026488)),
     RecordBand("crashes/century", 25.550406,
       Vector(3.650058, 3.650058, 10.950174, 18.250290, 18.250290, 21.900348, 25.550406, 25.550406, 29.200463, 29.200463, 32.850521, 32.850521, 32.850521, 36.500579, 36.500579, 40.150637, 40.150637, 43.800695, 43.800695, 47.450753, 51.100811, 58.400927, 73.001159),
-      0.495625, (3.650058, 62.050985)),
+      0.496325, (3.650058, 62.050985)),
     RecordBand("median depth %", -22.796651,
       Vector(-98.929999, -79.792945, -49.366832, -36.464964, -32.654502, -28.633858, -28.559365, -28.469611, -25.233363, -24.944570, -23.318045, -22.796651, -22.796651, -22.768316, -22.768316, -21.764667, -21.285608, -19.542987, -18.285740, -17.266635, -16.104397, -15.859029, -15.000011),
-      0.495625, (-91.781581, -15.609339)),
+      0.496325, (-92.597135, -15.609339)),
     RecordBand("vol-timing edge pts/yr", -3.150551,
       Vector(-10.227461, -7.720960, -6.387590, -5.643799, -5.127731, -4.705040, -4.365396, -4.030457, -3.726074, -3.433518, -3.157112, -2.903653, -2.625029, -2.342199, -2.063488, -1.758519, -1.426809, -1.043186, -0.592687, -0.001103, 0.846601, 2.531650, 6.415749),
       0.491175, (-7.827844, 2.649951)),
     RecordBand("variance ratio 120d", 0.923272,
       Vector(0.382528, 0.541003, 0.633352, 0.688093, 0.723496, 0.750007, 0.773776, 0.795781, 0.814282, 0.831841, 0.849017, 0.865293, 0.882173, 0.899942, 0.916731, 0.934867, 0.953161, 0.974375, 0.999842, 1.030191, 1.075804, 1.161100, 1.335886),
-      0.495625, (0.502454, 1.191545)),
+      0.496325, (0.494596, 1.198985)),
     RecordBand("variance ratio 250d", 1.106648,
       Vector(0.322401, 0.481016, 0.602654, 0.674201, 0.723050, 0.761262, 0.794594, 0.823584, 0.852794, 0.880536, 0.907210, 0.934726, 0.960711, 0.989172, 1.017198, 1.048521, 1.082140, 1.121157, 1.166464, 1.225195, 1.317712, 1.487674, 1.877279),
-      0.495625, (0.437579, 1.572481)),
+      0.496325, (0.430084, 1.584316)),
     RecordBand("variance ratio 20d", 0.800414,
       Vector(0.645735, 0.709777, 0.735493, 0.749556, 0.759163, 0.766548, 0.773092, 0.778933, 0.784482, 0.789780, 0.794907, 0.799694, 0.804643, 0.809806, 0.814935, 0.820691, 0.826983, 0.833694, 0.841554, 0.851648, 0.866307, 0.895700, 0.970213),
-      0.495625, (0.697875, 0.909747)),
+      0.496325, (0.695812, 0.912784)),
+    RecordBand("variance ratio 20d outside declines", 0.820662,
+      Vector(0.551472, 0.701004, 0.731132, 0.748152, 0.759584, 0.768396, 0.776307, 0.783913, 0.790566, 0.797268, 0.803580, 0.809705, 0.816185, 0.823204, 0.830225, 0.837538, 0.846113, 0.854962, 0.865855, 0.879831, 0.901477, 0.949443, 1.455109),
+      0.496325, (0.686375, 0.982612)),
+    RecordBand("variance ratio 60d outside declines", 0.973564,
+      Vector(0.335545, 0.599189, 0.666598, 0.704651, 0.732481, 0.753457, 0.772113, 0.789420, 0.804488, 0.818958, 0.833397, 0.847723, 0.863307, 0.877086, 0.891499, 0.908013, 0.926512, 0.946320, 0.970870, 1.001901, 1.048928, 1.150477, 2.427140),
+      0.496325, (0.567810, 1.205105)),
+    RecordBand("variance ratio 120d outside declines", 1.190278,
+      Vector(0.262850, 0.501312, 0.591752, 0.650680, 0.695044, 0.729827, 0.762549, 0.791833, 0.818513, 0.844791, 0.870474, 0.896434, 0.920927, 0.947068, 0.974440, 1.003072, 1.032800, 1.066393, 1.106594, 1.159860, 1.243594, 1.409728, 3.794735),
+      0.496325, (0.458425, 1.494488)),
     RecordBand("short rate %", 2.136466,
       Vector(0.776798, 1.235883, 1.463321, 1.590816, 1.672375, 1.741374, 1.802569, 1.855851, 1.905629, 1.953942, 1.997838, 2.043160, 2.090443, 2.138789, 2.189316, 2.242692, 2.300256, 2.364969, 2.440335, 2.535389, 2.677798, 2.958886, 3.576963),
-      0.496525, (1.103040, 3.116154)),
+      0.497025, (1.097027, 3.124087)),
     RecordBand("rate floor share %", 37.313224,
       Vector(5.962854, 19.061584, 24.661360, 27.761486, 29.828236, 31.490015, 32.900433, 34.171205, 35.358190, 36.475353, 37.606480, 38.709677, 39.743053, 40.860215, 42.019271, 43.178327, 44.477028, 45.971233, 47.674906, 49.783550, 52.981427, 59.460969, 75.715682),
-      0.496525, (16.268678, 62.393520)),
+      0.497025, (15.779919, 62.812456)),
     RecordBand("bond depth vs vol", 1.029058,
       Vector(0.144525, 0.471084, 0.647434, 0.752934, 0.828321, 0.889520, 0.948798, 1.000965, 1.050809, 1.094922, 1.139144, 1.183328, 1.226545, 1.273320, 1.323439, 1.375117, 1.435521, 1.499504, 1.570602, 1.657597, 1.785308, 1.965573, 2.304314),
-      0.497075, (0.373351, 2.071095)),
+      0.497525, (0.365574, 2.077169)),
     RecordBand("post-trough rate %", 2.381665,
       Vector(0.076667, 0.542868, 0.969619, 1.204042, 1.350615, 1.47125, 1.572957, 1.661881, 1.737877, 1.823357, 1.897781, 1.970781, 2.044314, 2.122868, 2.204282, 2.29558, 2.391973, 2.50025, 2.632432, 2.79433, 3.062561, 3.625339, 5.289821),
       0.496525, (0.312149, 3.971964)),
@@ -10199,12 +10274,12 @@ object MarketSim:
   /** THE S&P SET's era rows (`Anchors.eraRows`): the TIPS era's breakeven rows, which its
     * 1954-2026 inflation persistence cannot hold. */
   /** THE S&P'S REPORTED RECORD: the century read of the rows the set grades on the recent era
-    * (`RecentRows`, CRSP 2009-2024): `equity vol %` and the variance ratios at 20, 60 and 120 days on
-    * CRSP 1954-2026 (`recordbands-2026-10-20.tsv`, the file the recent era's replaced), placed among
-    * the world's histories of the equity window's length.  Never graded: it shows what the
-    * recent-era grades cost against the whole record. */
+    * (`Sp500RecentRows`, CRSP 2009-2024): `equity vol %` and the variance ratios at 20, 60 and 120 days
+    * outside the declines, on CRSP 1954-2026 lag-free (`recordbands-2026-11-06.tsv`'s century run),
+    * placed among the world's histories of the equity window's length.  Never graded: it shows what
+    * the recent-era grades cost against the whole record. */
   val Sp500Reported: Vector[ReportedRecord] = Vector(
-    ReportedRecord(RowFamily.Recent, "S&P / CRSP 1954-2026", 72, Vector(16.820747, 0.891976, 0.876738, 0.898289)))
+    ReportedRecord(RowFamily.Recent, "S&P / CRSP 1954-2026", 72, Vector(16.820747, 0.929212, 0.910645, 0.908589)))
 
   val Sp500EraRows: Vector[String] =
     Vector("breakeven monthly change sd pp", "breakeven own change sd pp", "breakeven vs yield corr monthly",
@@ -10229,7 +10304,8 @@ object MarketSim:
     equityWindow = "S&P / CRSP 1954-2026", equityYears = 72,
     retVolWindow = "CRSP 1954-2026",
     volStateWindow = "S&P / CRSP 1954-2026", volStateYears = 72, volStateReference = None,
-    recentWindow = "S&P / CRSP 2009-2024", recentYears = 16,
+    recentWindow = "S&P / CRSP 2009-2024", recentYears = 16, recentRows = Sp500RecentRows,
+    equityVrRows = WholeShortRungs,
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     bubbleWindow = "CRSP 1926-2026, the century", bubbleYears = 100, vr250Eras = Vector(0, 1, 2),
@@ -10353,7 +10429,8 @@ object MarketSim:
     retVolWindow = "QQQ 1999-2026",
     volStateWindow = "French HiTec 1954-07-01..1999-03-09 + QQQ 1999-03-10..2026-08-20", volStateYears = 72,
     volStateReference = Some(VolStateQqqRecord),
-    recentWindow = "QQQ 1999-2026", recentYears = 27,
+    recentWindow = "QQQ 1999-2026", recentYears = 27, recentRows = RecentRows,
+    equityVrRows = OutsideDeclinesRungs,
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     bubbleWindow = "IXIC+NDX 1971-2026", bubbleYears = 56, vr250Eras = Vector(3),
@@ -10705,6 +10782,13 @@ object MarketSim:
     ("variance ratio 120d", st => st.vr120,                                  1.00,  wgt(3.0, a.vr60Sd)),
     ("variance ratio 250d", st => st.vr250,                                  1.00,  wgt(3.0, a.vr60Sd)),
     ("variance ratio 20d", st => st.vr20,                                    1.00,  wgt(1.0, a.vr60Sd)),
+    // THE ORDINARY TIME (2026-11-06): the three short rungs on the returns outside the window's 20%
+    // declines (`varianceRatioOutsideDeclines`), the S&P's recent-era rows: the era's reversal without
+    // one window's draw of declines, which the century rows grade on the whole record.  The theory
+    // value and the weights are the whole rungs'.
+    ("variance ratio 20d outside declines", st => st.vr20Out,                1.00,  wgt(1.0, a.vr60Sd)),
+    ("variance ratio 60d outside declines", st => st.vr60Out,                1.00,  wgt(1.0, a.vr60Sd)),
+    ("variance ratio 120d outside declines", st => st.vr120Out,              1.00,  wgt(3.0, a.vr60Sd)),
     // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind), vr60 is
     // the signed MEAN's persistence -- this pair is the signed SECOND moment.  Graded as the
     // EXCESS because the raw down/up ratio sits so near 1 that its model/real quotient could
@@ -11840,10 +11924,24 @@ object MarketSim:
     * bust at the window's start (the first three on the opposite side of their null from the longer
     * record, the exit's pair at several times its edge), so that window is reported
     * (`VolStateQqqRecord`), not graded.  The S&P set's five read its equity window. */
-  /** THE RECENT ERA's rows (2026-11-05): read on `Anchors.recentWindow` at `Anchors.recentYears`, the
-    * S&P's on CRSP 2009-2024 (`recordbands-2026-11-05.tsv`), the Nasdaq's on its equity window. */
-  val RecentRows: Vector[String] =
+  /** THE RECENT ERA's rows (2026-11-05), `Anchors.recentRows`: read on `Anchors.recentWindow` at
+    * `Anchors.recentYears`.  The Nasdaq's, on its equity window, which is the recent era already. */
+  lazy val RecentRows: Vector[String] =
     Vector("equity vol %", "variance ratio 20d", "variance ratio 60d", "variance ratio 120d")
+
+  /** THE S&P's recent-era rows, on CRSP 2009-2024 (`recordbands-2026-11-06.tsv`): the vol and the three
+    * short variance-ratio rungs read outside the window's 20% declines (`varianceRatioOutsideDeclines`,
+    * 2026-11-06), so the rows carry the era's reversal and not one window's draw of declines; the whole
+    * rungs are graded on the century. */
+  lazy val Sp500RecentRows: Vector[String] =
+    Vector("equity vol %", "variance ratio 20d outside declines", "variance ratio 60d outside declines",
+           "variance ratio 120d outside declines")
+
+  /** The short variance-ratio rungs a set grades on its EQUITY window rather than its recent one
+    * (`Anchors.equityVrRows`): the S&P's whole rungs, on the century, and the Nasdaq's ordinary-time
+    * rungs, on its equity window. */
+  lazy val WholeShortRungs: Vector[String] = Vector("variance ratio 20d", "variance ratio 60d", "variance ratio 120d")
+  lazy val OutsideDeclinesRungs: Vector[String] = Sp500RecentRows.drop(1)
 
   val VolStateRows: Vector[String] =
     Vector("downside vol excess %", "vol-timing edge pts/yr", "vol-exit timing pts/yr",
@@ -12744,7 +12842,9 @@ object MarketSim:
     "equity vol %", "typical-year vol %", "return per vol", "kurtosis", "clustering lag 1",
     "clustering lag 20", "variance ratio 60d", "downside vol excess %", "up-day share %",
     "leverage corr", "crashes/century", "median depth %", "vol-timing edge pts/yr",
-    "variance ratio 120d", "variance ratio 250d", "variance ratio 20d")
+    "variance ratio 120d", "variance ratio 250d", "variance ratio 20d",
+    "variance ratio 20d outside declines", "variance ratio 60d outside declines",
+    "variance ratio 120d outside declines")
 
   /** `RecordBandRows` less the two rows the volatility state's family prices (`VolStateRows`). */
   val RecordBandPlacementRows: Vector[String] = RecordBandRows.filterNot(VolStateRows.contains)
@@ -13294,7 +13394,7 @@ object MarketSim:
     * `horizonReadings` reads the model at, so a band is compared with histories as long as the
     * one it is the spread of. */
   def recordBandYears(a: Anchors, name: String): Int =
-    if RecentRows.contains(name) then a.recentYears
+    if a.recentRows.contains(name) then a.recentYears
     else if RecordBandClusterRows.contains(name) then a.clusterYears
     else if RateBandRows.contains(name) || RateAfterRows.contains(name) then a.rateYears
     else if Bond10BandRows.contains(name) then a.bond10Years
@@ -13424,6 +13524,7 @@ object MarketSim:
       i += 1
     val eps = episodes(px, 15.0)
     val depths = finiteSorted(eps.map(_.depthPct).toArray)
+    val outside = outsideDeclines(r)
     Vector(
       vol * 100.0,
       yearVolOf(r) * 100.0,
@@ -13433,7 +13534,8 @@ object MarketSim:
       eps.size * 100.0 / years,
       if depths.isEmpty then Double.NaN else depths(depths.length / 2),
       volTimingOf(r),
-      varianceRatio(r, 120), varianceRatio(r, 250), varianceRatio(r, 20))
+      varianceRatio(r, 120), varianceRatio(r, 250), varianceRatio(r, 20),
+      varianceRatio(outside, 20), varianceRatio(outside, VarRatioQ), varianceRatio(outside, 120))
 
   /** The moving-block bootstrap behind a `RecordBand`: `resamples` series of the record's own
     * length, each whole `DaysPerYear`-session blocks of it laid end to end from uniformly drawn
@@ -14972,6 +15074,8 @@ object MarketSim:
   val EquityTargets = Vector(
     "equity vol %", "typical-year vol %", "return per vol", "kurtosis", "clustering lag 1", "clustering lag 20",
     "variance ratio 60d", "variance ratio 120d", "variance ratio 250d", "variance ratio 20d",
+    "variance ratio 20d outside declines", "variance ratio 60d outside declines",
+    "variance ratio 120d outside declines",
     "downside vol excess %",
     "up-day share %", "vol-timing edge pts/yr", "vol-exit timing pts/yr", "vol-exit 3x interaction pts/yr",
     "high-vol fifth return pts/yr",
@@ -15208,7 +15312,10 @@ object MarketSim:
     (a.volStateWindow, a.volStateYears, VolStateRows),
     // The recent era's rows (2026-11-05): the S&P's on CRSP 2009-2024, since on the century's
     // windows these trend -- see `Anchors.recentWindow`.
-    (a.recentWindow, a.recentYears, RecentRows),
+    (a.recentWindow, a.recentYears, a.recentRows),
+    // the short rungs the set grades on its equity window (2026-11-06): the S&P's whole rungs, the
+    // Nasdaq's ordinary-time rungs -- see `Anchors.equityVrRows`
+    (a.equityWindow, a.equityYears, a.equityVrRows),
     (a.clusterWindow, a.clusterYears,
      Vector("clustering lag 1", "clustering lag 20")),
     // Its own group because its own window -- see `Anchors.tailWindow`.  For both shipped sets this
@@ -16163,11 +16270,11 @@ object MarketSim:
         val r = parMap(sims)(p => volStateOf(volStateDaysOfPath(p)))
         (r, jointEdges(r, 5, VolStateReportedAlpha))
       case RowFamily.Recent =>
-        val nd  = PathNeeds.ofRows(RecentRows)
+        val nd  = PathNeeds.ofRows(Sp500RecentRows)
         val per = pathReads(sims, rec.years, nd)
         val r = parMap(sims.indices.toVector) { k =>
           val s = statsOfReads(Vector(sims(k)), Vector(per(k)), rec.years, nd)
-          Vector(s.vol * 100.0, vrOf(s, 20), vrOf(s, 60), vrOf(s, 120))
+          Vector(s.vol * 100.0, s.vr20Out, s.vr60Out, s.vr120Out)
         }
         (r, jointEdges(r, 4, RecentReportedAlpha))
     rec.family.rows.indices.toVector.map { k =>

@@ -16,7 +16,7 @@ class RecordBandSuite extends FunSuite:
   /** the record-band fixture's rows, then the conditional rate rows' (`rateafter-2026-09-30.tsv`,
     * the same columns) without their header */
   private lazy val lines: Vector[String] =
-    fixtureLines("recordbands-2026-11-05.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
+    fixtureLines("recordbands-2026-11-06.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
       fixtureLines("volexit-2026-10-20.tsv").drop(1) ++ fixtureLines("volstate-2026-10-20.tsv").drop(1) ++
       fixtureLines("bond10-2026-10-05.tsv").drop(1) ++ fixtureLines("tips-2026-10-29.tsv").drop(1) ++
       fixtureLines("stockbond-2026-10-18.tsv").drop(1)
@@ -90,13 +90,17 @@ class RecordBandSuite extends FunSuite:
     val sp = MarketSim.SP500Anchors
     assertEquals(sp.recentYears, 16)
     assertNotEquals(sp.recentYears, sp.equityYears)
-    for n <- MarketSim.RecentRows do
+    assertEquals(sp.recentRows, MarketSim.Sp500RecentRows)
+    for n <- MarketSim.Sp500RecentRows do
       assertEquals(MarketSim.recordBandYears(sp, n), sp.recentYears, s"[$n]")
+    for n <- Vector("variance ratio 20d", "variance ratio 60d", "variance ratio 120d") do
+      assertEquals(MarketSim.recordBandYears(sp, n), sp.equityYears, s"[$n] on the century")
     assert(MarketSim.anchorGroups(sp).exists((w, y, ns) =>
-        w == sp.recentWindow && y == sp.recentYears && ns == MarketSim.RecentRows),
+        w == sp.recentWindow && y == sp.recentYears && ns == MarketSim.Sp500RecentRows),
       "the rows are one anchor group on their own window")
     val nq = MarketSim.NasdaqAnchors
     assertEquals((nq.recentWindow, nq.recentYears), (nq.equityWindow, nq.equityYears))
+    assertEquals(nq.recentRows, MarketSim.RecentRows)
   }
 
   test("the S&P reports the century read of the recent rows") {
@@ -108,12 +112,12 @@ class RecordBandSuite extends FunSuite:
     assertEquals(r.years, sp.equityYears)
     assertEquals(r.window, sp.equityWindow)
     assertEquals(r.start, MarketSim.WindowStart.Last)
-    assertEquals(r.records.size, MarketSim.RecentRows.size)
-    assertEquals(MarketSim.RowFamily.Recent.rows, MarketSim.RecentRows)
+    assertEquals(r.records.size, MarketSim.Sp500RecentRows.size)
+    assertEquals(MarketSim.RowFamily.Recent.rows, MarketSim.Sp500RecentRows)
     assert(r.records(0) < sp.vol, "the century's vol sits below the recent era's")
     for (k, q) <- Vector((1, 20), (2, 60), (3, 120)) do
-      val b = sp.recordBands.find(_.name == s"variance ratio ${q}d").getOrElse(fail("a recent-era band"))
-      assert(r.records(k) > b.record, s"variance ratio ${q}d: the century's sits above the recent era's")
+      val b = sp.recordBands.find(_.name == s"variance ratio ${q}d outside declines").getOrElse(fail("a recent-era band"))
+      assert(!r.records(k).isNaN && !b.record.isNaN, s"variance ratio ${q}d outside declines")
     assert(MarketSim.NasdaqAnchors.reported.forall(_.family != MarketSim.RowFamily.Recent),
       "the Nasdaq grades the rows on the recent era already")
   }
@@ -467,6 +471,23 @@ class RecordBandSuite extends FunSuite:
       assert(b.misses(Double.NaN), s"$set ${b.name}: not a number misses")
   }
 
+  test("the ordinary-time ratio drops the declines and nothing else") {
+    // `record_band_tests` pins the same series: a change here is a change there
+    val calm = Array.tabulate(3000)(i => 0.002 * ((i % 7).toDouble - 3.0))
+    assertEquals(MarketSim.outsideDeclines(calm).toVector, calm.toVector)
+    assertEquals(java.lang.Double.doubleToRawLongBits(MarketSim.varianceRatioOutsideDeclines(calm, 60)),
+                 java.lang.Double.doubleToRawLongBits(MarketSim.varianceRatio(calm, 60)))
+    val r = Array.fill(300)(0.001) ++ Array.fill(10)(-0.035) ++ Array.fill(8)(0.05) ++ Array.fill(300)(0.001) ++
+      Array.fill(9)(-0.03)
+    val kept = MarketSim.outsideDeclines(r)
+    assertEquals(kept.toVector, (r.take(300) ++ r.slice(310, 618)).toVector)
+    assertEquals(kept.length, r.length - 19)
+    val read = MarketSim.seriesReadings(r)
+    assertEquals(read(16), MarketSim.varianceRatio(kept, 20))
+    assertEquals(read(17), MarketSim.varianceRatio(kept, MarketSim.VarRatioQ))
+    assertEquals(read(18), MarketSim.varianceRatio(kept, 120))
+  }
+
   test("a pinned series reads the same in both twins") {
     // `record_band_tests` pins these same values; a change here is a change there
     val r = pinnedSeries
@@ -474,15 +495,17 @@ class RecordBandSuite extends FunSuite:
       16.798312848172113, 17.02219625010289, -0.12963037209238956, 11.437126469063255,
       -0.022101390142453572, -0.012940593813227222, 0.7407002578651204, 29.603735914033912,
       50.766666666666666, 0.025507720490428657, 16.8, -15.548714909190897, -2.6641426084559097,
-      0.6469573924082413, 0.46904973503687153, 0.8833716844931516))
+      0.6469573924082413, 0.46904973503687153, 0.8833716844931516,
+      0.8943270631110527, 0.6089983492024865, 0.5064339955719278))
     assertEquals(MarketSim.yearVolPhaseMean(r), 16.862007639884688)
     val reads = MarketSim.recordResamples(r, 40, 7L)
     def med(v: Seq[Double]): Double = { val f = MarketSim.finiteSorted(v.toArray); f(f.length / 2) }
-    assertEquals((0 until 16).toVector.map(k => med(reads.map(_(k)))), Vector(
+    assertEquals((0 until 19).toVector.map(k => med(reads.map(_(k)))), Vector(
       16.78655352771039, 16.877627553056403, -0.16675076546846718, 11.388024993784173,
       -0.02498629581122743, -0.01046514345997916, 0.7513339475330946, 29.880494878185225,
       50.63333333333333, 0.027222579780510212, 16.8, -26.478692229354827, -3.036702249727999,
-      0.6332136135562098, 0.5270138283992784, 0.8999023015224383))
+      0.6332136135562098, 0.5270138283992784, 0.8999023015224383,
+      0.8517750647589285, 0.7837385884301116, 0.7408734305624011))
     assertEquals(MarketSim.recordBandQuantiles(reads.map(_(10))), Vector(
       8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8,
       16.8, 16.8, 16.8, 25.2, 25.2, 33.6, 33.6, 33.6))
