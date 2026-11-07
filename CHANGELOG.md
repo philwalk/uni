@@ -263,19 +263,16 @@ beside their grades, placed among the world's 72-year histories, never graded
 (`RowFamily::Recent`). The Nasdaq carries the three ordinary-time rungs on its own window beside
 its whole ones (0.82, 0.97, 1.19 on QQQ 1999-2026).
 
-**A ledger row's scale carries its measured era spread.** The stationarity table reads every
-ledger row with a windowable derivation on fifteen-year windows of its record stepped five, with
-the whole record block-resampled as a stationary null: a row's width excess is how far the
-windows disagree beyond their own resample bands, in the row's resample sd. The row table's
-scale is widened by it, `scale' = sqrt(scale^2 + excess^2)`, the knee kept in scale units and the
-resolution as it was, so a miss inside the eras' disagreement earns the search nothing and the
-sign term is unchanged. A row widens only by a spread measured on that row: a row the table
-cannot read on windows keeps its resample scale, and an event row (the bond crash, the
-post-trough rows) never widens, its few episodes being its uncertainty already. 105 world-rows
-widen (median factor 1.75; the S&P's short rate 4.4, rate floor share 3.9, stock-bond corr
-monthly 3.3; the Nasdaq's `z beyond 3 sds %` 2.7). Ledger totals are not comparable across the
-change: the installed S&P set reads 36.9 under it against 44.8 before, the Nasdaq's 26.1 against
-33.0, the misses unchanged.
+**The stationarity table.** Every ledger row with a windowable derivation is read on fifteen-year
+windows of its record stepped five, with the whole record block-resampled as a stationary null: a
+row's width excess is how far the windows disagree beyond their own resample bands, in the row's
+resample sd, with its slope per decade, trend share and direction share. The table is a reported
+measurement of the record's eras, beside the ledger: the row table's scales are the record's
+block-resample spread, the record's uncertainty as one draw of its window, which is what the
+energy score's cloud reads. 105 world-rows disagree across their windows beyond their resample
+bands (median factor 1.75; the S&P's short rate 4.4, rate floor share 3.9, stock-bond corr
+monthly 3.3; the Nasdaq's `z beyond 3 sds %` 2.7): where a model's histories vary less across a
+century than the record's eras do, that shows in the set's dispersion against the record's cloud.
 
 **QQQ's window placed from its own start.** The Nasdaq set's `reportedRows` gain the volatility
 state's five rows (`downside vol excess %`, `vol-timing edge pts/yr`, `vol-exit timing pts/yr`,
@@ -287,6 +284,22 @@ the Nasdaq-100's peak, and among every history its window reads rarer than a wor
 there makes it; the record proxy puts no number on that start, so the start is a ladder of the
 model's own quantiles. A conditioned window's label carries its start and the histories the
 placement rests on. Reported, never graded.
+
+**The ledger reads the record as its own resample cloud.** A graded row's distance is the energy
+distance between the histories' readings and the record's cloud, the record with the row table's
+scale (its block-resample spread) as the sd of a normal cloud laid out as 25 quantile points
+(`CLOUD_K`, `cloud_point`, `energy_score` beside `crps`): the mean over the points of E|X - y_k|,
+less E|X - X'| / 2, less the cloud's own E|Y - Y'| / 2, in the row's scale. It is the CRPS when the
+scale is 0, zero when the readings are the cloud itself, and least for a pool as wide as the
+record's uncertainty, where the CRPS of a point record is least for a point mass at it and so
+rewarded a pool tighter than the record can confirm. The knee (the CRPS an indistinguishable
+world earns, the dead zone of 2026-10-27) is retired: the energy score subtracts that world's
+score itself; the row table keeps its knee columns, read and not applied. The search's ledger
+objective and the tools' ledger, set judge and set ledger all score this way, bit for bit, and
+the objective's digest names it (`energy|cloud 25`), so an archive scored under the point CRPS is
+refused. A discrete cloud, so that a real joint resample can take the points' place without a
+change of formula. The release rule's second total, the whitened surprise, is the record's
+cloud through the pool in the same sense (the tools).
 
 ## v0.25.0 — 2026-10-29
 

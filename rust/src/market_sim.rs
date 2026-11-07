@@ -25473,6 +25473,86 @@ pub fn crps(xs: &[f64], y: f64) -> f64 {
     e1 - 0.5 * e2
 }
 
+/// THE RECORD'S CLOUD (ruled 2026-11-07): the record is one draw of a 72-year statistic, with the
+/// resample spread the ledger table carries as its scale; the energy score reads it as a normal
+/// cloud at the record with that sd, laid out as `CLOUD_K` deterministic quantile points,
+/// (k + 1/2) / K, symmetric by construction. A discrete cloud so that a real joint resample can
+/// take the points' place without a change of formula, and so that no error function enters the
+/// arithmetic the twins and the tools must agree on.
+pub const CLOUD_K: usize = 25;
+const CLOUD_HALF: [f64; 12] = [
+    2.0537489106318225,
+    1.554773594596853,
+    1.2815515655446008,
+    1.080319340814956,
+    0.9153650878428141,
+    0.7721932141886849,
+    0.6433454053929168,
+    0.5244005127080407,
+    0.4124631294414046,
+    0.3054807880993974,
+    0.2018934791418509,
+    0.10043372051146975,
+];
+
+/// The cloud's k-th point in units of its sd, k in 0..CLOUD_K, from the lowest.
+#[must_use]
+pub fn cloud_point(k: usize) -> f64 {
+    if k < CLOUD_HALF.len() {
+        -CLOUD_HALF[k]
+    } else if k == CLOUD_HALF.len() {
+        0.0
+    } else {
+        CLOUD_HALF[CLOUD_K - 1 - k]
+    }
+}
+
+/// Half the cloud's own mean absolute difference, E|Y - Y'| / 2 in units of its sd: the sum over
+/// the pairs k < l of |q_k - q_l| over K^2, a plain left fold so every reader of the cloud gets
+/// the same bits (0.554; a normal's is 1 / sqrt(pi), 0.564).
+#[must_use]
+pub fn cloud_spread() -> f64 {
+    let mut sum = 0.0f64;
+    for k in 0..CLOUD_K {
+        for l in (k + 1)..CLOUD_K {
+            sum += (cloud_point(k) - cloud_point(l)).abs();
+        }
+    }
+    sum / (CLOUD_K * CLOUD_K) as f64
+}
+
+/// THE ENERGY SCORE (ruled 2026-11-07): the energy distance between the finite readings and the
+/// record's cloud, the record `y` with its resample sd `s`: the mean over the cloud's points of
+/// E|X - y_k|, less E|X - X'| / 2 (the sorted-sample form `crps` uses), less the cloud's own
+/// E|Y - Y'| / 2. It is the CRPS when `s` is 0, zero when the readings are the cloud itself, and
+/// least for readings spread as the record's own uncertainty is: the CRPS of a point record is
+/// least for a point mass at the record, which rewards a pool tighter than the record can
+/// confirm, and what it then charges an indistinguishable world (0.56 scales, the knee the ledger
+/// carried for it) this subtracts analytically. NaN under two readings or a non-finite record or
+/// sd.
+#[must_use]
+pub fn energy_score(xs: &[f64], y: f64, s: f64) -> f64 {
+    let mut x: Vec<f64> = xs.iter().copied().filter(|v| v.is_finite()).collect();
+    let n = x.len();
+    if n < 2 || !y.is_finite() || !s.is_finite() || s < 0.0 {
+        return f64::NAN;
+    }
+    x.sort_by(f64::total_cmp);
+    let mut e1 = 0.0f64;
+    for k in 0..CLOUD_K {
+        let yk = y + s * cloud_point(k);
+        e1 += x.iter().map(|v| (v - yk).abs()).sum::<f64>() / n as f64;
+    }
+    let e1 = e1 / CLOUD_K as f64;
+    let e2 = 2.0
+        * x.iter()
+            .enumerate()
+            .map(|(i, v)| ((2 * (i + 1)) as f64 - (n + 1) as f64) * v)
+            .sum::<f64>()
+        / (n * n) as f64;
+    e1 - 0.5 * e2 - s * cloud_spread()
+}
+
 /// The record's own resample sd on a banded row, (p95 - p5) / 3.29 of its record band's spread:
 /// the yardstick a row's CRPS is summed in. None where the row carries no record band.
 #[must_use]
@@ -35988,6 +36068,42 @@ mod crps_tests {
         // a NaN reading is left out; under two readings, or a non-finite record, there is no score
         assert!((crps(&[1.0, f64::NAN, 2.0, 3.0], 2.0) - crps(&xs, 2.0)).abs() < 1e-15);
         assert!(crps(&[1.0], 1.0).is_nan() && crps(&xs, f64::NAN).is_nan());
+    }
+
+    /// The energy score against the record's cloud: the CRPS at sd 0; zero when the readings are the
+    /// cloud itself; a point mass at the record scores worse than the cloud does, and worse than a
+    /// sample spread as the cloud is; the cloud symmetric with 25 points and a spread near 1/sqrt(pi).
+    #[test]
+    fn the_energy_score_reads_the_record_as_its_cloud() {
+        let xs = [3.0, 1.0, 2.0];
+        assert!((energy_score(&xs, 2.0, 0.0) - crps(&xs, 2.0)).abs() < 1e-14);
+        assert!((energy_score(&xs, 5.0, 0.0) - crps(&xs, 5.0)).abs() < 1e-14);
+        assert_eq!(CLOUD_K, 25);
+        for k in 0..CLOUD_K {
+            assert!(
+                (cloud_point(k) + cloud_point(CLOUD_K - 1 - k)).abs() < 1e-15,
+                "symmetric"
+            );
+            if k > 0 {
+                assert!(cloud_point(k) > cloud_point(k - 1), "ascending");
+            }
+        }
+        assert!((cloud_spread() - 0.554).abs() < 0.001, "{}", cloud_spread());
+        let cloud: Vec<f64> = (0..CLOUD_K).map(|k| 1.5 + 0.2 * cloud_point(k)).collect();
+        assert!(
+            energy_score(&cloud, 1.5, 0.2).abs() < 1e-14,
+            "the cloud against itself"
+        );
+        let point = [1.5, 1.5];
+        let e_point = energy_score(&point, 1.5, 0.2);
+        assert!(
+            e_point > 0.2 * 0.2 && e_point < 0.2 * 0.3,
+            "a point mass pays {e_point}"
+        );
+        assert!(energy_score(&cloud, 1.5, 0.2) < e_point);
+        assert!(
+            energy_score(&point, 1.5, -0.1).is_nan() && energy_score(&[1.0], 1.0, 0.1).is_nan()
+        );
     }
 
     /// The yardstick of a banded row is its record band's resample sd; an unbanded row has none.

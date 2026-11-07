@@ -385,10 +385,6 @@ impl ObjectiveKind {
 struct Ledger {
     rows: Vec<LedgerSpec>,
     index: HashMap<&'static str, usize>,
-    /// the run's world as the table's column (`LEDGER_WORLDS`), fixed when the table is read,
-    /// so the score's sums (`ledger_row_scores`, `ledger_families`) read its knees without the
-    /// anchors in hand; `None` for a world the table has no column for
-    world: Option<usize>,
 }
 
 struct LedgerSpec {
@@ -443,16 +439,6 @@ impl Ledger {
         ledger_world(anchors).and_then(|i| self.rows[k].knees[i])
     }
 
-    /// Row `k`'s knee in the run's world (`world`) for the score's sums: 0, no dead zone, where
-    /// the table gives none -- which `ledger_vector` refuses by name for a graded row before any
-    /// vector reaches a sum, and the objective digest carries the knees, so a resumed archive's
-    /// vectors were scored under this table.
-    fn knee_at(&self, k: usize) -> f64 {
-        self.world
-            .and_then(|i| self.rows[k].knees[i])
-            .unwrap_or(0.0)
-    }
-
     /// the table's text digest, its sign rule and the score's form, in the reference cache's key
     fn digest(&self) -> String {
         let text: String = self.rows.iter().map(ledger_line).collect();
@@ -496,7 +482,8 @@ fn ledger_line(r: &LedgerSpec) -> String {
 /// zone, and the sign's weight.
 fn ledger_form() -> String {
     format!(
-        "crps|clip {}|soft knee|sign {}",
+        "energy|cloud {}|clip {}|sign {}",
+        ms::CLOUD_K,
         g8(LEDGER_CLIP),
         g8(LEDGER_SIGN_K)
     )
@@ -535,7 +522,7 @@ const LEDGER_ARCHIVE_CAP: usize = 400;
 /// `none`, each scale a positive number or `none`, each resolution a share in [0, 1] or `none`,
 /// each knee a non-negative number or `none`. The run's world (`anchors`) fixes the column the
 /// score's sums read (`Ledger::world`).
-fn read_ledger(path: &str, anchors: Anchors) -> Ledger {
+fn read_ledger(path: &str) -> Ledger {
     if path.is_empty() {
         usage(
             "-objective ledger needs -ledger FILE, the row table the gap ledger tool writes (-units)",
@@ -564,10 +551,7 @@ fn read_ledger(path: &str, anchors: Anchors) -> Ledger {
             want.join("/")
         ));
     }
-    let mut table = Ledger {
-        world: ledger_world(anchors),
-        ..Ledger::default()
-    };
+    let mut table = Ledger::default();
     for l in lines {
         let f: Vec<&str> = l.split('\t').collect();
         if f.len() != head.len() {
@@ -760,7 +744,8 @@ fn ledger_vector(
     Ok(v)
 }
 
-/// A row's CRPS in its record's scale: `ms::crps` of the record under the histories' readings,
+/// A row's distance in its record's scale (ruled 2026-11-07): `ms::energy_score` of the record's
+/// cloud, the record with its scale as the cloud's sd, under the histories' readings,
 /// each first clipped to the record plus or minus `LEDGER_CLIP` scales (a NaN reading is left
 /// out, as `ms::crps` leaves it), divided by the scale. NaN under two readable histories.
 fn ledger_crps(reads: &[f64], record: f64, scale: f64) -> f64 {
@@ -769,36 +754,18 @@ fn ledger_crps(reads: &[f64], record: f64, scale: f64) -> f64 {
         .iter()
         .map(|&x| if x.is_nan() { x } else { x.clamp(lo, hi) })
         .collect();
-    ms::crps(&clipped, record) / scale
+    ms::energy_score(&clipped, record, scale) / scale
 }
 
-/// THE DEAD ZONE (ruled 2026-10-27): a row's CRPS through a knee at `k`, the CRPS an
-/// indistinguishable world earns on the row (`LedgerSpec::knees`) -- quadratic inside it,
-/// c^2 / 2k, linear past it, c - k / 2, the two meeting at the knee with one slope; no knee (0
-/// or less) is the CRPS itself.
-fn soft(c: f64, k: f64) -> f64 {
-    if k <= 0.0 {
-        c
-    } else if c <= k {
-        c * c / (2.0 * k)
-    } else {
-        c - k / 2.0
-    }
-}
-
-/// Each graded row's ledger score, its weight times (the crps through its knee, `soft`, +
-/// `LEDGER_SIGN_K` x sign share), in table order over the rows the read graded.
+/// Each graded row's ledger score, its weight times (the energy distance + `LEDGER_SIGN_K` x sign
+/// share), in table order over the rows the read graded. The dead zone the point CRPS needed (the
+/// knee, ruled 2026-10-27, the CRPS an indistinguishable world earns) is retired: the energy score
+/// subtracts that world's score itself, and the table's knee columns are read but not applied.
 fn ledger_row_scores(v: &[[f64; 3]], table: &Ledger) -> Vec<(&'static str, f64)> {
     v.iter()
         .zip(&table.rows)
-        .enumerate()
-        .filter(|(_, (x, _))| x[0].is_finite())
-        .map(|(k, (x, r))| {
-            (
-                r.name,
-                r.weight * (soft(x[0], table.knee_at(k)) + LEDGER_SIGN_K * x[1]),
-            )
-        })
+        .filter(|(x, _)| x[0].is_finite())
+        .map(|(x, r)| (r.name, r.weight * (x[0] + LEDGER_SIGN_K * x[1])))
         .collect()
 }
 
@@ -821,12 +788,12 @@ fn ledger_sum(v: &[[f64; 3]], table: &Ledger) -> f64 {
 }
 
 /// THE EIGHT FAMILY AGGREGATES the Pareto reserve is pruned on: for each units class in
-/// `LEDGER_UNITS` order, the sum of its rows' scaled CRPS through their knees (`soft`), then of
+/// `LEDGER_UNITS` order, the sum of its rows' scaled energy distances, then of
 /// its rows' sign shares x `LEDGER_SIGN_K`, over the rows the read graded, every row at its full
 /// weight of one.
 fn ledger_families(v: &[[f64; 3]], table: &Ledger) -> Vec<f64> {
     let mut out = vec![0.0; 2 * LEDGER_UNITS.len()];
-    for (i, (x, r)) in v.iter().zip(&table.rows).enumerate() {
+    for (x, r) in v.iter().zip(&table.rows) {
         if !x[0].is_finite() {
             continue;
         }
@@ -834,7 +801,7 @@ fn ledger_families(v: &[[f64; 3]], table: &Ledger) -> Vec<f64> {
             .iter()
             .position(|u| *u == r.units)
             .unwrap_or(LEDGER_UNITS.len() - 1);
-        out[2 * k] += soft(x[0], table.knee_at(i));
+        out[2 * k] += x[0];
         out[2 * k + 1] += LEDGER_SIGN_K * x[1];
     }
     out
@@ -1250,7 +1217,7 @@ fn surrogate_fit(
         })
         .collect();
     let contrib = |v: &Vec<[f64; 3]>, k: usize| -> f64 {
-        table.rows[k].weight * (soft(v[k][0], table.knee_at(k)) + LEDGER_SIGN_K * v[k][1])
+        table.rows[k].weight * (v[k][0] + LEDGER_SIGN_K * v[k][1])
     };
     let pairs: Vec<Vec<(f64, f64)>> = cols
         .iter()
@@ -4186,7 +4153,7 @@ fn main() {
     let kind = ObjectiveKind::parse(&c.objective);
     let ledger = std::sync::Arc::new(
         if kind == ObjectiveKind::Ledger && !(c.prune || !c.export_to.is_empty()) {
-            read_ledger(&c.ledger, anchors)
+            read_ledger(&c.ledger)
         } else {
             Ledger::default()
         },
@@ -5957,10 +5924,7 @@ mod ledger_tests {
     /// A table for the nasdaq world, every row at scale 1, resolution 1 and knee 0: the score's
     /// old form, before the vote and the knee.
     fn table_of(rows: &[(&'static str, &'static str, f64, Option<f64>)]) -> Ledger {
-        let mut t = Ledger {
-            world: ledger_world(nasdaq()),
-            ..Ledger::default()
-        };
+        let mut t = Ledger::default();
         for (name, units, weight, null) in rows {
             t.index.insert(name, t.rows.len());
             t.rows.push(LedgerSpec {
@@ -6053,9 +6017,11 @@ mod ledger_tests {
             hist_of("a", &[1.0, 1.1], 0.92),
             hist_of("b", &[-90.0, -80.0, -70.0], -80.0),
         ];
-        // a: E|X - y| 0.13, E|X - X'| 0.05, so 0.105 in the nasdaq scale 0.04;
-        // b: 20/3 - 40/9 = 20/9 in the scale 2
-        let want = 2.0 * (2.625 + 3.0 * 0.2) + 3.0 * (20.0 / 9.0 / 2.0);
+        // a: the energy distance of the record's cloud (sd the nasdaq scale 0.04) under {1.0, 1.1},
+        // in that scale; b: the same under {-90, -80, -70} in the scale 2
+        let da = ms::energy_score(&[1.0, 1.1], 0.92, 0.04) / 0.04;
+        let db = ms::energy_score(&[-90.0, -80.0, -70.0], -80.0, 2.0) / 2.0;
+        let want = 2.0 * (da + 3.0 * 0.2) + 3.0 * db;
         let got = score_of(&rows, &hist, &table).expect("every row named");
         assert!((got - want).abs() < 1e-9, "{got} against {want}");
         let missing = score_of(&[("tail hedge", 50, 0.0, 0.0, None)], &hist, &table);
@@ -6077,11 +6043,11 @@ mod ledger_tests {
             ))
         );
         // the vector in table order, NaN on a row the read did not grade, and the families:
-        // loss crps 10/9 / signs 0; vol crps 2.625 / signs 0.6
+        // loss distance db / signs 0; vol distance da / signs 0.6
         let v = ledger_vector(&rows, &hist, nasdaq(), &table).expect("named");
         assert!(v[2][0].is_nan() && v[1][1] == 0.0 && v[0][2] == 1.02);
         let fam = ledger_families(&v, &table);
-        let want_fam = [0.0, 0.0, 10.0 / 9.0, 0.0, 2.625, 0.6, 0.0, 0.0];
+        let want_fam = [0.0, 0.0, db, 0.0, da, 0.6, 0.0, 0.0];
         assert!(
             fam.iter().zip(want_fam).all(|(a, b)| (a - b).abs() < 1e-9),
             "{fam:?}"
@@ -6097,7 +6063,7 @@ mod ledger_tests {
         let row: Vec<LedgerRow> = vec![("c", 50, 0.15, 0.15, None)];
         let hist = [hist_of("c", &[f64::NEG_INFINITY, 0.1, 0.2, f64::NAN], 0.15)];
         let v = ledger_vector(&row, &hist, nasdaq(), &table).expect("named");
-        let want = ms::crps(&[0.15 - 50.0, 0.1, 0.2], 0.15);
+        let want = ms::energy_score(&[0.15 - 50.0, 0.1, 0.2], 0.15, 1.0) / 1.0;
         assert!(want.is_finite() && want > 5.0, "{want}");
         assert_eq!(v[0][0].to_bits(), want.to_bits());
         let thin = [hist_of("c", &[0.1, f64::NAN], 0.15)];
@@ -6182,21 +6148,29 @@ mod ledger_tests {
     #[test]
     fn the_records_vote_scales_the_sign_share() {
         let mut table = table_of(&[("x", "vol", 2.0, Some(0.0))]);
-        // histories at the record: a CRPS of 0, so the score is the sign term alone; the band
-        // holds the null, which no longer exempts the row
+        // histories at the record: the distance is a point mass's against the record's cloud (the
+        // table's scale 1), the same under every vote, so the sign term is read off against it;
+        // the band holds the null, which no longer exempts the row
+        let d = ms::energy_score(&[0.5, 0.5], 0.5, 1.0);
         let at = |table: &Ledger| {
             let hist = [hist_of("x", &[0.5, 0.5], 0.5)];
             score_of(&[("x", 60, -0.5, 0.5, Some((-2.96, 5.13)))], &hist, table)
         };
-        assert_eq!(at(&table), Ok(2.0 * (3.0 * 0.5)), "the vote whole");
+        assert!(
+            (at(&table).expect("named") - 2.0 * (d + 3.0 * 0.5)).abs() < 1e-12,
+            "the vote whole"
+        );
         table.rows[0].resolutions = [Some(1.0), Some(0.5)];
         let half: f64 = g8(0.5 * 0.5).parse().expect("eight digits");
         assert!(
-            (at(&table).expect("named") - 2.0 * (3.0 * half)).abs() < 1e-12,
+            (at(&table).expect("named") - 2.0 * (d + 3.0 * half)).abs() < 1e-12,
             "the vote at a half"
         );
         table.rows[0].resolutions = [Some(1.0), Some(0.0)];
-        assert_eq!(at(&table), Ok(0.0), "no vote, no sign");
+        assert!(
+            (at(&table).expect("named") - 2.0 * d).abs() < 1e-12,
+            "no vote, no sign"
+        );
         table.rows[0].resolutions = [Some(1.0), None];
         assert_eq!(
             at(&table),
@@ -6208,27 +6182,21 @@ mod ledger_tests {
         let mut level = table_of(&[("b", "loss", 3.0, None)]);
         level.rows[0].resolutions = [None, None];
         let hist = [hist_of("b", &[-80.0, -80.0], -80.0)];
-        assert_eq!(
-            score_of(&[("b", 10, -70.0, -80.0, None)], &hist, &level),
-            Ok(0.0),
+        let dl = ms::energy_score(&[-80.0, -80.0], -80.0, 1.0);
+        assert!(
+            (score_of(&[("b", 10, -70.0, -80.0, None)], &hist, &level).expect("named") - 3.0 * dl)
+                .abs()
+                < 1e-12,
             "a level has no null to resolve"
         );
     }
 
-    /// THE KNEE (ruled 2026-10-27): a row's CRPS passes through a dead zone at the CRPS an
-    /// indistinguishable world earns, quadratic inside, linear beyond, in the row scores and the
-    /// family aggregates alike, the vector's crps staying raw; a graded row without a knee in
-    /// this world is refused by name.
+    /// THE ROW SCORE (ruled 2026-11-07): weight x (the energy distance + 3 x the sign share), no
+    /// dead zone, in the row scores and the family aggregates alike, the vector's distance staying
+    /// raw; the table's knees are read, not applied, and a graded row without a knee in this world
+    /// is still refused by name (the table's contract).
     #[test]
-    fn the_knee_is_a_dead_zone_on_the_crps() {
-        for (c, k, want) in [
-            (0.23, 0.5, 0.0529),
-            (0.5, 0.5, 0.25),
-            (1.0, 0.5, 0.75),
-            (0.3, 0.0, 0.3),
-        ] {
-            assert!((soft(c, k) - want).abs() < 1e-12, "soft({c}, {k}) = {want}");
-        }
+    fn the_row_score_is_the_distance_plus_the_sign_term() {
         let mut t = table_of(&[("a", "return", 2.0, Some(0.0)), ("b", "loss", 1.0, None)]);
         t.rows[0].knees = [Some(0.1), Some(0.5)];
         t.rows[1].knees = [Some(0.1), Some(0.5)];
@@ -6236,14 +6204,14 @@ mod ledger_tests {
         let per = ledger_row_scores(&v, &t);
         assert_eq!(per.len(), 2);
         assert!(
-            (per[0].1 - 2.0 * (0.0529 + 3.0 * 0.2)).abs() < 1e-12,
+            (per[0].1 - 2.0 * (0.23 + 3.0 * 0.2)).abs() < 1e-12,
             "{per:?}"
         );
-        assert!((per[1].1 - 0.75).abs() < 1e-12, "{per:?}");
+        assert!((per[1].1 - 1.0).abs() < 1e-12, "{per:?}");
         let sum = ledger_sum(&v, &t);
         assert!((sum - (per[0].1 + per[1].1)).abs() < 1e-12);
         let fam = ledger_families(&v, &t);
-        let want_fam = [0.0529, 0.6, 0.75, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let want_fam = [0.23, 0.6, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         assert!(
             fam.iter().zip(want_fam).all(|(a, b)| (a - b).abs() < 1e-12),
             "{fam:?}"
@@ -6372,7 +6340,7 @@ mod ledger_tests {
             "row\tunits\tweight\tnull\tscale sp500\tscale nasdaq\tresolution sp500\tresolution nasdaq\tknee sp500\tknee nasdaq\nreturn per vol\treturn\t4\t0\t0.12\t0.27\t0.9\t0.4\t1.1\t1.3\nvariance ratio 20d\tshape\t1\t1\t0.04\t0.05\tnone\t1\t1.2\tnone\nworst crash %\tloss\t3\tnone\tnone\t9.5\tnone\tnone\tnone\t1.4\n",
         )
         .expect("write");
-        let table = read_ledger(f.to_str().expect("path"), nasdaq());
+        let table = read_ledger(f.to_str().expect("path"));
         std::fs::remove_dir_all(&dir).ok();
         table
     }
@@ -6413,9 +6381,6 @@ mod ledger_tests {
         assert_eq!(table.knee(1, ms::anchors_named("sp500")), Some(1.2));
         assert_eq!(table.knee(1, nasdaq()), None);
         assert_eq!(table.knee(2, nasdaq()), Some(1.4));
-        assert_eq!(table.world, ledger_world(nasdaq()));
-        assert_eq!(table.knee_at(0), 1.3, "the run's world's knee");
-        assert_eq!(table.knee_at(1), 0.0, "none is no dead zone");
     }
 
     /// EVERY ROW AT FULL WEIGHT (ruled 2026-10-22): the family aggregates sum each row's CRPS and
