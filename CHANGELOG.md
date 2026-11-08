@@ -1,5 +1,15 @@
 ## v0.25.1 — 2026-10-30
 
+**The inflation pulse's other side.** `-spikeneg` is the share of the spike channel's arrivals whose pulse is
+negative, the sign a draw on the spike's own stream only while the share is on (0 is bit-identical). The fiat era's
+deflations are energy collapses, not regimes: the price level falls one to two percent over a few months (2008-09
+after a 5.5% peak, 2014-15) and the year-over-year rate sits below zero for five to twelve months. A negative pulse
+does that, the policy rate follows it down and the breakeven's estimate swings below with it; the deflation regime
+(`-deflprob`, a target below zero held for years) reads 23 months against the record's longest 8. Searched 0-1,
+written in a world's block only when on. The S&P recipe keeps the dial at 0: a re-solve with it reaches the three
+deflation rows and the rate floor share (ledger 31.7 against 40.0) but fails the release rule on the vol coupling
+rows, the open item.
+
 **The fiat era's rows.** Two graded rows spanned a monetary regime break and graded the model's one regime
 against the other. `bond stress share %` is read on the DGS20 par bond since 1983 (0.04%; 1.81% in 1962-1982, the
 reserve-targeting years), with `bond stress spells per century` and `bond stress spell max sessions` beside it, and

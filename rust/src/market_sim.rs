@@ -715,7 +715,7 @@ fn refused(bad: bool, why: &str) -> Option<String> {
 /// every range `calibrate` sweeps. A `contains` test is false for NaN, so a NaN literal is
 /// refused here rather than reaching the model. Value-level checks only: a check on which flags
 /// were given stays in the parser.
-const WORLD_DOMAIN: [fn(&World) -> Option<String>; 163] = [
+const WORLD_DOMAIN: [fn(&World) -> Option<String>; 164] = [
     |w| share_refusal("-trendshare", w.trend_share),
     |w| share_refusal("-leverage", w.leverage),
     |w| share_refusal("-downshock", w.down_shock),
@@ -737,6 +737,7 @@ const WORLD_DOMAIN: [fn(&World) -> Option<String>; 163] = [
     |w| non_neg_refusal("-deflsize", w.defl_size),
     |w| non_neg_refusal("-spikerate", w.spike_rate),
     |w| non_neg_refusal("-spikesize", w.spike_size),
+    |w| share_refusal("-spikeneg", w.spike_neg),
     |w| non_neg_refusal("-termvol", w.term_vol),
     |w| non_neg_refusal("-termpress", w.term_press),
     |w| non_neg_refusal("-brkvol", w.brk_vol),
@@ -1403,6 +1404,7 @@ pub fn default_world() -> World {
         defl_size: 0.0,
         spike_rate: 0.0,
         spike_size: 0.0,
+        spike_neg: 0.0,
         term_vol: 0.0,
         term_press: 0.0,
         brk_vol: 0.0,
@@ -1595,6 +1597,7 @@ fn v0_19_2() -> World {
         defl_size: 0.0,
         spike_rate: 0.0,
         spike_size: 0.0,
+        spike_neg: 0.0,
         term_vol: 0.0,
         term_press: 0.0,
         brk_vol: 0.0,
@@ -1748,6 +1751,7 @@ fn v0_24_1() -> World {
         defl_size: 0.0,
         spike_rate: 0.0,
         spike_size: 0.0,
+        spike_neg: 0.0,
         term_vol: 0.0,
         term_press: 0.0,
         brk_vol: 0.0,
@@ -2404,6 +2408,7 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
         defl_size: 0.0,
         spike_rate: 0.0,
         spike_size: 0.0,
+        spike_neg: 0.0,
         term_vol: 0.0,
         term_press: 0.0,
         brk_vol: 0.0,
@@ -3276,6 +3281,7 @@ fn v0_23_0() -> World {
         defl_size: 0.0,
         spike_rate: 0.0,
         spike_size: 0.0,
+        spike_neg: 0.0,
         term_vol: 0.0,
         term_press: 0.0,
         brk_vol: 0.0,
@@ -3449,6 +3455,7 @@ fn v0_22_1() -> World {
         defl_size: 0.0,
         spike_rate: 0.0,
         spike_size: 0.0,
+        spike_neg: 0.0,
         term_vol: 0.0,
         term_press: 0.0,
         brk_vol: 0.0,
@@ -3624,6 +3631,7 @@ fn v0_22_0() -> World {
         defl_size: 0.0,
         spike_rate: 0.0,
         spike_size: 0.0,
+        spike_neg: 0.0,
         term_vol: 0.0,
         term_press: 0.0,
         brk_vol: 0.0,
@@ -3799,6 +3807,7 @@ fn v0_21_0() -> World {
         defl_size: 0.0,
         spike_rate: 0.0,
         spike_size: 0.0,
+        spike_neg: 0.0,
         term_vol: 0.0,
         term_press: 0.0,
         brk_vol: 0.0,
@@ -3974,6 +3983,7 @@ fn v0_20_0() -> World {
         defl_size: 0.0,
         spike_rate: 0.0,
         spike_size: 0.0,
+        spike_neg: 0.0,
         term_vol: 0.0,
         term_press: 0.0,
         brk_vol: 0.0,
@@ -4812,6 +4822,14 @@ pub struct World {
     pub spike_rate: f64,
     /// the spikes' size, in pressure units (0.04 = four points of inflation at the peak)
     pub spike_size: f64,
+    /// THE PULSES' OTHER SIDE: the share of the spike channel's arrivals whose pulse is negative,
+    /// the sign a draw on the spike's stream only while the share is on (0 = every pulse up,
+    /// bit-identical). The fiat era's deflations are energy collapses, not regimes: the level
+    /// falls one to two percent over a few months (2008-09 after a 5.5% peak, 2014-15) and the
+    /// year-over-year rate sits below zero for five to twelve months before the fall leaves
+    /// the window. A negative pulse does that; the rate follows it down, so the floor time it
+    /// brings is the energy collapse's, and the breakeven's estimate swings below with it
+    pub spike_neg: f64,
     /// THE TERM STATE (item 60): the sd per sqrt-year, decimal, of the innovation of the premium
     /// the ten-year legs' yield carries over the expected average short rate. At 0 the legs are
     /// marked to the overnight rate, as every release before 0.25.0 marked them (bit-identical).
@@ -9083,7 +9101,13 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         if w.spike_rate > 0.0 {
             spike -= SPIKE_DECAY * spike * dt;
             if spike_rng.next_f64() < w.spike_rate * dt {
-                spike += spike_rng.randn().abs() * w.spike_size;
+                let pulse = spike_rng.randn().abs() * w.spike_size;
+                // the pulse's side (`spike_neg`): a draw only while the share is on
+                spike += if w.spike_neg > 0.0 && spike_rng.next_f64() < w.spike_neg {
+                    -pulse
+                } else {
+                    pulse
+                };
             }
         }
         press = infl_press + spike;
@@ -27046,7 +27070,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "tips", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 107] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 108] = [
     "depth",
     "trendShare",
     "drift",
@@ -27133,6 +27157,7 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 107] = [
     "deflSize",
     "spikeRate",
     "spikeSize",
+    "spikeNeg",
     "termVol",
     "brkVol",
     "brkNominal",
@@ -27791,6 +27816,14 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             0.08,
             |w, x| w.spike_size = x,
             |w| w.spike_size,
+        ),
+        // the pulses' other side: the share of arrivals that are falls of the price level
+        (
+            "spikeNeg",
+            0.0,
+            1.0,
+            |w, x| w.spike_neg = x,
+            |w| w.spike_neg,
         ),
         // the term state's innovation (item 60): 0.0069 is the record's 0.22 pp a month
         ("termVol", 0.0, 0.02, |w, x| w.term_vol = x, |w| w.term_vol),
@@ -31808,6 +31841,7 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         (&["jumpResp"][..], "declineVol", w.decline_vol, 0.0),
         (&["expAnchor"][..], "yieldAnchor", w.yield_anchor, 0.0),
         (&["cycleYears"][..], "cycleVol", w.cycle_vol, 0.0),
+        (&["spikeRate"][..], "spikeNeg", w.spike_neg, 0.0),
         (&["termVol"][..], "termPress", w.term_press, 0.0),
         (&["declineVol", "jumpResp"][..], "declineVolHalf", half, 5.0),
         (
@@ -32926,6 +32960,7 @@ pub const OPTIONAL_WORLD_KEYS: &[(&str, &str)] = &[
     ("yieldAnchor", "0"),
     ("termPress", "0"),
     ("cycleVol", "0"),
+    ("spikeNeg", "0"),
 ];
 
 /// `-worldset F -worldindex K` runs member K of an exported archive. Pre-scanned as `-atrelease`
@@ -33742,6 +33777,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut defl_size = dw.defl_size;
     let mut spike_rate = dw.spike_rate;
     let mut spike_size = dw.spike_size;
+    let mut spike_neg = dw.spike_neg;
     let mut term_vol = dw.term_vol;
     let mut term_press = dw.term_press;
     let mut brk_vol = dw.brk_vol;
@@ -34007,6 +34043,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-deflsize" => defl_size = req_f64(&mut it, "-deflsize"),
             "-spikerate" => spike_rate = req_f64(&mut it, "-spikerate"),
             "-spikesize" => spike_size = req_f64(&mut it, "-spikesize"),
+            "-spikeneg" => spike_neg = req_f64(&mut it, "-spikeneg"),
             "-termvol" => term_vol = req_f64(&mut it, "-termvol"),
             "-termpress" => term_press = req_f64(&mut it, "-termpress"),
             "-brkvol" => brk_vol = req_f64(&mut it, "-brkvol"),
@@ -34290,6 +34327,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         defl_size,
         spike_rate,
         spike_size,
+        spike_neg,
         term_vol,
         term_press,
         brk_vol,
@@ -40444,6 +40482,16 @@ mod real_side_tests {
             "spell starts a century {} against {}",
             spiked.1[1],
             base.1[1]
+        );
+        let mut n = s;
+        n.spike_neg = 0.5;
+        let two_sided = cpi_rows_of_path(&simulate(&n, 100, DEFAULT_SEED).cpi);
+        assert_eq!(spiked.1[0], 0.0, "no deflation from pulses up");
+        assert!(
+            two_sided.1[0] > 0.5 && two_sided.1[2] > 0.0,
+            "deflation share {} spells {}",
+            two_sided.1[0],
+            two_sided.1[2]
         );
         let mut z = w;
         z.defl_prob = 0.0;
