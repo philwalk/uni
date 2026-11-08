@@ -10931,6 +10931,9 @@ pub struct WorldStats {
     /// after each 20% decline's trough and the share of those sessions under `RATE_FLOOR`
     pub post_rate: f64,
     pub post_floor: f64,
+    /// median per-path `rate_stay_readings`: the rate floor stays a century and the longest in
+    /// years (`RATE_STAY_ROWS`)
+    pub rate_stays: [f64; 2],
     /// median per-path corr(r_t, r^2_{t+1}) — the leverage effect at daily lag. The sharper
     /// signed-half block regression (Patton-Sheppard) was measured and CANNOT anchor on
     /// close-only data: era-split with the sign flipping (asymmetry-2026-08-31.tsv), the
@@ -13348,6 +13351,91 @@ pub fn rate_after_of_returns(r: &[f64], rate: &[f64]) -> [f64; 2] {
     rate_after_readings(&px, rate)
 }
 
+/// THE RATE FLOOR STAYS (`RATE_STAY_ROWS`; accepted 2026-11-08): the floor's SHAPE, which the two
+/// floor shares cannot read. A stay is `RATE_STAY_SESSIONS` or more consecutive sessions under
+/// `RATE_FLOOR`; the rows are how often one starts per hundred years and the longest one in years
+/// (0 where none). The record's floor time is two stays, 2008-12..2016-12 and 2020-03..2022-05
+/// (every other crossing of 0.5% on DFF is a flicker of one to 23 days, all before 1963); a
+/// world whose floor time is the same share spent in ten short dips a century reads the shares
+/// and misses the stays. Read on the rate alone over the set's rate window, the record the daily
+/// effective federal funds rate on the equity's session dates (`record_bands -ratestays`).
+pub const RATE_STAY_ROWS: [&str; 2] = ["rate floor stays per century", "rate floor stay max years"];
+/// three months of sessions: a stay, where a dip is shorter
+pub const RATE_STAY_SESSIONS: usize = DAYS_PER_YEAR / 4;
+
+/// `RATE_STAY_ROWS` on one rate path (decimal): the stays that start per hundred years of the
+/// path and the longest in years, 0 where none.
+#[must_use]
+pub fn rate_stay_readings(rate: &[f64]) -> [f64; 2] {
+    let stays = rate_stays(rate);
+    let years = rate.len() as f64 / DAYS_PER_YEAR as f64;
+    [
+        stays.len() as f64 / years * 100.0,
+        stays.iter().copied().max().unwrap_or(0) as f64 / DAYS_PER_YEAR as f64,
+    ]
+}
+
+/// The stays on a rate path: the lengths in sessions of its maximal runs under `RATE_FLOOR` of
+/// `RATE_STAY_SESSIONS` or more.
+fn rate_stays(rate: &[f64]) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut run = 0usize;
+    for x in rate.iter().chain(std::iter::once(&f64::INFINITY)) {
+        if *x < RATE_FLOOR {
+            run += 1;
+        } else {
+            if run >= RATE_STAY_SESSIONS {
+                out.push(run);
+            }
+            run = 0;
+        }
+    }
+    out
+}
+
+/// THE STAYS' OWN RESAMPLE behind `RATE_STAY_ROWS`' record band: a stay of eight years fits in
+/// no block of sessions the record's other rows resample in, so the cloud is drawn from the stays
+/// themselves -- in each resample the count is a Poisson draw at the record's rate over the
+/// record's length and every stay's length a draw from the record's stays, all from one
+/// `NumPyRng(seed)`, resample-major; a record without a stay resamples to zeros.
+#[must_use]
+pub fn rate_stay_resamples(rate: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 2]> {
+    let stays = rate_stays(rate);
+    let years = rate.len() as f64 / DAYS_PER_YEAR as f64;
+    let mut rng = NumPyRng::new(seed);
+    (0..resamples)
+        .map(|_| {
+            if stays.is_empty() {
+                return [0.0, 0.0];
+            }
+            let k = poisson_draw(&mut rng, stays.len() as f64);
+            let longest = (0..k)
+                .map(|_| stays[rng.next_bounded_u32(stays.len() as u32) as usize])
+                .max()
+                .unwrap_or(0);
+            [
+                k as f64 / years * 100.0,
+                longest as f64 / DAYS_PER_YEAR as f64,
+            ]
+        })
+        .collect()
+}
+
+/// A Poisson draw at `mean` (Knuth's product of uniforms; the means here are a record's few
+/// stays), the same on both twins: `exp_det` and the generator's own uniforms.
+fn poisson_draw(rng: &mut NumPyRng, mean: f64) -> usize {
+    let limit = exp_det(-mean);
+    let mut k = 0usize;
+    let mut p = 1.0;
+    loop {
+        p *= rng.next_f64();
+        if p <= limit {
+            return k;
+        }
+        k += 1;
+    }
+}
+
 /// `record_resamples` on the paired record: the same one-year blocks and stream, the returns and
 /// the rates cut from the same starts so a resample keeps each decline beside its rates, read by
 /// `rate_after_of_returns`.
@@ -13834,11 +13922,12 @@ pub const OUTSIDE_DECLINES_RUNGS: [&str; 3] = [
 ];
 
 pub fn record_band_years(a: Anchors, name: &str) -> usize {
-    let groups: [(&[&str], usize); 20] = [
+    let groups: [(&[&str], usize); 21] = [
         (a.recent_rows, a.recent_years),
         (&RECORD_BAND_CLUSTER_ROWS, a.cluster_years),
         (&RATE_BAND_ROWS, a.rate_years),
         (&RATE_AFTER_ROWS, a.rate_years),
+        (&RATE_STAY_ROWS, a.rate_years),
         (&BOND10_BAND_ROWS, a.bond10_years),
         (&BOND_BAND_ROWS, a.bond_years),
         (&BOND_STRESS_ROWS, a.spiral_years),
@@ -18038,6 +18127,8 @@ struct PathRead {
     rate_floor: f64,
     post_rate: f64,
     post_floor: f64,
+    /// the rate floor stays (`rate_stay_readings`); NaN when not asked for
+    rate_stays: [f64; 2],
     /// the price level's rows (`cpi_readings`, `cpi_era_readings`) on the path's CPI read by
     /// 21-session months; NaN when not asked for
     cpi_rows: [f64; 4],
@@ -18208,7 +18299,7 @@ pub struct PathNeeds {
     pub equity: bool,
     /// the clustering lags, read at `cluster_years`
     pub cluster: bool,
-    /// the short rate's level and floor share
+    /// the short rate's level, floor share and floor stays
     pub rate: bool,
     /// the rate after a trough
     pub rate_after: bool,
@@ -18277,7 +18368,7 @@ impl PathNeeds {
         for &n in rows {
             if RECORD_BAND_CLUSTER_ROWS.contains(&n) {
                 nd.cluster = true;
-            } else if RATE_BAND_ROWS.contains(&n) {
+            } else if RATE_BAND_ROWS.contains(&n) || RATE_STAY_ROWS.contains(&n) {
                 nd.rate = true;
             } else if RATE_AFTER_ROWS.contains(&n) {
                 nd.rate_after = true;
@@ -18580,6 +18671,11 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
         rate_floor: rate[1],
         post_rate: post[0],
         post_floor: post[1],
+        rate_stays: if nd.rate || rest {
+            rate_stay_readings(&s.rate)
+        } else {
+            [f64::NAN; 2]
+        },
         cpi_rows: if nd.cpi {
             cpi_rows_of_path(&s.cpi).0
         } else {
@@ -18916,6 +19012,7 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
         rate_floor: med_by(|p| p.rate_floor),
         post_rate: med_by(|p| p.post_rate),
         post_floor: med_by(|p| p.post_floor),
+        rate_stays: [med_by(|p| p.rate_stays[0]), med_by(|p| p.rate_stays[1])],
         lev_corr: med_by(|p| p.lev_corr),
         tail_hedge: med_by(|p| p.tail_hedge),
         duration: sims[0].duration,
@@ -20567,10 +20664,10 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
     },
 ];
 
-/// The S&P set's `RecordBand`s: `recordbands-2026-11-07.tsv`, CRSP total return 1954-2026, for
+/// The S&P set's `RecordBand`s: `recordbands-2026-11-08.tsv`, CRSP total return 1954-2026, for
 /// the two clustering rows the century and for the recent era's rows (`RECENT_ROWS`) 2009-2024 --
 /// each row on the window the set reads it over.
-const RECORD_BANDS_SP500: [RecordBand; 59] = [
+const RECORD_BANDS_SP500: [RecordBand; 61] = [
     RecordBand {
         name: "equity vol %",
         record: 18.501241,
@@ -21221,10 +21318,32 @@ const RECORD_BANDS_SP500: [RecordBand; 59] = [
         joint_c: 0.445925,
         joint: (0.000000, 7.000000),
     },
+    RecordBand {
+        name: "rate floor stays per century",
+        record: 2.781457,
+        q: [
+            0.000000, 0.000000, 0.000000, 0.000000, 1.390728, 1.390728, 1.390728, 1.390728,
+            1.390728, 1.390728, 2.781457, 2.781457, 2.781457, 2.781457, 2.781457, 4.172185,
+            4.172185, 4.172185, 4.172185, 5.562914, 6.953642, 8.344371, 12.516556,
+        ],
+        joint_c: 0.488875,
+        joint: (0.000000, 8.344371),
+    },
+    RecordBand {
+        name: "rate floor stay max years",
+        record: 8.031746,
+        q: [
+            0.000000, 0.000000, 0.000000, 0.000000, 2.142857, 2.142857, 2.142857, 2.142857,
+            2.142857, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746,
+            8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746,
+        ],
+        joint_c: 0.488875,
+        joint: (0.000000, 8.031746),
+    },
 ];
 
-/// The Nasdaq set's `RecordBand`s: `recordbands-2026-11-07.tsv`, QQQ 1999-03-11..2026-08-20.
-const RECORD_BANDS_NASDAQ: [RecordBand; 59] = [
+/// The Nasdaq set's `RecordBand`s: `recordbands-2026-11-08.tsv`, QQQ 1999-03-11..2026-08-20.
+const RECORD_BANDS_NASDAQ: [RecordBand; 61] = [
     RecordBand {
         name: "equity vol %",
         record: 26.901577,
@@ -21874,6 +21993,28 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 59] = [
         ],
         joint_c: 0.445925,
         joint: (0.000000, 7.000000),
+    },
+    RecordBand {
+        name: "rate floor stays per century",
+        record: 7.300116,
+        q: [
+            0.000000, 0.000000, 0.000000, 0.000000, 3.650058, 3.650058, 3.650058, 3.650058,
+            3.650058, 3.650058, 7.300116, 7.300116, 7.300116, 7.300116, 7.300116, 10.950174,
+            10.950174, 10.950174, 10.950174, 14.600232, 18.250290, 21.900348, 32.850521,
+        ],
+        joint_c: 0.488875,
+        joint: (0.000000, 21.900348),
+    },
+    RecordBand {
+        name: "rate floor stay max years",
+        record: 8.031746,
+        q: [
+            0.000000, 0.000000, 0.000000, 0.000000, 2.142857, 2.142857, 2.142857, 2.142857,
+            2.142857, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746,
+            8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746,
+        ],
+        joint_c: 0.488875,
+        joint: (0.000000, 8.031746),
     },
 ];
 
@@ -22915,6 +23056,21 @@ fn fit_targets_all(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             a.post_floor,
             wgt(0.5, a.post_floor_sd),
         ),
+        // THE RATE FLOOR STAYS (`RATE_STAY_ROWS`): the floor's shape, which the shares cannot
+        // read -- the stays of three months or more that start a century and the longest in
+        // years; ledger rows graded by their record bands, the stays' own resample
+        (
+            RATE_STAY_ROWS[0],
+            (|st: &WorldStats| st.rate_stays[0]) as StatFn,
+            band_record(a, RATE_STAY_ROWS[0]),
+            0.0,
+        ),
+        (
+            RATE_STAY_ROWS[1],
+            (|st: &WorldStats| st.rate_stays[1]) as StatFn,
+            band_record(a, RATE_STAY_ROWS[1]),
+            0.0,
+        ),
         // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return
         // spends under water rather than as three absolute levels — see `EQUITY_D10_CORR` for the
         // relation and `eq_depth_vs_real` for what the ratio means. A level target is a statement
@@ -23445,6 +23601,7 @@ pub fn placement_units() -> Vec<(&'static str, &'static [&'static str])> {
         ("RECORD_BAND_ROWS", &RECORD_BAND_PLACEMENT_ROWS[..]),
         ("RATE_BAND_ROWS", &RATE_BAND_ROWS[..]),
         ("RATE_AFTER_ROWS", &RATE_AFTER_ROWS[..]),
+        ("RATE_STAY_ROWS", &RATE_STAY_ROWS[..]),
         ("BOND_BAND_ROWS", &BOND_BAND_ROWS[..]),
         ("BOND10_BAND_ROWS", &BOND10_BAND_ROWS[..]),
         ("CPI_BAND_ROWS", &CPI_BAND_ROWS[..]),
@@ -25948,7 +26105,7 @@ fn scala_sign(x: f64) -> f64 {
 /// of sessions): the loss prices them as the linear |model - target| over |target|, the log
 /// ratio's small-deviation limit, since a log ratio has no meaning across zero and grows without
 /// bound as a reading nears it.
-pub const ADDITIVE_TARGETS: [&str; 9] = [
+pub const ADDITIVE_TARGETS: [&str; 11] = [
     "bond crash at 2% infl",
     "bond crash per % infl",
     "bond10 excess return pts/yr",
@@ -25958,6 +26115,8 @@ pub const ADDITIVE_TARGETS: [&str; 9] = [
     "high-vol fifth return pts/yr",
     "rate floor share %",
     "post-trough floor share %",
+    "rate floor stays per century",
+    "rate floor stay max years",
 ];
 
 /// Scalar calibration loss: weighted |log(model/target)| over the fidelity targets, a
@@ -28926,7 +29085,7 @@ const EQUITY_TARGETS: [&str; 54] = [
         reason = "the partition contract is read by the tests, never by a report"
     )
 )]
-const BOND_TARGETS: [&str; 42] = [
+const BOND_TARGETS: [&str; 44] = [
     "bond vol % (24y)",
     "bond crash at 2% infl",
     "bond crash per % infl",
@@ -28955,6 +29114,8 @@ const BOND_TARGETS: [&str; 42] = [
     "rate floor share %",
     "post-trough rate %",
     "post-trough floor share %",
+    "rate floor stays per century",
+    "rate floor stay max years",
     "cpi mean %/yr",
     "cpi yoy sd pp",
     "cpi monthly sd pp",
@@ -29416,6 +29577,8 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
                 "rate floor share %",
                 "post-trough rate %",
                 "post-trough floor share %",
+                "rate floor stays per century",
+                "rate floor stay max years",
             ],
         ),
         // The Shiller record is one series shared by every anchor set, at its own century horizon.
@@ -41385,6 +41548,66 @@ mod seen_tol_tests {
     }
 }
 
+/// THE RATE FLOOR STAYS (`RATE_STAY_ROWS`): a stay is three months or more under the floor, a
+/// shorter dip is not; the rows read the count a century and the longest in years; the stays'
+/// own resample draws the count at the record's rate and the lengths from the record's stays.
+#[cfg(test)]
+mod rate_stay_tests {
+    use super::*;
+
+    /// eight years: a two-year stay, a one-month dip, a one-year stay
+    fn path() -> Vec<f64> {
+        let mut r = vec![0.04; 8 * DAYS_PER_YEAR];
+        for x in &mut r[DAYS_PER_YEAR..3 * DAYS_PER_YEAR] {
+            *x = 0.001;
+        }
+        for x in &mut r[4 * DAYS_PER_YEAR..4 * DAYS_PER_YEAR + 21] {
+            *x = 0.0;
+        }
+        for x in &mut r[6 * DAYS_PER_YEAR..7 * DAYS_PER_YEAR] {
+            *x = 0.002;
+        }
+        r
+    }
+
+    #[test]
+    fn a_dip_is_not_a_stay_and_the_longest_reads_in_years() {
+        let r = path();
+        assert_eq!(rate_stay_readings(&r), [25.0, 2.0]);
+        assert_eq!(rate_stay_readings(&[0.04; 1000]), [0.0, 0.0]);
+        let mut all = vec![0.0; 4 * DAYS_PER_YEAR];
+        assert_eq!(rate_stay_readings(&all), [25.0, 4.0]);
+        all[DAYS_PER_YEAR] = 0.01;
+        assert_eq!(
+            rate_stay_readings(&all)[0],
+            50.0,
+            "a crossing splits a stay"
+        );
+    }
+
+    #[test]
+    fn the_resample_draws_the_records_own_stays() {
+        let r = path();
+        let reads = rate_stay_resamples(&r, 2000, 7);
+        assert_eq!(reads, rate_stay_resamples(&r, 2000, 7), "deterministic");
+        let mean_count = reads.iter().map(|x| x[0]).sum::<f64>() / reads.len() as f64;
+        assert!(
+            (mean_count - 25.0).abs() < 2.5,
+            "Poisson at the record's rate: {mean_count}"
+        );
+        assert!(
+            reads.iter().all(|x| [0.0, 1.0, 2.0].contains(&x[1])),
+            "the lengths are the record's"
+        );
+        assert!(reads.iter().any(|x| x[1] == 2.0) && reads.iter().any(|x| x[1] == 0.0));
+        assert!(
+            rate_stay_resamples(&[0.04; 600], 5, 1)
+                .iter()
+                .all(|x| *x == [0.0, 0.0])
+        );
+    }
+}
+
 /// THE ROW 65 PROBES (`recess_step_share`, `recess_steps`): off in every frozen world, zero the
 /// released code path, and on, the recession's step lands the markdown's repriced share in the
 /// onset session where the glide spreads it.
@@ -42098,7 +42321,7 @@ mod record_band_tests {
                 .map(str::to_string)
                 .collect()
         };
-        let mut out = read("recordbands-2026-11-07.tsv");
+        let mut out = read("recordbands-2026-11-08.tsv");
         out.extend(read("rateafter-2026-09-30.tsv").into_iter().skip(1));
         out.extend(read("volexit-2026-10-20.tsv").into_iter().skip(1));
         out.extend(read("volstate-2026-10-20.tsv").into_iter().skip(1));
@@ -42201,11 +42424,12 @@ mod record_band_tests {
                 .chain(STOCK_BOND_BAND_ROWS.iter())
                 .chain(std::iter::once(&CPI_NEWS_ROW))
                 .chain(BOND_STRESS_ROWS.iter())
+                .chain(RATE_STAY_ROWS.iter())
                 .copied()
                 .collect();
             assert_eq!(
                 names, expect,
-                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS, VOL_EXIT_ROWS, BOND10_BAND_ROWS, CPI_BAND_ROWS, CPI_ERA_ROWS, REAL_YIELD_BAND_ROWS, BREAKEVEN_BAND_ROWS, TIPS_BAND_ROWS, REAL_RATE_BAND_ROWS, STOCK_BOND_BAND_ROWS, CPI_NEWS_ROW, BOND_STRESS_ROWS"
+                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS, VOL_EXIT_ROWS, BOND10_BAND_ROWS, CPI_BAND_ROWS, CPI_ERA_ROWS, REAL_YIELD_BAND_ROWS, BREAKEVEN_BAND_ROWS, TIPS_BAND_ROWS, REAL_RATE_BAND_ROWS, STOCK_BOND_BAND_ROWS, CPI_NEWS_ROW, BOND_STRESS_ROWS, RATE_STAY_ROWS"
             );
             for b in a.record_bands {
                 let r = row(set, b.name);
@@ -42260,6 +42484,11 @@ mod record_band_tests {
                 record_band_years(a, "post-trough rate %"),
                 a.rate_years,
                 "{set}: the conditional rows read the rate window"
+            );
+            assert_eq!(
+                record_band_years(a, "rate floor stays per century"),
+                a.rate_years,
+                "{set}: the stays rows read the rate window"
             );
             assert_eq!(
                 a.bond_depth,

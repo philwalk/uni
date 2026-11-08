@@ -1,5 +1,15 @@
 ## v0.25.1 — 2026-10-30
 
+**The rate floor's stays.** Two rows read the floor's shape, which the two floor shares cannot: `rate floor stays
+per century`, how often a stay of three months or more under 0.50% starts, and `rate floor stay max years`, the
+longest one. The record's floor time is two stays, 2008-12..2016-12 and 2020-03..2022-05 (DFF on the equity's
+session dates: 2.78 a century and 8.0 years on the S&P window, 7.30 and 8.0 on the Nasdaq's; every other crossing
+is a flicker of days, all before 1963); the S&P recipe's is 8.3 dips a century, the median history's longest 3.7
+years, the same 15% of sessions. The rows' band is the stays' own resample, the count a Poisson draw at the record's
+rate and each length a draw from the record's stays, since no block of sessions carries an eight-year stay (a
+one-year block bootstrap reads nine stays a century on the record itself). `record_bands -ratestays`;
+`recordbands-2026-11-08.tsv`; Rust only.
+
 **The inflation pulse's other side.** `-spikeneg` is the share of the spike channel's arrivals whose pulse is
 negative, the sign a draw on the spike's own stream only while the share is on (0 is bit-identical). The fiat era's
 deflations are energy collapses, not regimes: the price level falls one to two percent over a few months (2008-09

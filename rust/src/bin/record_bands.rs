@@ -37,6 +37,7 @@ const USAGE: &str =
                     -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S]
                     [-joint A] [-of N] [-header] [-coupling | -multiyear [-long]]
        record_bands -rateafter -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]
+       record_bands -ratestays -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]
        record_bands -sectors DIR [-resamples N] [-seed S]
        record_bands -volexit (-closes FILE | -french FILE) -fred DFF -from -to -set -series
                     [-resamples N] [-seed S] [-joint A] [-of N] [-header]
@@ -109,6 +110,11 @@ const USAGE: &str =
   -rateafter    THE CONDITIONAL RATE ROWS (`RATE_AFTER_ROWS`): the -fred rate on the equity window's
                 session dates, the two years after each 20% decline's trough; the record by
                 `rate_after_of_returns`, its paired block resamples, their own joint band
+  -ratestays    THE RATE FLOOR STAYS (`RATE_STAY_ROWS`): the -fred rate on the equity window's session
+                dates, the stays of three months or more under the floor a century and the longest
+                in years; the record by `rate_stay_readings`, the stays' own resample
+                (`rate_stay_resamples`: the count Poisson at the record's rate, the lengths the
+                record's), their own joint band
   -timing       THE TIMING ROWS instead (`TIMING_ROWS`), on MONTH-END levels over -from..-to: what a
                 10-month moving-average exit does on the record and the market's one-year trend, the
                 rows of `timing-2026-09-30.tsv`, from -french FILE (CRSP's daily factors compounded,
@@ -395,6 +401,8 @@ struct Opts {
     bond10: bool,
     /// `-rateafter`: the rate file read beside the equity source
     after_rate: Option<String>,
+    /// `-ratestays`: the same, for the rate floor stays
+    stays_rate: Option<String>,
     /// `-bond10`: the short rate (FRED DFF) its excess return is read over
     cash: Option<String>,
     /// `-splice FILE -at DATE`, in order: each file continues the series after its date
@@ -423,6 +431,7 @@ fn parse_args(args: &[String]) -> Opts {
     let mut bond = false;
     let mut bond10 = false;
     let mut rateafter = false;
+    let mut ratestays = false;
     let mut fred: Option<String> = None;
     let (mut joint, mut of) = (0.10f64, 0usize);
     let mut splice: Vec<(String, String)> = Vec::new();
@@ -470,6 +479,7 @@ fn parse_args(args: &[String]) -> Opts {
             "-bond" => bond = true,
             "-bond10" => bond10 = true,
             "-rateafter" => rateafter = true,
+            "-ratestays" => ratestays = true,
             // the lag-free record's switches, read by `lag_of`
             "-recorded" => {}
             // the resamples behind each band row, for `-scales` (`band_quantiles`)
@@ -488,6 +498,10 @@ fn parse_args(args: &[String]) -> Opts {
     let after_rate = rateafter.then(|| {
         fred.take()
             .unwrap_or_else(|| usage("-rateafter wants a -fred rate"))
+    });
+    let stays_rate = ratestays.then(|| {
+        fred.take()
+            .unwrap_or_else(|| usage("-ratestays wants a -fred rate"))
     });
     // `-bond10` reads the short rate beside its DGS10 file, for the excess-return row
     let cash = bond10.then(|| {
@@ -543,6 +557,7 @@ fn parse_args(args: &[String]) -> Opts {
         bond,
         bond10,
         after_rate,
+        stays_rate,
         cash,
         splice,
         column,
@@ -3843,6 +3858,10 @@ fn main() {
         rate_after_mode(&o, rate_file, &dated, &window);
         return;
     }
+    if let Some(rate_file) = &o.stays_rate {
+        rate_stay_mode(&o, rate_file, &dated, &window);
+        return;
+    }
     if o.coupling {
         print_coupling_rows(&o, &r, &window);
         return;
@@ -4544,6 +4563,55 @@ fn print_rate_after_rows(o: &Opts, r: &[f64], rate: &[f64], window: &str) {
             o.set,
             o.series,
             r.len(),
+            o.resamples,
+            record[k],
+            qs.join("\t")
+        );
+    }
+}
+
+/// `-ratestays`: the rate on the equity's session dates (a session without a rate is dropped),
+/// then the rate floor stays rows.
+fn rate_stay_mode(o: &Opts, rate_file: &str, dated: &[(String, f64)], window: &str) {
+    let rates: std::collections::HashMap<String, f64> = read_fred(rate_file).into_iter().collect();
+    let rate: Vec<f64> = dated
+        .iter()
+        .filter_map(|(d, _)| rates.get(d).copied())
+        .collect();
+    print_rate_stay_rows(o, &rate, window);
+}
+
+/// THE RATE FLOOR STAYS (`-ratestays`) on a `-fred` rate beside a `-yahoo` or `-french` equity
+/// window, joined on the equity's session dates: the record by `rate_stay_readings`, the stays'
+/// own resample by `rate_stay_resamples`, a joint band over the two -- the rate rows' columns.
+fn print_rate_stay_rows(o: &Opts, rate: &[f64], window: &str) {
+    let record = ms::rate_stay_readings(rate);
+    eprintln!(
+        "{}: {} sessions {window} joined with the rate; {:.4} stays a century, the longest {:.4} y; {} resamples, seed {}",
+        o.series,
+        rate.len(),
+        record[0],
+        record[1],
+        o.resamples,
+        o.seed
+    );
+    let reads = ms::rate_stay_resamples(rate, o.resamples, o.seed);
+    if o.header {
+        print_band_header(&["-header".to_string()]);
+    }
+    let ks: Vec<usize> = (0..ms::RATE_STAY_ROWS.len()).collect();
+    let of = if o.of == 0 { ks.len() } else { o.of };
+    let alpha = o.joint * ks.len() as f64 / of as f64;
+    let (c, edges) = ms::record_band_joint(&reads, &ks, alpha);
+    for (&k, (lo, hi)) in ks.iter().zip(&edges) {
+        let name = ms::RATE_STAY_ROWS[k];
+        let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
+        let qs = band_quantiles(record[k], &col);
+        println!(
+            "{}\t{name}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
+            o.set,
+            o.series,
+            rate.len(),
             o.resamples,
             record[k],
             qs.join("\t")
