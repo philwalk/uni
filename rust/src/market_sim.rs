@@ -5398,14 +5398,25 @@ impl Path {
         self.tail_sessions(years * DAYS_PER_YEAR)
     }
 
-    /// The share of the path's sessions with the bond's stress index above 0.5 (`bond_stress_hi`);
-    /// NaN where the path holds none.
+    /// THE BOND STRESS ROWS (`BOND_STRESS_ROWS`): `bond_stress_rows` on the path's bond returns,
+    /// the statistic the record is read with, the share in percent. The spiral's own index
+    /// (`bond_stress_hi`, `mean_bond_stress`) standardises the step's return by the step's scale
+    /// and never sees the yield repricing added to the bond's log price outside the step, so it
+    /// read an order of magnitude above the reconstruction on the same path (0.18-0.57% against
+    /// 0.00-0.02%, the S&P recipe); it stays a diagnostic. NaN where the path holds no bond or too
+    /// short a one.
+    #[must_use]
+    pub fn bond_stress_rows(&self) -> [f64; 3] {
+        if self.bond.len() <= DAYS_PER_YEAR + 1 {
+            return [f64::NAN; 3];
+        }
+        bond_stress_rows(&daily_returns(&self.bond))
+    }
+
+    /// The bond stress share as a fraction, `bond_stress_rows`' first reading over 100.
     #[must_use]
     pub fn pct_bond_stress(&self) -> f64 {
-        if self.bond_stress_hi.is_empty() {
-            return f64::NAN;
-        }
-        self.bond_stress_hi.iter().filter(|h| **h).count() as f64 / self.bond_stress_hi.len() as f64
+        self.bond_stress_rows()[0] / 100.0
     }
 }
 
@@ -7874,7 +7885,7 @@ impl TpKeep {
 /// reads off a horizon other than the main read's statistics.
 fn is_bond_row(n: &str) -> bool {
     BOND_BAND_ROWS.contains(&n)
-        || n == BOND_STRESS_ROW
+        || BOND_STRESS_ROWS.contains(&n)
         || BOND10_BAND_ROWS.contains(&n)
         || BOND_CRASH_ROWS.contains(&n)
         || REAL_YIELD_BAND_ROWS.contains(&n)
@@ -10810,10 +10821,10 @@ pub struct WorldStats {
     pub bond10_infl: f64,
     /// the leg's log return over the short rate, points a year
     pub bond10_excess: f64,
-    /// THE PRICE LEVEL's rows (item 60; `CPI_BAND_ROWS`, `CPI_CENTURY_ROWS`): the median over
+    /// THE PRICE LEVEL's rows (item 60; `CPI_BAND_ROWS`, `CPI_ERA_ROWS`): the median over
     /// paths of each, the path's CPI read by 21-session months as the record's by calendar months
     pub cpi_rows: [f64; 4],
-    pub cpi_century: [f64; 2],
+    pub cpi_era: [f64; 4],
     /// the year-over-year rate's persistence at twelve months (`CPI_PERSISTENCE_ROW`), the
     /// median over paths
     pub cpi_persist: f64,
@@ -10838,6 +10849,9 @@ pub struct WorldStats {
     /// kept for parity with the Scala record; not printed
     pub mean_bond_stress: f64,
     pub pct_bond_stress: f64,
+    /// `BOND_STRESS_ROWS`' second and third readings, the median over paths
+    pub bond_stress_spells: f64,
+    pub bond_stress_len: f64,
     pub crowd_flow: f64,
     pub dis_per_century: f64,
     /// booms begun per century of path, the boom regime's binding diagnostic
@@ -11134,6 +11148,8 @@ impl WorldStats {
             corr_infl: b.corr_infl,
             mean_bond_stress: b.mean_bond_stress,
             pct_bond_stress: b.pct_bond_stress,
+            bond_stress_spells: b.bond_stress_spells,
+            bond_stress_len: b.bond_stress_len,
             tail_hedge: b.tail_hedge,
             dd_bd5: b.dd_bd5,
             dd_bd10: b.dd_bd10,
@@ -13360,11 +13376,20 @@ pub fn rate_after_resamples(
 /// bond for years -- with TLT's own history at their 26th percentile.
 pub const BOND_BAND_ROWS: [&str; 1] = ["bond depth vs vol"];
 
-/// THE BOND STRESS SHARE (item 62; `bond_stress_share`): the share of a history's sessions with
-/// the long bond's stress index above 0.5, in percent, over the record's 64 years -- the DGS20
-/// par bond since 1962 reads 0.66, its one-year blocks 0.08 to 1.06 (`recordbands-2026-09-26.tsv`),
-/// a placement row of its own where a mechanism gate held a floor at the band's edge.
+/// THE BOND STRESS ROWS (item 62; `bond_stress_rows`): the share of a history's sessions with
+/// the long bond's stress index above 0.5, in percent, how often a spell above 0.5 starts per
+/// hundred years, and the longest spell in sessions, over the record's window. THE WINDOW
+/// (ruled 2026-11-07) is the fiat era since 1983: the DGS20 par bond reads 1.81% in 1962-1982, the
+/// reserve-targeting years above all, and 0.04% since, in spells of four sessions, so the whole
+/// record's 0.66 graded the model's one monetary regime against the other; the 1962-2026 read is
+/// reported beside the rows. A placement row of its own where a mechanism gate held a floor at
+/// the band's edge. Both sides are read by `bond_stress_rows` on the bond's daily log returns.
 pub const BOND_STRESS_ROW: &str = "bond stress share %";
+pub const BOND_STRESS_ROWS: [&str; 3] = [
+    BOND_STRESS_ROW,
+    "bond stress spells per century",
+    "bond stress spell max sessions",
+];
 
 /// THE 10-YEAR LEG's banded rows (`bond10_readings`; `bond10-2026-10-05.tsv`): its annualised RMS
 /// volatility PER YEAR OF DURATION -- on the record each session's return over the par bond's
@@ -13792,11 +13817,11 @@ pub fn record_band_years(a: Anchors, name: &str) -> usize {
         (&RATE_AFTER_ROWS, a.rate_years),
         (&BOND10_BAND_ROWS, a.bond10_years),
         (&BOND_BAND_ROWS, a.bond_years),
-        (std::slice::from_ref(&BOND_STRESS_ROW), a.spiral_years),
+        (&BOND_STRESS_ROWS, a.spiral_years),
         (&CPI_BAND_ROWS, a.cpi_years),
         (std::slice::from_ref(&CPI_PERSISTENCE_ROW), a.cpi_years),
         (std::slice::from_ref(&CPI_NEWS_ROW), a.cpi_years),
-        (&CPI_CENTURY_ROWS, a.cpi_century_years),
+        (&CPI_ERA_ROWS, a.cpi_era_years),
         (&REAL_YIELD_BAND_ROWS, a.real_years),
         (&BREAKEVEN_BAND_ROWS, a.real_years),
         (&TIPS_BAND_ROWS, a.tips_years),
@@ -14104,14 +14129,20 @@ pub const CPI_REPORTED_ROWS: [&str; 3] = [
     "cpi 4%+ spell median months",
     "cpi 4%+ spell max months",
 ];
-/// THE CENTURY's CPI rows (`cpi_century_readings`, CPI-U not seasonally adjusted from 1913, the
-/// longest public record): the share of months whose year-over-year rate is below zero -- the
-/// deflation tail, which 1954-2026 holds too little of to band (its own resamples admit none) --
-/// and how often a 4%+ spell STARTS, per hundred years: the row that tells one spell of 300
-/// months from ten of thirty, which a share of months cannot.
-pub const CPI_CENTURY_ROWS: [&str; 2] = [
-    "cpi deflation share % (century)",
+/// THE FIAT ERA's CPI rows (`cpi_era_readings`, CPI-U not seasonally adjusted 1954-2026; ruled
+/// 2026-11-07): the share of months whose year-over-year rate is below zero, how often a 4%+
+/// spell STARTS per hundred years (the row that tells one spell of 300 months from ten of thirty,
+/// which a share of months cannot), how often a deflation spell starts per hundred years, and the
+/// longest deflation spell in months (0 where none starts). The century from 1913 is two monetary regimes: 30.4%
+/// of 1913-1953's months deflate in spells of eleven months to a trough of -15.8%, 2.6% of
+/// 1954-2026's in spells of five to a trough of -2.1%, and a model of the fiat era graded on the
+/// century's 12.7% was asked for the gold standard's slides; the century read is reported beside
+/// the rows.
+pub const CPI_ERA_ROWS: [&str; 4] = [
+    "cpi deflation share %",
     "cpi 4%+ spells per century",
+    "cpi deflation spells per century",
+    "cpi deflation spell max months",
 ];
 /// The 10-year real yield (`real_yield_readings`, month-end DFII10 in percent): the sd of its
 /// month-to-month change, the one row of its record that is not the TIPS era's own. The record
@@ -14351,30 +14382,53 @@ pub fn cpi_resamples(
     )
 }
 
-/// `CPI_CENTURY_ROWS` on monthly log changes of a price level.
+/// `CPI_ERA_ROWS` on monthly log changes of a price level: the spell rates per hundred years of
+/// the changes' span, the longest deflation spell 0 where none starts.
 #[must_use]
-pub fn cpi_century_readings(dlog: &[f64]) -> [f64; 2] {
+pub fn cpi_era_readings(dlog: &[f64]) -> [f64; 4] {
     let yoy = yoy_pct(dlog);
+    let years = dlog.len() as f64 / MONTHS_PER_YEAR as f64;
+    let defl = deflation_spells(&yoy);
     [
         deflation_share(&yoy),
-        spells_4pct(&yoy).len() as f64 / (dlog.len() as f64 / MONTHS_PER_YEAR as f64) * 100.0,
+        spells_4pct(&yoy).len() as f64 / years * 100.0,
+        defl.len() as f64 / years * 100.0,
+        defl.iter().copied().fold(0.0, f64::max),
     ]
 }
 
-/// `record_resamples` on monthly log changes in five-year blocks, read by `cpi_century_readings`.
+/// The lengths in months of the spells of year-over-year rates below `DEFLATION_EDGE`.
+fn deflation_spells(yoy: &[f64]) -> Vec<f64> {
+    let mut out = Vec::new();
+    let mut run = 0usize;
+    for y in yoy {
+        if *y < DEFLATION_EDGE {
+            run += 1;
+        } else if run > 0 {
+            out.push(run as f64);
+            run = 0;
+        }
+    }
+    if run > 0 {
+        out.push(run as f64);
+    }
+    out
+}
+
+/// `record_resamples` on monthly log changes in five-year blocks, read by `cpi_era_readings`.
 #[must_use]
-pub fn cpi_century_resamples(
+pub fn cpi_era_resamples(
     dlog: &[f64],
     resamples: usize,
     seed: u64,
     block_years: Option<usize>,
-) -> Vec<[f64; 2]> {
+) -> Vec<[f64; 4]> {
     block_resamples_of(
         dlog,
         block_years.map_or(MONTHLY_BLOCK, |y| MONTHS_PER_YEAR * y),
         resamples,
         seed,
-        cpi_century_readings,
+        cpi_era_readings,
     )
 }
 
@@ -14759,40 +14813,60 @@ pub fn cpi_news_resamples(
     )
 }
 
-/// `BOND_STRESS_ROW` on a bond's daily log returns: the spiral's stress index kept the way
+/// `BOND_STRESS_ROWS` on a bond's daily log returns: the spiral's stress index kept the way
 /// `Market::step` keeps it -- the return clamped to +-0.5, its scale the root of an EWMA of the
 /// squared return at 0.005 from 0.01^2, the index 0.96 of itself plus 0.04 of the standardised
-/// loss less 0.399, floored at zero -- and the share of sessions above 0.5 after a one-year
-/// burn-in, in percent; NaN on a series no longer than the burn-in.
+/// loss less 0.399, floored at zero -- read after a one-year burn-in: the share of sessions above
+/// 0.5 in percent, the spells above 0.5 that start per hundred years, and the longest spell in
+/// sessions (0 where none starts); all NaN on a series no longer than the burn-in.
 #[must_use]
-pub fn bond_stress_share(rets: &[f64]) -> f64 {
+pub fn bond_stress_rows(rets: &[f64]) -> [f64; 3] {
     if rets.len() <= DAYS_PER_YEAR {
-        return f64::NAN;
+        return [f64::NAN; 3];
     }
     let (mut scale_var, mut stress, mut hi) = (0.01 * 0.01f64, 0.0f64, 0usize);
+    let (mut spells, mut run, mut longest) = (0usize, 0usize, 0usize);
     for (i, r) in rets.iter().enumerate() {
         let scale = scale_var.sqrt();
         let ret = (-0.50f64).max(0.50f64.min(*r));
         scale_var = 0.995 * scale_var + 0.005 * ret * ret;
         stress = 0.0f64.max(0.96 * stress + 0.04 * (0.0f64.max(-ret) / scale - 0.399));
-        if i >= DAYS_PER_YEAR && stress > 0.5 {
-            hi += 1;
+        if i >= DAYS_PER_YEAR {
+            if stress > 0.5 {
+                hi += 1;
+                if run == 0 {
+                    spells += 1;
+                }
+                run += 1;
+                longest = longest.max(run);
+            } else {
+                run = 0;
+            }
         }
     }
-    100.0 * hi as f64 / (rets.len() - DAYS_PER_YEAR) as f64
+    let n = (rets.len() - DAYS_PER_YEAR) as f64;
+    [
+        100.0 * hi as f64 / n,
+        spells as f64 / (n / DAYS_PER_YEAR as f64) * 100.0,
+        longest as f64,
+    ]
 }
 
-/// `block_resamples` of a bond's daily log returns, read by `bond_stress_share`.
+/// `BOND_STRESS_ROW` alone: the share, `bond_stress_rows`' first reading.
+#[must_use]
+pub fn bond_stress_share(rets: &[f64]) -> f64 {
+    bond_stress_rows(rets)[0]
+}
+
+/// `block_resamples` of a bond's daily log returns, read by `bond_stress_rows`.
 #[must_use]
 pub fn bond_stress_resamples(
     rets: &[f64],
     resamples: usize,
     seed: u64,
     block_years: Option<usize>,
-) -> Vec<[f64; 1]> {
-    block_resamples(rets, block_years, resamples, seed, |r| {
-        [bond_stress_share(r)]
-    })
+) -> Vec<[f64; 3]> {
+    block_resamples(rets, block_years, resamples, seed, bond_stress_rows)
 }
 
 /// Moving-block resamples of one daily series in blocks of `block_years` years of sessions (one
@@ -17940,11 +18014,13 @@ struct PathRead {
     rate_floor: f64,
     post_rate: f64,
     post_floor: f64,
-    /// the price level's rows (`cpi_readings`, `cpi_century_readings`) on the path's CPI read by
+    /// the price level's rows (`cpi_readings`, `cpi_era_readings`) on the path's CPI read by
     /// 21-session months; NaN when not asked for
     cpi_rows: [f64; 4],
-    cpi_century: [f64; 2],
+    cpi_era: [f64; 4],
     cpi_persist: f64,
+    /// the bond stress rows (`Path::bond_stress_rows`); NaN when not asked for
+    bond_stress: [f64; 3],
     /// the stock-bond rows (`stock_bond_of_path`) and the CPI news row (`cpi_news_of_path`)
     stock_bond: [f64; 4],
     stock_bond_reported: [f64; 3],
@@ -17952,13 +18028,13 @@ struct PathRead {
 }
 
 /// The price level's rows on a path's daily CPI: the level every 21 sessions, its log changes,
-/// read as the record's months are (`cpi_readings`, `cpi_century_readings`).
-fn cpi_rows_of_path(cpi: &[f64]) -> ([f64; 4], [f64; 2]) {
+/// read as the record's months are (`cpi_readings`, `cpi_era_readings`).
+fn cpi_rows_of_path(cpi: &[f64]) -> ([f64; 4], [f64; 4]) {
     let dlog = cpi_months_of_path(cpi);
     if dlog.len() < 2 * MONTHS_PER_YEAR {
-        return ([f64::NAN; 4], [f64::NAN; 2]);
+        return ([f64::NAN; 4], [f64::NAN; 4]);
     }
-    (cpi_readings(&dlog), cpi_century_readings(&dlog))
+    (cpi_readings(&dlog), cpi_era_readings(&dlog))
 }
 
 /// A path's daily CPI as monthly log changes: the level every 21 sessions.
@@ -18183,10 +18259,10 @@ impl PathNeeds {
                 nd.rate_after = true;
             } else if BOND10_BAND_ROWS.contains(&n) || STOCK_BOND_BAND_ROWS.contains(&n) {
                 nd.bond10 = true;
-            } else if BOND_BAND_ROWS.contains(&n) || n == BOND_STRESS_ROW {
+            } else if BOND_BAND_ROWS.contains(&n) || BOND_STRESS_ROWS.contains(&n) {
                 nd.bond = true;
             } else if CPI_BAND_ROWS.contains(&n)
-                || CPI_CENTURY_ROWS.contains(&n)
+                || CPI_ERA_ROWS.contains(&n)
                 || n == CPI_PERSISTENCE_ROW
                 || n == CPI_NEWS_ROW
             {
@@ -18485,10 +18561,15 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
         } else {
             [f64::NAN; 4]
         },
-        cpi_century: if nd.cpi {
+        cpi_era: if nd.cpi {
             cpi_rows_of_path(&s.cpi).1
         } else {
-            [f64::NAN; 2]
+            [f64::NAN; 4]
+        },
+        bond_stress: if nd.bond {
+            s.bond_stress_rows()
+        } else {
+            [f64::NAN; 3]
         },
         cpi_persist: if nd.cpi {
             cpi_persistence_of_path(&s.cpi)
@@ -18694,7 +18775,12 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
             med_by(|p| p.cpi_rows[2]),
             med_by(|p| p.cpi_rows[3]),
         ],
-        cpi_century: [med_by(|p| p.cpi_century[0]), med_by(|p| p.cpi_century[1])],
+        cpi_era: [
+            med_by(|p| p.cpi_era[0]),
+            med_by(|p| p.cpi_era[1]),
+            med_by(|p| p.cpi_era[2]),
+            med_by(|p| p.cpi_era[3]),
+        ],
         cpi_persist: med_by(|p| p.cpi_persist),
         cpi_news: med_by(|p| p.cpi_news),
         stock_bond: [
@@ -18736,6 +18822,8 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
         corr_infl: med_by(|p| p.corr_infl),
         mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
         pct_bond_stress: scala_sum(sims.iter().map(Path::pct_bond_stress)) / n_sims,
+        bond_stress_spells: med_by(|p| p.bond_stress[1]),
+        bond_stress_len: med_by(|p| p.bond_stress[2]),
         crowd_flow: scala_sum(sims.iter().map(|s| s.mean_crowd_flow)) / n_sims,
         dis_per_century: scala_sum(sims.iter().map(|s| s.disasters as f64)) / n_sims / years as f64
             * 100.0,
@@ -19836,18 +19924,18 @@ pub struct Anchors {
     /// (`bond10_readings`; `bond10-2026-10-05.tsv`)
     pub bond10_window: &'static str,
     pub bond10_years: usize,
-    /// THE PRICE LEVEL's record windows (item 60; `tips-2026-10-29.tsv`): CPI-U over the rate's
-    /// window for the level, spread and share rows, and the century (not seasonally adjusted,
-    /// from 1913) for the deflation share and the spell rate, read on the world's histories of
-    /// `cpi_century_years` -- the paths' own length, the century being longer than any path
+    /// THE PRICE LEVEL's record windows (item 60; `tips-2026-11-07.tsv`): CPI-U over the rate's
+    /// window for the level, spread and share rows, and the fiat era (not seasonally adjusted,
+    /// 1954-2026) for the deflation share, the spell rates and the deflation spells' length
+    /// (`CPI_ERA_ROWS`), read on the world's histories of `cpi_era_years`
     pub cpi_window: &'static str,
     pub cpi_years: usize,
     /// the record's year-over-year persistence at twelve months over `cpi_window`
     /// (`CPI_PERSISTENCE_ROW`; `cpipersist-2026-10-12.tsv`), graded among the world's
     /// histories of `cpi_years`
     pub cpi_persistence: f64,
-    pub cpi_century_window: &'static str,
-    pub cpi_century_years: usize,
+    pub cpi_era_window: &'static str,
+    pub cpi_era_years: usize,
     /// THE REAL SIDE's record windows (item 60; `tips-2026-10-29.tsv`): DFII10 and T10YIE at
     /// month ends over the TIPS era for the real yield's and the breakeven's rows, the par TIPS
     /// beside the DGS10 par bond and the market on their common sessions for the leg's, and the
@@ -19884,10 +19972,11 @@ pub struct Anchors {
     pub profit_window: &'static str,
     pub profit_years: usize,
     pub profit_decline: [f64; 5],
-    /// THE BOND STRESS SHARE's record window (`BOND_STRESS_ROW`; `recordbands-2026-09-26.tsv`):
-    /// the spiral's stress index run on the DGS20 par bond over every session since 1962, read on
-    /// the world's histories of `spiral_years`, both sets alike (the share is the bond
-    /// recursion's own; the Nasdaq's era holds one episode)
+    /// THE BOND STRESS ROWS' record window (`BOND_STRESS_ROWS`; `recordbands-2026-11-07.tsv`):
+    /// the stress index rebuilt from the DGS20 par bond's returns over the fiat era since 1983,
+    /// read on the world's histories of `spiral_years`, both sets alike (the share is the bond
+    /// recursion's own; the Nasdaq's era holds one episode); the whole record since 1962, two
+    /// monetary regimes, is reported beside it
     pub spiral_window: &'static str,
     pub spiral_years: usize,
     pub short_rate: f64,
@@ -20033,6 +20122,12 @@ pub enum RowFamily {
     /// alone), their joint band at `RECENT_REPORTED_ALPHA`: the century read of the rows the S&P
     /// grades on the recent era
     Recent,
+    /// `BOND_STRESS_ROWS` read on the histories' bond returns (`Path::bond_stress_rows`), their
+    /// joint band at `RECENT_REPORTED_ALPHA`: the whole record since 1962 beside the fiat-era grade
+    BondStress,
+    /// `CPI_ERA_ROWS` read on the histories' CPI (`cpi_era_readings`), their joint band at
+    /// `RECENT_REPORTED_ALPHA`: the century since 1913 beside the fiat-era grade
+    CpiEra,
 }
 
 impl RowFamily {
@@ -20045,6 +20140,8 @@ impl RowFamily {
             Self::Coupling => &["bubble coupling 3y"],
             Self::VolState => &VOL_STATE_ROWS,
             Self::Recent => &SP500_RECENT_ROWS,
+            Self::BondStress => &BOND_STRESS_ROWS,
+            Self::CpiEra => &CPI_ERA_ROWS,
         }
     }
 }
@@ -20086,13 +20183,31 @@ pub struct ReportedRecord {
 /// days outside the declines, on CRSP 1954-2026 lag-free (`recordbands-2026-11-06.tsv`'s century
 /// run), placed among the world's histories of the equity window's length. Never graded: it shows
 /// what the recent-era grades cost against the whole record.
-const SP500_REPORTED: [ReportedRecord; 1] = [ReportedRecord {
-    family: RowFamily::Recent,
-    window: "S&P / CRSP 1954-2026",
-    years: 72,
-    start: WindowStart::Last,
-    records: &[16.820747, 0.929212, 0.910645, 0.908589],
-}];
+const SP500_REPORTED: [ReportedRecord; 3] = [
+    ReportedRecord {
+        family: RowFamily::Recent,
+        window: "S&P / CRSP 1954-2026",
+        years: 72,
+        start: WindowStart::Last,
+        records: &[16.820747, 0.929212, 0.910645, 0.908589],
+    },
+    // the bond stress rows on the whole DGS20 record, two monetary regimes (`recordbands-2026-11-07.tsv`)
+    ReportedRecord {
+        family: RowFamily::BondStress,
+        window: "DGS20 par bond 1962-2026",
+        years: 64,
+        start: WindowStart::Last,
+        records: &[0.660576, 14.167252, 40.000000],
+    },
+    // the cpi era rows on the century, the gold standard's deflations included (`tips-2026-11-07.tsv`'s century run)
+    ReportedRecord {
+        family: RowFamily::CpiEra,
+        window: "CPI-U 1913-2026",
+        years: 100,
+        start: WindowStart::Last,
+        records: &[12.731310, 19.383260, 14.977974, 42.000000],
+    },
+];
 
 /// THE S&P SET's era rows (`Anchors::era_rows`): the TIPS era's breakeven rows, which its
 /// 1954-2026 inflation persistence cannot hold.
@@ -20428,10 +20543,10 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
     },
 ];
 
-/// The S&P set's `RecordBand`s: `recordbands-2026-11-06.tsv`, CRSP total return 1954-2026, for
+/// The S&P set's `RecordBand`s: `recordbands-2026-11-07.tsv`, CRSP total return 1954-2026, for
 /// the two clustering rows the century and for the recent era's rows (`RECENT_ROWS`) 2009-2024 --
 /// each row on the window the set reads it over.
-const RECORD_BANDS_SP500: [RecordBand; 55] = [
+const RECORD_BANDS_SP500: [RecordBand; 59] = [
     RecordBand {
         name: "equity vol %",
         record: 18.501241,
@@ -20808,26 +20923,48 @@ const RECORD_BANDS_SP500: [RecordBand; 55] = [
         joint: (9.545984, 56.461001),
     },
     RecordBand {
-        name: "cpi deflation share % (century)",
-        record: 12.731310,
+        name: "cpi deflation share %",
+        record: 2.561118,
         q: [
-            0.962250, 4.293116, 6.365655, 7.623982, 8.512213, 9.252406, 9.992598, 10.584752,
-            11.250925, 11.769060, 12.361214, 12.879349, 13.471503, 14.063657, 14.729830, 15.396003,
-            16.062176, 16.876388, 17.838638, 19.170984, 21.169504, 24.796447, 36.935603,
+            0.000000, 0.000000, 0.000000, 0.465658, 0.698487, 0.814901, 0.931315, 1.047730,
+            1.396973, 1.513388, 1.629802, 1.746217, 1.862631, 1.979045, 2.211874, 2.444703,
+            2.561118, 2.793946, 3.143190, 3.492433, 4.074505, 5.122235, 7.566938,
         ],
-        joint_c: 0.496325,
-        joint: (3.182828, 26.868986),
+        joint_c: 0.494200,
+        joint: (0.000000, 5.355064),
     },
     RecordBand {
         name: "cpi 4%+ spells per century",
-        record: 19.383260,
+        record: 15.172414,
         q: [
-            7.929515, 12.334802, 14.977974, 16.740088, 17.621145, 18.502203, 19.383260, 20.264317,
-            20.264317, 21.145374, 22.026432, 22.026432, 22.907489, 23.788546, 23.788546, 24.669604,
-            25.550661, 26.431718, 27.312775, 28.193833, 30.837004, 34.361233, 43.171806,
+            2.758621, 8.275862, 11.034483, 12.413793, 13.793103, 15.172414, 15.172414, 16.551724,
+            16.551724, 17.931034, 17.931034, 19.310345, 19.310345, 20.689655, 20.689655, 22.068966,
+            22.068966, 23.448276, 24.827586, 26.206897, 28.965517, 33.103448, 45.517241,
         ],
-        joint_c: 0.496325,
-        joint: (11.453744, 36.123348),
+        joint_c: 0.494200,
+        joint: (6.896552, 34.482759),
+    },
+    RecordBand {
+        name: "cpi deflation spells per century",
+        record: 5.517241,
+        q: [
+            0.000000, 0.000000, 0.000000, 1.379310, 1.379310, 1.379310, 2.758621, 2.758621,
+            2.758621, 4.137931, 4.137931, 4.137931, 4.137931, 5.517241, 5.517241, 5.517241,
+            6.896552, 6.896552, 8.275862, 8.275862, 9.655172, 12.413793, 20.689655,
+        ],
+        joint_c: 0.494200,
+        joint: (0.000000, 13.793103),
+    },
+    RecordBand {
+        name: "cpi deflation spell max months",
+        record: 8.000000,
+        q: [
+            0.000000, 0.000000, 0.000000, 3.000000, 5.000000, 5.000000, 5.000000, 6.000000,
+            8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000,
+            8.000000, 8.000000, 9.000000, 11.000000, 12.000000, 13.000000, 20.000000,
+        ],
+        joint_c: 0.494200,
+        joint: (0.000000, 13.000000),
     },
     RecordBand {
         name: "real yield monthly change sd pp",
@@ -21029,19 +21166,41 @@ const RECORD_BANDS_SP500: [RecordBand; 55] = [
     },
     RecordBand {
         name: "bond stress share %",
-        record: 0.660576,
+        record: 0.044449,
         q: [
-            0.000000, 0.035137, 0.091356, 0.147576, 0.189740, 0.224877, 0.260014, 0.295151,
-            0.330288, 0.365425, 0.400562, 0.428672, 0.463809, 0.498946, 0.541110, 0.583275,
-            0.632467, 0.688686, 0.758960, 0.850316, 0.990864, 1.271961, 2.094167,
+            0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+            0.011112, 0.011112, 0.022225, 0.022225, 0.033337, 0.033337, 0.044449, 0.044449,
+            0.055562, 0.066674, 0.077786, 0.088899, 0.122236, 0.200022, 0.511168,
         ],
-        joint_c: 0.450225,
-        joint: (0.091356, 0.990864),
+        joint_c: 0.445925,
+        joint: (0.000000, 0.111123),
+    },
+    RecordBand {
+        name: "bond stress spells per century",
+        record: 2.800311,
+        q: [
+            0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+            2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 5.600622,
+            5.600622, 5.600622, 8.400933, 8.400933, 11.201245, 16.801867, 33.603734,
+        ],
+        joint_c: 0.445925,
+        joint: (0.000000, 11.201245),
+    },
+    RecordBand {
+        name: "bond stress spell max sessions",
+        record: 4.000000,
+        q: [
+            0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+            1.000000, 1.000000, 2.000000, 2.000000, 2.000000, 2.000000, 3.000000, 3.000000,
+            4.000000, 4.000000, 4.000000, 4.000000, 7.000000, 9.000000, 31.000000,
+        ],
+        joint_c: 0.445925,
+        joint: (0.000000, 7.000000),
     },
 ];
 
-/// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ 1999-03-11..2026-08-20.
-const RECORD_BANDS_NASDAQ: [RecordBand; 55] = [
+/// The Nasdaq set's `RecordBand`s: `recordbands-2026-11-07.tsv`, QQQ 1999-03-11..2026-08-20.
+const RECORD_BANDS_NASDAQ: [RecordBand; 59] = [
     RecordBand {
         name: "equity vol %",
         record: 26.901577,
@@ -21418,26 +21577,48 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 55] = [
         joint: (0.000000, 33.542320),
     },
     RecordBand {
-        name: "cpi deflation share % (century)",
-        record: 12.731310,
+        name: "cpi deflation share %",
+        record: 2.561118,
         q: [
-            0.962250, 4.293116, 6.365655, 7.623982, 8.512213, 9.252406, 9.992598, 10.584752,
-            11.250925, 11.769060, 12.361214, 12.879349, 13.471503, 14.063657, 14.729830, 15.396003,
-            16.062176, 16.876388, 17.838638, 19.170984, 21.169504, 24.796447, 36.935603,
+            0.000000, 0.000000, 0.000000, 0.465658, 0.698487, 0.814901, 0.931315, 1.047730,
+            1.396973, 1.513388, 1.629802, 1.746217, 1.862631, 1.979045, 2.211874, 2.444703,
+            2.561118, 2.793946, 3.143190, 3.492433, 4.074505, 5.122235, 7.566938,
         ],
-        joint_c: 0.496325,
-        joint: (3.182828, 26.868986),
+        joint_c: 0.494200,
+        joint: (0.000000, 5.355064),
     },
     RecordBand {
         name: "cpi 4%+ spells per century",
-        record: 19.383260,
+        record: 15.172414,
         q: [
-            7.929515, 12.334802, 14.977974, 16.740088, 17.621145, 18.502203, 19.383260, 20.264317,
-            20.264317, 21.145374, 22.026432, 22.026432, 22.907489, 23.788546, 23.788546, 24.669604,
-            25.550661, 26.431718, 27.312775, 28.193833, 30.837004, 34.361233, 43.171806,
+            2.758621, 8.275862, 11.034483, 12.413793, 13.793103, 15.172414, 15.172414, 16.551724,
+            16.551724, 17.931034, 17.931034, 19.310345, 19.310345, 20.689655, 20.689655, 22.068966,
+            22.068966, 23.448276, 24.827586, 26.206897, 28.965517, 33.103448, 45.517241,
         ],
-        joint_c: 0.496325,
-        joint: (11.453744, 36.123348),
+        joint_c: 0.494200,
+        joint: (6.896552, 34.482759),
+    },
+    RecordBand {
+        name: "cpi deflation spells per century",
+        record: 5.517241,
+        q: [
+            0.000000, 0.000000, 0.000000, 1.379310, 1.379310, 1.379310, 2.758621, 2.758621,
+            2.758621, 4.137931, 4.137931, 4.137931, 4.137931, 5.517241, 5.517241, 5.517241,
+            6.896552, 6.896552, 8.275862, 8.275862, 9.655172, 12.413793, 20.689655,
+        ],
+        joint_c: 0.494200,
+        joint: (0.000000, 13.793103),
+    },
+    RecordBand {
+        name: "cpi deflation spell max months",
+        record: 8.000000,
+        q: [
+            0.000000, 0.000000, 0.000000, 3.000000, 5.000000, 5.000000, 5.000000, 6.000000,
+            8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000,
+            8.000000, 8.000000, 9.000000, 11.000000, 12.000000, 13.000000, 20.000000,
+        ],
+        joint_c: 0.494200,
+        joint: (0.000000, 13.000000),
     },
     RecordBand {
         name: "real yield monthly change sd pp",
@@ -21639,14 +21820,36 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 55] = [
     },
     RecordBand {
         name: "bond stress share %",
-        record: 0.660576,
+        record: 0.044449,
         q: [
-            0.000000, 0.035137, 0.091356, 0.147576, 0.189740, 0.224877, 0.260014, 0.295151,
-            0.330288, 0.365425, 0.400562, 0.428672, 0.463809, 0.498946, 0.541110, 0.583275,
-            0.632467, 0.688686, 0.758960, 0.850316, 0.990864, 1.271961, 2.094167,
+            0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+            0.011112, 0.011112, 0.022225, 0.022225, 0.033337, 0.033337, 0.044449, 0.044449,
+            0.055562, 0.066674, 0.077786, 0.088899, 0.122236, 0.200022, 0.511168,
         ],
-        joint_c: 0.450225,
-        joint: (0.091356, 0.990864),
+        joint_c: 0.445925,
+        joint: (0.000000, 0.111123),
+    },
+    RecordBand {
+        name: "bond stress spells per century",
+        record: 2.800311,
+        q: [
+            0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+            2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 5.600622,
+            5.600622, 5.600622, 8.400933, 8.400933, 11.201245, 16.801867, 33.603734,
+        ],
+        joint_c: 0.445925,
+        joint: (0.000000, 11.201245),
+    },
+    RecordBand {
+        name: "bond stress spell max sessions",
+        record: 4.000000,
+        q: [
+            0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+            1.000000, 1.000000, 2.000000, 2.000000, 2.000000, 2.000000, 3.000000, 3.000000,
+            4.000000, 4.000000, 4.000000, 4.000000, 7.000000, 9.000000, 31.000000,
+        ],
+        joint_c: 0.445925,
+        joint: (0.000000, 7.000000),
     },
 ];
 
@@ -21704,8 +21907,8 @@ const SP500_ANCHORS: Anchors = Anchors {
     cpi_window: "CPI-U, 1954-2026",
     cpi_years: 72,
     cpi_persistence: 0.730419,
-    cpi_century_window: "CPI-U not seasonally adjusted, 1913-2026",
-    cpi_century_years: 100,
+    cpi_era_window: "CPI-U not seasonally adjusted, 1954-2026",
+    cpi_era_years: 72,
     real_window: "DFII10 and T10YIE month ends, 2003-2026",
     real_years: 23,
     tips_window: "par TIPS on DFII10 and CPI-U beside the DGS10 par bond, 2003-2026",
@@ -21722,8 +21925,8 @@ const SP500_ANCHORS: Anchors = Anchors {
     profit_window: PROFIT_WINDOW,
     profit_years: PROFIT_YEARS,
     profit_decline: PROFIT_DECLINE_RECORD,
-    spiral_window: "DGS20 par bond, 1962-2026",
-    spiral_years: 64,
+    spiral_window: "DGS20 par bond, 1983-2026",
+    spiral_years: 43,
     short_rate: 4.595174,
     short_rate_sd: 0.09,
     rate_floor: 14.565588,
@@ -21897,8 +22100,8 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     cpi_window: "CPI-U, 1999-2026",
     cpi_years: 27,
     cpi_persistence: 0.258078,
-    cpi_century_window: "CPI-U not seasonally adjusted, 1913-2026",
-    cpi_century_years: 100,
+    cpi_era_window: "CPI-U not seasonally adjusted, 1954-2026",
+    cpi_era_years: 72,
     real_window: "DFII10 and T10YIE month ends, 2003-2026",
     real_years: 23,
     tips_window: "par TIPS on DFII10 and CPI-U beside the DGS10 par bond, 2003-2026",
@@ -21915,8 +22118,8 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     profit_window: PROFIT_WINDOW,
     profit_years: PROFIT_YEARS,
     profit_decline: PROFIT_DECLINE_RECORD,
-    spiral_window: "DGS20 par bond, 1962-2026",
-    spiral_years: 64,
+    spiral_window: "DGS20 par bond, 1983-2026",
+    spiral_years: 43,
     short_rate: 2.136466,
     short_rate_sd: 1.05,
     rate_floor: 37.313224,
@@ -22297,15 +22500,27 @@ fn fit_targets_all(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             0.0,
         ),
         (
-            CPI_CENTURY_ROWS[0],
-            (|st: &WorldStats| st.cpi_century[0]) as StatFn,
-            band_record(a, CPI_CENTURY_ROWS[0]),
+            CPI_ERA_ROWS[0],
+            (|st: &WorldStats| st.cpi_era[0]) as StatFn,
+            band_record(a, CPI_ERA_ROWS[0]),
             0.0,
         ),
         (
-            CPI_CENTURY_ROWS[1],
-            (|st: &WorldStats| st.cpi_century[1]) as StatFn,
-            band_record(a, CPI_CENTURY_ROWS[1]),
+            CPI_ERA_ROWS[1],
+            (|st: &WorldStats| st.cpi_era[1]) as StatFn,
+            band_record(a, CPI_ERA_ROWS[1]),
+            0.0,
+        ),
+        (
+            CPI_ERA_ROWS[2],
+            (|st: &WorldStats| st.cpi_era[2]) as StatFn,
+            band_record(a, CPI_ERA_ROWS[2]),
+            0.0,
+        ),
+        (
+            CPI_ERA_ROWS[3],
+            (|st: &WorldStats| st.cpi_era[3]) as StatFn,
+            band_record(a, CPI_ERA_ROWS[3]),
             0.0,
         ),
         // the rate's persistence at twelve months: the record's percentile among the world's
@@ -22609,13 +22824,26 @@ fn fit_targets_all(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             a.profit_decline[4],
             0.0,
         ),
-        // THE BOND STRESS SHARE (`BOND_STRESS_ROW`, item 62): the spiral's share of sessions
-        // above 0.5 over the record's 64 years, banded on DGS20's own blocks like the real
-        // side's rows
+        // THE BOND STRESS ROWS (`BOND_STRESS_ROWS`, item 62): the stress index rebuilt from the
+        // bond's returns over the record's window (the fiat era since 1983), the share of
+        // sessions above 0.5, the spells a century and their length, banded on DGS20's own
+        // blocks like the real side's rows
         (
             BOND_STRESS_ROW,
             (|st: &WorldStats| st.pct_bond_stress * 100.0) as StatFn,
             band_record(a, BOND_STRESS_ROW),
+            0.0,
+        ),
+        (
+            BOND_STRESS_ROWS[1],
+            (|st: &WorldStats| st.bond_stress_spells) as StatFn,
+            band_record(a, BOND_STRESS_ROWS[1]),
+            0.0,
+        ),
+        (
+            BOND_STRESS_ROWS[2],
+            (|st: &WorldStats| st.bond_stress_len) as StatFn,
+            band_record(a, BOND_STRESS_ROWS[2]),
             0.0,
         ),
         // Does the refuge hold exactly where it is needed — stock-bond correlation on calm
@@ -23189,7 +23417,7 @@ pub fn placement_units() -> Vec<(&'static str, &'static [&'static str])> {
         ("TIMING_ROWS", &TIMING_ROWS[..]),
         ("BOND_CRASH_ROWS", &BOND_CRASH_ROWS[..]),
         ("PROFIT_DECLINE_ROWS", &PROFIT_DECLINE_ROWS[..]),
-        ("BOND_STRESS_ROW", std::slice::from_ref(&BOND_STRESS_ROW)),
+        ("BOND_STRESS_ROWS", &BOND_STRESS_ROWS[..]),
         ("RECORD_BAND_ROWS", &RECORD_BAND_PLACEMENT_ROWS[..]),
         ("RATE_BAND_ROWS", &RATE_BAND_ROWS[..]),
         ("RATE_AFTER_ROWS", &RATE_AFTER_ROWS[..]),
@@ -23201,7 +23429,7 @@ pub fn placement_units() -> Vec<(&'static str, &'static [&'static str])> {
             std::slice::from_ref(&CPI_PERSISTENCE_ROW),
         ),
         ("CPI_REPORTED_ROWS", &CPI_REPORTED_ROWS[..]),
-        ("CPI_CENTURY_ROWS", &CPI_CENTURY_ROWS[..]),
+        ("CPI_ERA_ROWS", &CPI_ERA_ROWS[..]),
         ("REAL_YIELD_BAND_ROWS", &REAL_YIELD_BAND_ROWS[..]),
         ("REAL_YIELD_REPORTED_ROWS", &REAL_YIELD_REPORTED_ROWS[..]),
         ("BREAKEVEN_BAND_ROWS", &BREAKEVEN_BAND_ROWS[..]),
@@ -24799,6 +25027,19 @@ fn reported_rows_on(rec: &ReportedRecord, sims: &[Path], window: &str) -> Vec<Re
                     );
                     [s.vol * 100.0, s.vr20_out, s.vr60_out, s.vr120_out]
                 })
+                .collect();
+            let bands = joint_edges(&r, RECENT_REPORTED_ALPHA);
+            (r.iter().map(|x| x.to_vec()).collect(), bands)
+        }
+        RowFamily::BondStress => {
+            let r: Vec<[f64; 3]> = sims.par_iter().map(Path::bond_stress_rows).collect();
+            let bands = joint_edges(&r, RECENT_REPORTED_ALPHA);
+            (r.iter().map(|x| x.to_vec()).collect(), bands)
+        }
+        RowFamily::CpiEra => {
+            let r: Vec<[f64; 4]> = sims
+                .par_iter()
+                .map(|p| cpi_rows_of_path(&p.cpi).1)
                 .collect();
             let bands = joint_edges(&r, RECENT_REPORTED_ALPHA);
             (r.iter().map(|x| x.to_vec()).collect(), bands)
@@ -28652,11 +28893,13 @@ const EQUITY_TARGETS: [&str; 54] = [
         reason = "the partition contract is read by the tests, never by a report"
     )
 )]
-const BOND_TARGETS: [&str; 38] = [
+const BOND_TARGETS: [&str; 42] = [
     "bond vol % (24y)",
     "bond crash at 2% infl",
     "bond crash per % infl",
     "bond stress share %",
+    "bond stress spells per century",
+    "bond stress spell max sessions",
     "bond depth vs vol",
     "bond10 vol per duration",
     "bond10 depth vs vol",
@@ -28683,8 +28926,10 @@ const BOND_TARGETS: [&str; 38] = [
     "cpi yoy sd pp",
     "cpi monthly sd pp",
     "cpi 4%+ share %",
-    "cpi deflation share % (century)",
+    "cpi deflation share %",
     "cpi 4%+ spells per century",
+    "cpi deflation spells per century",
+    "cpi deflation spell max months",
     "cpi yoy persistence 12m",
     "stock-bond corr monthly",
     "stock-bond corr vs inflation seen",
@@ -29174,7 +29419,7 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
         // The profit decline rows' record: FRED's corporate profits after tax, quarterly since 1947.
         (a.profit_window, a.profit_years, &PROFIT_DECLINE_ROWS),
         // The spiral's share of stressed sessions: the same bond over every session since 1962.
-        (a.spiral_window, a.spiral_years, &[BOND_STRESS_ROW]),
+        (a.spiral_window, a.spiral_years, &BOND_STRESS_ROWS),
         (
             a.bond10_window,
             a.bond10_years,
@@ -29187,7 +29432,7 @@ fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static st
         // The price level's two records (item 60): CPI-U over the rate's window, and the century.
         (a.cpi_window, a.cpi_years, &CPI_BAND_ROWS),
         (a.cpi_window, a.cpi_years, &[CPI_PERSISTENCE_ROW]),
-        (a.cpi_century_window, a.cpi_century_years, &CPI_CENTURY_ROWS),
+        (a.cpi_era_window, a.cpi_era_years, &CPI_ERA_ROWS),
         // The real side's four records (item 60): the real yield and the breakeven at month ends
         // over the TIPS era, the par TIPS beside the nominal par bond and the market, and the
         // policy rate less the next year's inflation over the rate's window.
@@ -36073,6 +36318,33 @@ mod crps_tests {
     /// The energy score against the record's cloud: the CRPS at sd 0; zero when the readings are the
     /// cloud itself; a point mass at the record scores worse than the cloud does, and worse than a
     /// sample spread as the cloud is; the cloud symmetric with 25 points and a spread near 1/sqrt(pi).
+    /// The bond stress share row reads the model as the record is read: the path's share is
+    /// `bond_stress_share` on its own bond returns, not the spiral's internal index.
+    #[test]
+    fn the_bond_stress_share_is_read_from_the_bond_returns() {
+        let (_, w, _) = recipes()
+            .into_iter()
+            .find(|(n, _, _)| *n == "0.25.1-sp500")
+            .expect("the S&P recipe");
+        let p = simulate_at(&w, 70, 2, world_level(&w));
+        let want = bond_stress_share(&daily_returns(&p.bond)) / 100.0;
+        assert!(
+            (p.pct_bond_stress() - want).abs() < 1e-15,
+            "{} vs {want}",
+            p.pct_bond_stress()
+        );
+        let st = measure(std::slice::from_ref(&p), 70);
+        assert!((st.pct_bond_stress - want).abs() < 1e-15);
+        assert!(
+            Path {
+                bond: vec![1.0; 10],
+                ..p.clone()
+            }
+            .pct_bond_stress()
+            .is_nan()
+        );
+    }
+
     #[test]
     fn the_energy_score_reads_the_record_as_its_cloud() {
         let xs = [3.0, 1.0, 2.0];
@@ -39654,7 +39926,7 @@ mod real_side_tests {
             vec![0.0; 36],
         ]
         .concat();
-        let r = cpi_century_readings(&dlog);
+        let r = cpi_era_readings(&dlog);
         // the year-over-year rate is below zero from the first negative month to a year after
         // the last, 23 months of the 109 the rate exists
         assert!(
@@ -39666,6 +39938,22 @@ mod real_side_tests {
             near(r[1], 2.0 / 10.0 * 100.0, 1e-9),
             "spell starts per century {}",
             r[1]
+        );
+        // one deflation spell of 23 months in the ten years, the longest by default
+        assert!(
+            near(r[2], 10.0, 1e-9),
+            "deflation spells per century {}",
+            r[2]
+        );
+        assert!(
+            near(r[3], 23.0, 1e-9),
+            "deflation spell max months {}",
+            r[3]
+        );
+        assert_eq!(
+            cpi_era_readings(&vec![0.002; 120])[3],
+            0.0,
+            "no spell, no length"
         );
     }
 
@@ -41762,12 +42050,12 @@ mod record_band_tests {
                 .map(str::to_string)
                 .collect()
         };
-        let mut out = read("recordbands-2026-11-06.tsv");
+        let mut out = read("recordbands-2026-11-07.tsv");
         out.extend(read("rateafter-2026-09-30.tsv").into_iter().skip(1));
         out.extend(read("volexit-2026-10-20.tsv").into_iter().skip(1));
         out.extend(read("volstate-2026-10-20.tsv").into_iter().skip(1));
         out.extend(read("bond10-2026-10-05.tsv").into_iter().skip(1));
-        out.extend(read("tips-2026-10-29.tsv").into_iter().skip(1));
+        out.extend(read("tips-2026-11-07.tsv").into_iter().skip(1));
         out.extend(read("stockbond-2026-10-18.tsv").into_iter().skip(1));
         out
     }
@@ -41857,18 +42145,19 @@ mod record_band_tests {
                 .chain(VOL_EXIT_ROWS.iter())
                 .chain(BOND10_BAND_ROWS.iter())
                 .chain(CPI_BAND_ROWS.iter())
-                .chain(CPI_CENTURY_ROWS.iter())
+                .chain(CPI_ERA_ROWS.iter())
                 .chain(REAL_YIELD_BAND_ROWS.iter())
                 .chain(BREAKEVEN_BAND_ROWS.iter())
                 .chain(TIPS_BAND_ROWS.iter())
                 .chain(REAL_RATE_BAND_ROWS.iter())
                 .chain(STOCK_BOND_BAND_ROWS.iter())
-                .chain([CPI_NEWS_ROW, BOND_STRESS_ROW].iter())
+                .chain(std::iter::once(&CPI_NEWS_ROW))
+                .chain(BOND_STRESS_ROWS.iter())
                 .copied()
                 .collect();
             assert_eq!(
                 names, expect,
-                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS, VOL_EXIT_ROWS, BOND10_BAND_ROWS, CPI_BAND_ROWS, CPI_CENTURY_ROWS, REAL_YIELD_BAND_ROWS, BREAKEVEN_BAND_ROWS, TIPS_BAND_ROWS, REAL_RATE_BAND_ROWS, STOCK_BOND_BAND_ROWS, CPI_NEWS_ROW, BOND_STRESS_ROW"
+                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS, VOL_EXIT_ROWS, BOND10_BAND_ROWS, CPI_BAND_ROWS, CPI_ERA_ROWS, REAL_YIELD_BAND_ROWS, BREAKEVEN_BAND_ROWS, TIPS_BAND_ROWS, REAL_RATE_BAND_ROWS, STOCK_BOND_BAND_ROWS, CPI_NEWS_ROW, BOND_STRESS_ROWS"
             );
             for b in a.record_bands {
                 let r = row(set, b.name);
@@ -42748,6 +43037,11 @@ mod record_band_tests {
             .collect::<Vec<f64>>());
         assert_eq!(share, 6.004366812227074);
         assert_eq!(share_med, 5.858806404657933);
+        // the rows: the share, the spells a century and the longest; no spell, no length
+        let rows = bond_stress_rows(&runs);
+        assert_eq!(rows[0], share);
+        assert!(rows[1] > 100.0 && rows[2] > 1.0, "{rows:?}");
+        assert_eq!(bond_stress_rows(&r)[1..], [0.0, 0.0]);
         let reads = record_resamples(&r, 40, 7, None);
         let meds: Vec<f64> = (0..19)
             .map(|k| med(&reads.iter().map(|x| x[k]).collect::<Vec<f64>>()))
@@ -43071,10 +43365,9 @@ mod record_band_tests {
                     y * 12 + m
                 };
                 let span = (ym(to) - ym(from) + 1) / 12;
-                if CPI_CENTURY_ROWS.contains(&b.name) {
-                    // rates per unit time read on the paths' own length: the century is longer
-                    // than any path, and a share of months or a count a century does not depend
-                    // on the window it is read over
+                if CPI_ERA_ROWS.contains(&b.name) {
+                    // rates per unit time, read on histories of the era's length: a share of
+                    // months or a count a century does not depend on the window it is read over
                     assert!(
                         record_band_years(a, b.name) <= span,
                         "{set} {}: read within {window}",

@@ -1,5 +1,21 @@
 ## v0.25.1 — 2026-10-30
 
+**The fiat era's rows.** Two graded rows spanned a monetary regime break and graded the model's one regime
+against the other. `bond stress share %` is read on the DGS20 par bond since 1983 (0.04%; 1.81% in 1962-1982, the
+reserve-targeting years), with `bond stress spells per century` and `bond stress spell max sessions` beside it, and
+the 1962-2026 read reported. `cpi deflation share %` (the year-over-year rate below zero) is read on CPI-U 1954-2026
+(2.6%; 30.4% in 1913-1953, the gold standard's slides), with `cpi deflation spells per century` and `cpi deflation
+spell max months` beside it and `cpi 4%+ spells per century` on the same window, and the century read reported. Read
+so, the model's bond passes the stress rows and its deflation fails on shape: four-year regimes against the era's
+five-month dips. Rust only; the Scala twin keeps the century rows.
+
+**The bond stress share reads the model as it reads the record.** A history's `bond stress share %` is
+`bond_stress_share` on its own bond returns, the reconstruction the DGS20 par bond is read with; the spiral's
+internal index, which standardises the step's return by the step's own scale and never sees the yield repricing
+added outside the step, read an order of magnitude above it on the same path (0.18-0.57% against 0.00-0.02% on the
+S&P recipe) and stays a diagnostic (`mean_bond_stress`). Read consistently, the model's bond has no stress spells of
+the record's kind; the row's record and its window are unchanged.
+
 **One inflation expectation across the legs.** `-yieldanchor` is the share taken out of the gap
 between the market's inflation estimates carried whole in the ten-year yield and carried at
 `-expanchor` in the breakeven; at 1 the two legs price one expectation and the real yield (the

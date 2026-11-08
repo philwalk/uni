@@ -204,7 +204,7 @@ const USAGE: &str =
                 CPIAUCNS -real DFII10 -breakeven T10YIE -nominal DGS10 -fred DFF -french <daily
                 factors> -set S [-from -to] (the real window) [-cpifrom -cpito] (the CPI and
                 real-rate window; the century file is read whole) [-resamples -seed -joint -of
-                -header]; six groups (`CPI_BAND_ROWS`, `CPI_CENTURY_ROWS`, `REAL_YIELD_BAND_ROWS`,
+                -header]; six groups (`CPI_BAND_ROWS`, `CPI_ERA_ROWS` over [-erafrom -erato], `REAL_YIELD_BAND_ROWS`,
                 `BREAKEVEN_BAND_ROWS`, `TIPS_BAND_ROWS`, `REAL_RATE_BAND_ROWS`), each on its own
                 record with its own joint band at the mode's share of -of (default 16, the mode's
                 graded rows); the reported rows (`CPI_REPORTED_ROWS`, `REAL_YIELD_REPORTED_ROWS`,
@@ -2982,6 +2982,9 @@ struct TipsOpts {
     to: String,
     cpi_from: String,
     cpi_to: String,
+    /// the era group's window (`CPI_ERA_ROWS`), the file whole by default
+    era_from: String,
+    era_to: String,
     resamples: usize,
     seed: u64,
     joint: f64,
@@ -3034,8 +3037,9 @@ impl TipsOpts {
         (cpi, dlog, window)
     }
 
-    /// The CPI group (`CPI_BAND_ROWS`) and the century group (`CPI_CENTURY_ROWS`, the century
-    /// file read whole); returns the CPI window's levels for the real-rate group.
+    /// The CPI group (`CPI_BAND_ROWS`) and the era group (`CPI_ERA_ROWS`, the not-seasonally-
+    /// adjusted file over [-erafrom, -erato], the whole file by default); returns the CPI
+    /// window's levels for the real-rate group.
     fn cpi_groups(&self, cpi_file: &str, century_file: &str) -> Vec<(String, f64)> {
         let (cpi, dlog, window) = self.cpi_changes(cpi_file);
         let record = ms::cpi_readings(&dlog);
@@ -3056,26 +3060,26 @@ impl TipsOpts {
             record,
             reads: ms::cpi_resamples(&dlog, self.resamples, self.seed, block_years()),
         });
-        let whole = TipsOpts {
-            cpi_from: String::new(),
-            cpi_to: "9999".to_string(),
+        let era = TipsOpts {
+            cpi_from: self.era_from.clone(),
+            cpi_to: self.era_to.clone(),
             ..self.clone()
         };
-        let (_, cdlog, c_window) = whole.cpi_changes(century_file);
-        let record = ms::cpi_century_readings(&cdlog);
+        let (_, cdlog, c_window) = era.cpi_changes(century_file);
+        let record = ms::cpi_era_readings(&cdlog);
         eprintln!(
             "{}: {} monthly changes {c_window}; {}",
             fred_name(century_file),
             cdlog.len(),
-            row_list(&ms::CPI_CENTURY_ROWS, &record)
+            row_list(&ms::CPI_ERA_ROWS, &record)
         );
         self.print_group(&TipsGroup {
-            names: &ms::CPI_CENTURY_ROWS,
+            names: &ms::CPI_ERA_ROWS,
             series: fred_name(century_file),
             window: c_window,
             n: cdlog.len(),
             record,
-            reads: ms::cpi_century_resamples(&cdlog, self.resamples, self.seed, block_years()),
+            reads: ms::cpi_era_resamples(&cdlog, self.resamples, self.seed, block_years()),
         });
         cpi
     }
@@ -3344,6 +3348,8 @@ fn tips_mode(args: &[String]) -> bool {
         to: opt("-to").unwrap_or_else(|| "9999".to_string()),
         cpi_from: opt("-cpifrom").unwrap_or_default(),
         cpi_to: opt("-cpito").unwrap_or_else(|| "9999".to_string()),
+        era_from: opt("-erafrom").unwrap_or_default(),
+        era_to: opt("-erato").unwrap_or_else(|| "9999".to_string()),
         resamples: opt("-resamples").map_or(20_000, |v| num(&v, "-resamples wants an integer")),
         seed: opt("-seed").map_or(20_260_918, |v| {
             num(&v, "-seed wants a non-negative integer")
@@ -3503,6 +3509,8 @@ fn stock_bond_mode(args: &[String]) -> bool {
         to: opt("-to").unwrap_or_else(|| "9999".to_string()),
         cpi_from: opt("-cpifrom").unwrap_or_default(),
         cpi_to: opt("-cpito").unwrap_or_else(|| "9999".to_string()),
+        era_from: opt("-erafrom").unwrap_or_default(),
+        era_to: opt("-erato").unwrap_or_else(|| "9999".to_string()),
         resamples: opt("-resamples").map_or(20_000, |v| num(&v, "-resamples wants an integer")),
         seed: opt("-seed").map_or(20_260_918, |v| {
             num(&v, "-seed wants a non-negative integer")
@@ -3650,11 +3658,12 @@ fn profits_mode(args: &[String]) -> bool {
     true
 }
 
-/// `-bondstress`: THE BOND STRESS SHARE ROW (`BOND_STRESS_ROW`; `recordbands-2026-09-26.tsv`)
-/// for -set: the spiral's stress index run on the -fred yield file as an n-year par bond (-years,
-/// 20 by default) over every session in [-from, -to], a return spanning more than ten calendar
-/// days (the series' gap) dropped with the state carried across it; the share of sessions above
-/// 0.5 after a one-year burn-in, in percent, and its one-year-block resamples.
+/// `-bondstress`: THE BOND STRESS ROWS (`BOND_STRESS_ROWS`; `recordbands-2026-11-07.tsv`) for
+/// -set: the spiral's stress index run on the -fred yield file as an n-year par bond (-years, 20
+/// by default) over every session in [-from, -to], a return spanning more than ten calendar days
+/// (the series' gap) dropped with the state carried across it; the share of sessions above 0.5
+/// after a one-year burn-in in percent, the spells a century and their mean length, and their
+/// one-year-block resamples.
 fn bond_stress_mode(args: &[String]) -> bool {
     if !args.iter().any(|a| a == "-bondstress") {
         return false;
@@ -3672,12 +3681,14 @@ fn bond_stress_mode(args: &[String]) -> bool {
         to: opt("-to").unwrap_or_else(|| "9999".to_string()),
         cpi_from: String::new(),
         cpi_to: "9999".to_string(),
+        era_from: String::new(),
+        era_to: "9999".to_string(),
         resamples: opt("-resamples").map_or(20_000, |v| num(&v, "-resamples wants an integer")),
         seed: opt("-seed").map_or(20_260_918, |v| {
             num(&v, "-seed wants a non-negative integer")
         }),
         joint: opt("-joint").map_or(0.10, |v| num(&v, "-joint wants a share in (0, 1)")),
-        of: opt("-of").map_or(1, |v| num(&v, "-of wants a row count")),
+        of: opt("-of").map_or(3, |v| num(&v, "-of wants a row count")),
     };
     print_band_header(args);
     let text =
@@ -3704,21 +3715,21 @@ fn bond_stress_mode(args: &[String]) -> bool {
         ));
     }
     let window = format!("{}..{}", dates[0], dates[dates.len() - 1]);
-    let record = ms::bond_stress_share(&rets);
+    let record = ms::bond_stress_rows(&rets);
     eprintln!(
-        "{} as a {years:.0}-year par bond: {} sessions {window}, {gaps} gap returns dropped; {} {record:.4}; {} resamples, seed {}",
+        "{} as a {years:.0}-year par bond: {} sessions {window}, {gaps} gap returns dropped; {}; {} resamples, seed {}",
         fred_name(&fred_file),
         rets.len(),
-        ms::BOND_STRESS_ROW,
+        row_list(&ms::BOND_STRESS_ROWS, &record),
         o.resamples,
         o.seed
     );
     o.print_group(&TipsGroup {
-        names: &[ms::BOND_STRESS_ROW],
+        names: &ms::BOND_STRESS_ROWS,
         series: format!("{} par bond", fred_name(&fred_file)),
         window,
         n: rets.len(),
-        record: [record],
+        record,
         reads: ms::bond_stress_resamples(&rets, o.resamples, o.seed, block_years()),
     });
     true
@@ -3742,6 +3753,8 @@ fn cpi_persist_mode(args: &[String]) -> bool {
         to: "9999".to_string(),
         cpi_from: opt("-cpifrom").unwrap_or_default(),
         cpi_to: opt("-cpito").unwrap_or_else(|| "9999".to_string()),
+        era_from: opt("-erafrom").unwrap_or_default(),
+        era_to: opt("-erato").unwrap_or_else(|| "9999".to_string()),
         resamples: 0,
         seed: 0,
         joint: 0.0,
