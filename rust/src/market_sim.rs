@@ -5063,6 +5063,10 @@ pub struct World {
 #[derive(Clone, Debug)]
 pub struct Path {
     pub price: Vec<f64>,
+    /// the price's session log returns, `ln(price[i + 1] / price[i])`, taken once where the path
+    /// is made and sliced by every window of it; empty on a path assembled without them, which
+    /// `price_returns` then computes
+    pub price_lr: Vec<f64>,
     pub rate: Vec<f64>,
     pub fundamental: Vec<f64>,
     /// per-session slippage multiplier (equity market)
@@ -5165,6 +5169,26 @@ pub struct Path {
 }
 
 impl Path {
+    /// The price's session log returns: the kept series when it matches the price, else
+    /// `daily_returns` of the price (the same values).
+    #[must_use]
+    pub fn price_returns(&self) -> Vec<f64> {
+        if !self.price.is_empty() && self.price_lr.len() + 1 == self.price.len() {
+            self.price_lr.clone()
+        } else {
+            self.price_returns()
+        }
+    }
+
+    /// the kept returns of the window of `n` prices starting at price `a`, empty when none are kept
+    fn lr_window(&self, a: usize, n: usize) -> Vec<f64> {
+        if n < 2 || self.price_lr.len() + 1 != self.price.len() || a + n > self.price.len() {
+            Vec::new()
+        } else {
+            self.price_lr[a..a + n - 1].to_vec()
+        }
+    }
+
     /// THE FIRST SERIES OF THE PATH THAT IS NOT A NUMBER: its printed price, then the channel level
     /// its world's derived series were sampled at (`ChannelLevel`, solved on an ensemble of its
     /// own, so one NaN session there reaches every path), then each series `-emit` writes
@@ -5212,6 +5236,7 @@ impl Path {
         let cut = |v: &[f64]| v[..n.min(v.len())].to_vec();
         Path {
             price: cut(&self.price),
+            price_lr: self.lr_window(0, n),
             rate: cut(&self.rate),
             fundamental: cut(&self.fundamental),
             liq: cut(&self.liq),
@@ -5274,6 +5299,10 @@ impl Path {
         let cut = |v: &[f64]| window(v, start, sessions);
         Path {
             price: cut(&self.price),
+            price_lr: {
+                let a = start.min(self.price.len());
+                self.lr_window(a, (a + sessions).min(self.price.len()) - a)
+            },
             rate: cut(&self.rate),
             fundamental: cut(&self.fundamental),
             liq: cut(&self.liq),
@@ -5343,6 +5372,7 @@ impl Path {
         let chan = |v: &[f64]| if channels { cut(v) } else { Vec::new() };
         Path {
             price: cut(&self.price),
+            price_lr: self.lr_window(self.price.len() - m, m),
             rate: cut(&self.rate),
             fundamental: cut(&self.fundamental),
             liq: cut(&self.liq),
@@ -7853,6 +7883,7 @@ impl TpKeep {
                     tape: tape.copied(),
                     lean: Path {
                         price: p.price.clone(),
+                        price_lr: p.price_lr.clone(),
                         rate: p.rate.clone(),
                         cpi: p.cpi.clone(),
                         infl_press: p.infl_press.clone(),
@@ -10263,6 +10294,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let nf = n as f64;
     let path = Path {
         price: px[BURN_IN..].to_vec(),
+        price_lr: daily_returns(&px[BURN_IN..]),
         rate: rt[BURN_IN..].to_vec(),
         fundamental: fv[BURN_IN..].to_vec(),
         liq: lq[BURN_IN..].to_vec(),
@@ -12222,7 +12254,7 @@ pub fn ledger_resamples(
 /// volatility exit's inputs (`vol_exit_days_of_path`).
 #[must_use]
 pub fn vol_state_days_of_path(p: &Path) -> Vec<VolStateDay> {
-    daily_returns(&p.price)
+    p.price_returns()
         .into_iter()
         .zip(vol_exit_days_of_path(p))
         .map(|(log_ret, exit)| VolStateDay { log_ret, exit })
@@ -12580,7 +12612,7 @@ pub fn ledger_histories(a: Anchors, sims: &[Path]) -> Vec<HistoryRow> {
     let lag1: Vec<f64> = sims
         .par_iter()
         .map(|p| {
-            let r = daily_returns(&p.price);
+            let r = p.price_returns();
             ledger_lag1_of(&r[r.len().saturating_sub(n)..])
         })
         .collect();
@@ -16585,7 +16617,7 @@ pub fn basket_ruler_tsv(
 /// holds (diversification goes as 1/N), so the model's aggregate is read the same way. A reading,
 /// not a simulation: the emitted names keep every session.
 fn masked_returns(s: &Path, r: &BasketRuler) -> (Vec<f64>, Vec<Vec<f64>>) {
-    let rp = daily_returns(&s.price);
+    let rp = s.price_returns();
     let n = rp.len();
     let rn = s
         .names
@@ -17968,7 +18000,7 @@ fn bar_stats(sims: &[Path]) -> Option<BarStats> {
     let per: Vec<BarPath> = sims
         .par_iter()
         .map(|s| {
-            let r = daily_returns(&s.price);
+            let r = s.price_returns();
             let x: Vec<f64> = (0..s.log_hi.len())
                 .map(|i| s.log_hi[i] - s.log_lo[i])
                 .collect();
@@ -18204,7 +18236,7 @@ fn real_rows_of_path(s: &Path) -> ([f64; 13], [f64; 6]) {
     } else {
         daily_returns(&s.bond10)
     };
-    let t = tips_readings(&r_t, &dur, &rb10, &daily_returns(&s.price));
+    let t = tips_readings(&r_t, &dur, &rb10, &s.price_returns());
     // the ex-post real rate by month: the month's mean policy rate in percent less the next
     // twelve months' inflation off the month-end levels
     let months = s.rate.len() / m;
@@ -18263,7 +18295,7 @@ fn stock_bond_of_path(s: &Path) -> ([f64; 4], [f64; 3]) {
         return none;
     }
     let m = SESSIONS_PER_MONTH;
-    let eq = monthly_sums(&daily_returns(&s.price));
+    let eq = monthly_sums(&s.price_returns());
     let b = monthly_sums(&daily_returns(&s.bond10));
     let skip = MONTHS_PER_YEAR;
     if eq.len() < skip + MONTHLY_BLOCK {
@@ -18417,7 +18449,7 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
     // these elements, which are those values to the bit; a series no asked-for family reads
     // stays empty
     let r: Vec<f64> = if eq || nd.cluster || br {
-        daily_returns(&s.price)
+        s.price_returns()
     } else {
         Vec::new()
     };
@@ -18785,9 +18817,16 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
                 .collect::<Vec<[f64; 2]>>(),
         )
     };
-    let bond_crash_pooled = pooled(|p| &p.bond_crash);
-    let bond_crash_net_pooled = pooled(|p| &p.bond_crash_net);
-    let bond10_crash_pooled = pooled(|p| &p.bond10_crash);
+    // the three fits are independent and each sorts its pairs' slopes: side by side on the pool
+    let (bond_crash_pooled, (bond_crash_net_pooled, bond10_crash_pooled)) = rayon::join(
+        || pooled(|p| &p.bond_crash),
+        || {
+            rayon::join(
+                || pooled(|p| &p.bond_crash_net),
+                || pooled(|p| &p.bond10_crash),
+            )
+        },
+    );
     let eps: Vec<Episode> = per
         .iter()
         .flat_map(|p| p.episodes.iter().copied())
@@ -18941,7 +18980,13 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
         corr_calm: med_by(|p| p.corr_calm),
         corr_infl: med_by(|p| p.corr_infl),
         mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
-        pct_bond_stress: scala_sum(sims.iter().map(Path::pct_bond_stress)) / n_sims,
+        // each path's share read on the pool, summed in path order
+        pct_bond_stress: scala_sum(
+            sims.par_iter()
+                .map(Path::pct_bond_stress)
+                .collect::<Vec<f64>>()
+                .into_iter(),
+        ) / n_sims,
         bond_stress_spells: med_by(|p| p.bond_stress[1]),
         bond_stress_len: med_by(|p| p.bond_stress[2]),
         crowd_flow: scala_sum(sims.iter().map(|s| s.mean_crowd_flow)) / n_sims,
@@ -25040,7 +25085,7 @@ fn extreme_reading(nm: &str, p: &Path) -> Option<f64> {
     match nm {
         // `measure`'s `worst_depth` for this path alone
         "worst crash %" => Some(worst_crash_of(&p.price)),
-        "bubble coupling 3y" => Some(bubble_coupling_of(&daily_returns(&p.price))),
+        "bubble coupling 3y" => Some(bubble_coupling_of(&p.price_returns())),
         CPI_PERSISTENCE_ROW => Some(cpi_persistence_of_path(&p.cpi)),
         _ => None,
     }
@@ -25083,7 +25128,7 @@ fn multi_year_histories(
 
 /// One path's `MULTI_YEAR_ROWS` readings, in their order.
 fn multi_year_path_reading(p: &Path) -> [f64; 8] {
-    let m = multi_year_of(&daily_returns(&p.price), &p.price);
+    let m = multi_year_of(&p.price_returns(), &p.price);
     [
         m[0],
         m[1],
@@ -25181,7 +25226,7 @@ fn reported_rows_on(rec: &ReportedRecord, sims: &[Path], window: &str) -> Vec<Re
         }
         RowFamily::Coupling => (
             sims.par_iter()
-                .map(|p| vec![bubble_coupling_of(&daily_returns(&p.price))])
+                .map(|p| vec![bubble_coupling_of(&p.price_returns())])
                 .collect(),
             vec![None],
         ),
@@ -26558,7 +26603,7 @@ fn arm_path(p: &Path, e: &[f64], cost: f64, safe: Safe) -> ArmPath {
     let n = p.price.len();
     // day i earns: exposure e(i-1) times the asset return, the remainder times the safe
     // return, minus |exposure change| * cost * that session's liquidity state
-    let eq_rets = MatD::apply(&daily_returns(&p.price));
+    let eq_rets = MatD::apply(&p.price_returns());
     let safe_rets = match safe {
         Safe::Cash => MatD::apply(
             &(0..n - 1)
@@ -34866,7 +34911,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         );
     }
 
-    let all_rets: Vec<Vec<f64>> = sims.iter().map(|s| daily_returns(&s.price)).collect();
+    let all_rets: Vec<Vec<f64>> = sims.iter().map(|s| s.price_returns()).collect();
     let ann_vol: Vec<f64> = all_rets
         .iter()
         .map(|r| {
@@ -36174,7 +36219,7 @@ mod ledger_row_tests {
         assert_eq!(lag.name, "return lag-1 autocorr");
         assert_eq!(lag.horizon, 27);
         for (p, x) in sims.iter().zip(&lag.reads) {
-            let r = daily_returns(&p.price);
+            let r = p.price_returns();
             let want = lag1_demeaned(&r[r.len() - rec.lag1_sessions..]);
             assert_eq!(x.to_bits(), want.to_bits());
         }
@@ -40590,7 +40635,7 @@ mod real_side_tests {
         let mut slow = fast;
         slow.yield_lag = 21.0;
         let deep = |p: &Path| -> [f64; 2] {
-            let eq = monthly_sums(&daily_returns(&p.price));
+            let eq = monthly_sums(&p.price_returns());
             let b = monthly_sums(&daily_returns(&p.bond));
             let r = stock_bond_readings(&eq, &b, &vec![1.0; eq.len()]);
             [r[0], r[2]]
