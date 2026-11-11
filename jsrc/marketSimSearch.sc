@@ -307,9 +307,9 @@ object MarketSimSearch:
       s"${cell(r.scales(0))}|${cell(r.scales(1))}|${cell(r.resolutions(0))}|${cell(r.resolutions(1))}|" +
       s"${cell(r.knees(0))}|${cell(r.knees(1))}"
 
-  /** The score's form, in the digests: the CRPS in record scales, clipped, through the knee's dead
-    * zone, and the sign's weight. */
-  def ledgerForm: String = s"crps|clip ${g8(LedgerClip)}|soft knee|sign ${g8(LedgerSignK)}"
+  /** The score's form, in the digests: the energy distance to the record's cloud in record scales,
+    * clipped, and the sign's weight. */
+  def ledgerForm: String = s"energy|cloud ${MarketSim.CloudK}|clip ${g8(LedgerClip)}|sign ${g8(LedgerSignK)}"
 
   /** The sign penalty (ruled 2026-10-23): a row whose model and record sit on opposite sides of its
     * null costs up to this many record scales, in proportion to the model's share of the separation
@@ -454,27 +454,20 @@ object MarketSimSearch:
       }
     }
 
-  /** A row's CRPS in its record's scale: `MarketSim.crps` of the record under the histories'
-    * readings, each first clipped to the record plus or minus `LedgerClip` scales (a NaN reading is
+  /** A row's distance in its record's scale (ruled 2026-11-07): `MarketSim.energyScore` of the
+    * record's cloud, the record with its scale as the cloud's sd, under the histories' readings,
+    * each first clipped to the record plus or minus `LedgerClip` scales (a NaN reading is
     * left out, as `crps` leaves it), divided by the scale.  NaN under two readable histories. */
   def ledgerCrps(reads: Vector[Double], record: Double, scale: Double): Double =
     val (lo, hi) = (record - LedgerClip * scale, record + LedgerClip * scale)
-    MarketSim.crps(reads.map(x => if x.isNaN then x else math.max(lo, math.min(hi, x))), record) / scale
+    MarketSim.energyScore(reads.map(x => if x.isNaN then x else math.max(lo, math.min(hi, x))), record, scale) / scale
 
-  /** THE DEAD ZONE (ruled 2026-10-27): a row's CRPS through a knee at `k`, the CRPS an
-    * indistinguishable world earns on the row (`LedgerSpec.knees`) -- quadratic inside it, c^2 / 2k,
-    * linear past it, c - k / 2, the two meeting at the knee with one slope; no knee (0 or less) is
-    * the CRPS itself. */
-  def soft(c: Double, k: Double): Double =
-    if k <= 0.0 then c
-    else if c <= k then c * c / (2.0 * k)
-    else c - k / 2.0
-
-  /** Each graded row's ledger score, its weight times (the crps through its knee, `soft`, +
-    * `LedgerSignK` x sign share), in table order over the rows the read graded. */
+  /** Each graded row's ledger score, its weight times (the energy distance + `LedgerSignK` x sign
+    * share), in table order over the rows the read graded.  The table's knee columns are read, not
+    * applied: the energy score subtracts the indistinguishable world's score itself. */
   def ledgerRowScores(v: LedgerVec, table: Ledger): Vector[(String, Double)] =
-    v.zip(table.rows).zipWithIndex.collect { case (((crps, sign, _), r), k) if crps.isFinite =>
-      (r.name, r.weight * (soft(crps, table.kneeAt(k)) + LedgerSignK * sign))
+    v.zip(table.rows).collect { case ((crps, sign, _), r) if crps.isFinite =>
+      (r.name, r.weight * (crps + LedgerSignK * sign))
     }
 
   /** THE LEDGER SCORE of one read (the gap ledger tool's number on the same read, and the re-pick
@@ -489,18 +482,18 @@ object MarketSimSearch:
     if c != 0.0 && !c.isNaN && !c.isInfinite then s + c else s
 
   /** THE EIGHT FAMILY AGGREGATES the Pareto reserve is pruned on: for each units class in
-    * `LedgerUnits` order, the sum of its rows' scaled CRPS through their knees (`soft`), then of its
+    * `LedgerUnits` order, the sum of its rows' scaled energy distances, then of its
     * rows' sign shares x `LedgerSignK`, over the rows the read graded, every row at its full weight
     * of one. */
   def ledgerFamilies(v: LedgerVec, table: Ledger): Vector[Double] =
-    v.zip(table.rows).zipWithIndex.foldLeft(Vector.fill(2 * LedgerUnits.length)(0.0)) {
-      case (out, (((crps, sign, _), r), i)) =>
+    v.zip(table.rows).foldLeft(Vector.fill(2 * LedgerUnits.length)(0.0)) {
+      case (out, ((crps, sign, _), r)) =>
         if !crps.isFinite then out
         else
           val k = LedgerUnits.indexOf(r.units) match
             case -1 => LedgerUnits.length - 1
             case j  => j
-          out.updated(2 * k, out(2 * k) + soft(crps, table.kneeAt(i))).updated(2 * k + 1, out(2 * k + 1) + LedgerSignK * sign)
+          out.updated(2 * k, out(2 * k) + crps).updated(2 * k + 1, out(2 * k + 1) + LedgerSignK * sign)
     }
 
   /** EPSILON-DOMINANCE on the family aggregates (lower is better): `b` dominates `a` when it is at
@@ -887,7 +880,7 @@ object MarketSimSearch:
         val cols = table.rows.indices.toVector.filter(k =>
           samples.forall(s => s._2(k)._1.isFinite && s._2(k)._3.isFinite))
         def contrib(v: LedgerVec, k: Int): Double =
-          table.rows(k).weight * (soft(v(k)._1, table.kneeAt(k)) + LedgerSignK * v(k)._2)
+          table.rows(k).weight * (v(k)._1 + LedgerSignK * v(k)._2)
         val pairs = cols.map(k => samples.map(s => (s._2(k)._3, contrib(s._2, k))))
         val bw = pairs.map { pr =>
           val mm = pr.foldLeft(0.0)((t, q) => t + q._1) / pr.length

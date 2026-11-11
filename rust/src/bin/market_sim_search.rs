@@ -1511,6 +1511,9 @@ struct Due {
     at: usize,
     /// the read should the pooled placement reject it
     rejected: Rejected,
+    /// the collapse bound's material: the read's kept worst years, the histories they are the
+    /// worst of, and the bound's edge (`ms::collapse_reading`)
+    collapse: ([f64; ms::COLLAPSE_KEEP], usize, f64),
 }
 
 /// A read ranked as a rejection: `fitness`'s dead-zone sum without the extreme rows, its worst row
@@ -1527,12 +1530,12 @@ impl Read {
     /// This read once the pooled placement `pl` is read (`placed_together`): the rejection it ranks
     /// as when the placement `rejects`; else the placement's failures (thin units, or a seed
     /// world's failing ones) after its uncovered fidelity gates.
-    fn placed(self, pl: &ms::Placement, rejects: bool) -> Read {
+    fn placed(self, pl: &ms::Placement, rejects: bool, collapses: bool) -> Read {
         let mut r = self;
         let Some(due) = r.due.take() else {
             return r;
         };
-        if rejects {
+        if rejects || collapses {
             let x = due.rejected;
             return Read {
                 feasible: false,
@@ -1540,7 +1543,11 @@ impl Read {
                 raw: x.raw,
                 worst: x.worst,
                 total: x.total,
-                gate_fail: pl.failures(),
+                gate_fail: collapses
+                    .then(|| format!("pooled: {}", ms::COLLAPSE_GATE))
+                    .into_iter()
+                    .chain(if rejects { pl.failures() } else { Vec::new() })
+                    .collect(),
                 ledger: Vec::new(),
                 ledger_vec: None,
                 ..r
@@ -1567,7 +1574,17 @@ fn placed_together(reads: Vec<Read>, place: bool) -> Vec<Read> {
         .collect();
     let pl = ms::placement(&ms::pooled_history_rows(&rows), ms::PLACEMENT_ALPHA);
     let rejects = place && pl.verdict == ms::PlacementVerdict::Fail;
-    reads.into_iter().map(|r| r.placed(&pl, rejects)).collect()
+    // the collapse bound on the pooled histories: a realism bound, so a seed world fails it too
+    let dues: Vec<&Due> = reads.iter().filter_map(|r| r.due.as_deref()).collect();
+    let pooled = ms::collapse_reading(
+        &dues.iter().map(|d| d.collapse.0).collect::<Vec<_>>(),
+        &dues.iter().map(|d| d.collapse.1).collect::<Vec<_>>(),
+    );
+    let collapses = dues.first().is_some_and(|d| pooled < d.collapse.2);
+    reads
+        .into_iter()
+        .map(|r| r.placed(&pl, rejects, collapses))
+        .collect()
 }
 
 /// The rows a read is ranked on, (term, name), and the worst of them, ties broken by name exactly
@@ -1729,7 +1746,13 @@ fn read_paths(
     // fails here, so a candidate that fails one is rejected before their ensembles are simulated:
     // the table's gates are then not read, and neither priced nor named.
     let default = obj.classes.clone();
-    let own = ms::gate_checks(anchors, &st);
+    // THE COLLAPSE BOUND is read once on the candidate's reads pooled (`placed_together`): one
+    // read of 200 histories sets a single history aside and rejects a world inside the bound a
+    // third of the time
+    let own: Vec<_> = ms::gate_checks(anchors, &st)
+        .into_iter()
+        .filter(|(nm, _, _)| nm.as_str() != ms::COLLAPSE_GATE)
+        .collect();
     let early = own
         .iter()
         .any(|(nm, ok, cls)| !ok && default.contains(cls) && !ms::gate_reads_table(nm));
@@ -1749,12 +1772,15 @@ fn read_paths(
                 .map_or(f64::NAN, |(_, get, _, _)| get(&st))
         })
     });
-    let checks = if early {
+    let checks: Vec<(String, bool, ms::GateClass)> = if early {
         own.into_iter()
             .filter(|(nm, _, _)| !ms::gate_reads_table(nm))
             .collect()
     } else {
         ms::gate_checks_at(anchors, &st, banded)
+            .into_iter()
+            .filter(|(nm, _, _)| nm.as_str() != ms::COLLAPSE_GATE)
+            .collect()
     };
     let bad = checks
         .iter()
@@ -1889,6 +1915,11 @@ fn read_paths(
                 worst: worst.1.to_string(),
                 total,
             },
+            collapse: (
+                st.worst_years_low,
+                st.worst_year_count,
+                ms::COLLAPSE_MULTIPLE * anchors.worst_year,
+            ),
         })
     });
     // the log names a regression past a dead zone; smaller ones are priced but not listed
@@ -6718,6 +6749,7 @@ mod membership_tests {
                     worst: "y".to_string(),
                     total: 7.0,
                 },
+                collapse: ([f64::NAN; ms::COLLAPSE_KEEP], 0, f64::NAN),
             })),
         }
     }
@@ -6747,6 +6779,33 @@ mod membership_tests {
         out.due = None;
         let got = placed_together(vec![due_read(a), out], true);
         assert!(got[0].feasible && !got[1].feasible && got.iter().all(|r| r.due.is_none()));
+    }
+
+    /// THE COLLAPSE BOUND IS READ ON THE POOL: two reads of 200 histories set two aside between
+    /// them, so one collapse in each passes and two more in either fail; the failure rejects every
+    /// read and names the bound, a seed world included.
+    #[test]
+    fn the_collapse_bound_is_read_once_on_the_pooled_reads() {
+        let (a, b) = two_reads(57);
+        let with = |rows: &[ms::HistoryRow], worst: &[f64]| {
+            let mut r = due_read(rows.to_vec());
+            let mut lows = [f64::NAN; ms::COLLAPSE_KEEP];
+            lows[..worst.len()].copy_from_slice(worst);
+            if let Some(d) = r.due.as_mut() {
+                d.collapse = (lows, 200, -2.06);
+            }
+            r
+        };
+        let got = placed_together(vec![with(&a, &[-3.0, -1.5]), with(&b, &[-2.5, -1.2])], true);
+        assert!(got.iter().all(|r| r.feasible), "one in each is allowed");
+        for place in [true, false] {
+            let got = placed_together(
+                vec![with(&a, &[-3.0, -2.2, -2.1]), with(&b, &[-1.2])],
+                place,
+            );
+            assert!(got.iter().all(|r| !r.feasible && r.due.is_none()));
+            assert_eq!(got[0].gate_fail[0], "pooled: no collapse");
+        }
     }
 
     /// Reads each passing their own placement do not admit a candidate the pool fails, every read

@@ -42,15 +42,18 @@ class RealSideSuite extends FunSuite:
     assertEquals(rep(2), 21.0)
   }
 
-  test("the century rows count deflation months and spell starts") {
+  test("the era rows count deflation months, spell starts and deflation spells") {
     // ten years: a year of -0.5% a month, then two spells of 0.5% a month a year apart
     val dlog = Array.fill(12)(0.0) ++ Array.fill(12)(-0.005) ++ Array.fill(24)(0.0) ++
       Array.fill(12)(0.005) ++ Array.fill(12)(0.0) ++ Array.fill(12)(0.005) ++ Array.fill(36)(0.0)
-    val r = MarketSim.cpiCenturyReadings(dlog)
+    val r = MarketSim.cpiEraReadings(dlog)
     // the year-over-year rate is below zero from the first negative month to a year after the
     // last, 23 months of the 109 the rate exists
     assert(near(r(0), 23.0 / 109.0 * 100.0), s"deflation share ${r(0)}")
     assert(near(r(1), 2.0 / 10.0 * 100.0), s"spell starts per century ${r(1)}")
+    // one deflation spell of 23 months in the ten years, the longest by default
+    assert(near(r(2), 10.0), s"deflation spells per century ${r(2)}")
+    assert(near(r(3), 23.0), s"deflation spell max months ${r(3)}")
   }
 
   test("the real-yield rows read a line and a sawtooth") {

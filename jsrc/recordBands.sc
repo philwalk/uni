@@ -27,6 +27,7 @@ object RecordBands {
     "    -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S] [-joint A] [-of N] [-header]",
     "    [-coupling | -multiyear [-long] | -worstcrash]",
     "-rateafter -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]",
+    "-ratestays -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]",
     "-sectors DIR [-resamples N] [-seed S]",
     "-volexit (-closes FILE | -french FILE) -fred DFF -from -to -set -series",
     "    [-resamples N] [-seed S] [-joint A] [-of N] [-header]",
@@ -96,6 +97,11 @@ object RecordBands {
     "-rateafter    THE CONDITIONAL RATE ROWS (`RateAfterRows`): the -fred rate on the equity window's",
     "              session dates, the two years after each 20% decline's trough; the record by",
     "              `rateAfterOfReturns`, its paired block resamples, their own joint band",
+    "-ratestays    THE RATE FLOOR STAYS (`RateStayRows`): the -fred rate on the equity window's session",
+    "              dates, the stays of three months or more under the floor a century and the longest",
+    "              in years; the record by `rateStayReadings`, the stays' own resample",
+    "              (`rateStayResamples`: the count Poisson at the record's rate, the lengths the",
+    "              record's), their own joint band",
     "-timing       THE TIMING ROWS instead (`TimingRows`), on MONTH-END levels over -from..-to: what a",
     "              10-month moving-average exit does on the record and the market's one-year trend, the",
     "              rows of `timing-2026-09-30.tsv`, from -french FILE (CRSP's daily factors compounded,",
@@ -194,7 +200,7 @@ object RecordBands {
     "              CPIAUCNS -real DFII10 -breakeven T10YIE -nominal DGS10 -fred DFF -french <daily",
     "              factors> -set S [-from -to] (the real window) [-cpifrom -cpito] (the CPI and",
     "              real-rate window; the century file is read whole) [-resamples -seed -joint -of",
-    "              -header]; six groups (`CpiBandRows`, `CpiCenturyRows`, `RealYieldBandRows`,",
+    "              -header]; six groups (`CpiBandRows`, `CpiEraRows` over [-erafrom -erato], `RealYieldBandRows`,",
     "              `BreakevenBandRows`, `TipsBandRows`, `RealRateBandRows`), each on its own record",
     "              with its own joint band at the mode's share of -of (default 16, the mode's graded",
     "              rows); the reported rows go to stderr",
@@ -1631,11 +1637,12 @@ object RecordBands {
     printTipsGroup(set, Vector(MarketSim.CpiNewsRow), fredName(cpiFile), cpiWindow, dlog.length, Vector(news),
                    MarketSim.cpiNewsResamples(dlog, resamples, seed, run.block), alpha(1))
 
-  /** `-bondstress`: THE BOND STRESS SHARE ROW (`BondStressRow`; `recordbands-2026-09-26.tsv`) for
+  /** `-bondstress`: THE BOND STRESS ROWS (`BondStressRows`; `recordbands-2026-11-07.tsv`) for
     * -set: the spiral's stress index run on the -fred yield file as an n-year par bond (-years, 20 by
     * default) over every session in [-from, -to], a return spanning more than ten calendar days (the
     * series' gap) dropped with the state carried across it; the share of sessions above 0.5 after a
-    * one-year burn-in, in percent, and its one-year-block resamples. */
+    * one-year burn-in in percent, the spells a century and the longest spell, and their
+    * one-year-block resamples. */
   def bondStressMode(args: Vector[String])(using run: Run): Unit =
     val fredFile  = opt(args, "-fred").getOrElse(usage("-bondstress wants -fred FILE"))
     val years     = numberOf(args, "-years", 20.0, "-years wants a number")
@@ -1645,7 +1652,7 @@ object RecordBands {
     val resamples = countOf(args, "-resamples", 20000, "-resamples wants an integer").toInt
     val seed      = countOf(args, "-seed", 20260918L, "-seed wants a non-negative integer")
     val joint     = numberOf(args, "-joint", 0.10, "-joint wants a share in (0, 1)")
-    val of        = countOf(args, "-of", 1, "-of wants a row count").toInt
+    val of        = countOf(args, "-of", 3, "-of wants a row count").toInt
     printBandHeader(args)
     val daily = readTreasury(fredFile.asPath.lines.toVector, years)
     val inWindow = daily.indices.filter(i => daily(i)._1 >= from && daily(i)._1 <= to)
@@ -1655,11 +1662,12 @@ object RecordBands {
     val rets  = kept.map(_._2).toArray
     if rets.length < 2 * 252 then usage(s"$fredFile: ${rets.length} sessions in the window")
     val window = s"${dates.head}..${dates.last}"
-    val record = MarketSim.bondStressShare(rets)
+    val record = MarketSim.bondStressRows(rets)
     eprintln(f"${fredName(fredFile)}%s as a $years%.0f-year par bond: ${rets.length}%d sessions $window%s, $gaps%d gap returns dropped; " +
-             f"${MarketSim.BondStressRow}%s $record%.4f; $resamples%d resamples, seed $seed%d")
-    printTipsGroup(set, Vector(MarketSim.BondStressRow), s"${fredName(fredFile)} par bond", window, rets.length,
-                   Vector(record), MarketSim.bondStressResamples(rets, resamples, seed, run.block), joint / of)
+             f"${rowList(MarketSim.BondStressRows, record)}%s; $resamples%d resamples, seed $seed%d")
+    printTipsGroup(set, MarketSim.BondStressRows, s"${fredName(fredFile)} par bond", window, rets.length,
+                   record, MarketSim.bondStressResamples(rets, resamples, seed, run.block),
+                   joint * MarketSim.BondStressRows.length / of)
 
   /** `-cpipersist`: THE CPI PERSISTENCE ROW (`CpiPersistenceRow`) of -cpi over the CPI window for
     * -set, the record's own reading: a single-history row, not resampled; under `-block` its
@@ -1695,6 +1703,8 @@ object RecordBands {
     val to        = opt(args, "-to").getOrElse("9999")
     val cpiFrom   = opt(args, "-cpifrom").getOrElse("")
     val cpiTo     = opt(args, "-cpito").getOrElse("9999")
+    val eraFrom   = opt(args, "-erafrom").getOrElse("")
+    val eraTo     = opt(args, "-erato").getOrElse("9999")
     val resamples = countOf(args, "-resamples", 20000, "-resamples wants an integer").toInt
     val seed      = countOf(args, "-seed", 20260918L, "-seed wants a non-negative integer")
     val joint     = numberOf(args, "-joint", 0.10, "-joint wants a share in (0, 1)")
@@ -1710,12 +1720,12 @@ object RecordBands {
     printTipsGroup(set, MarketSim.CpiBandRows, fredName(cpiFile), cpiWindow, dlog.length, cpiRecord,
                    MarketSim.cpiResamples(dlog, resamples, seed, run.block), alpha(4))
 
-    // the century: CPI-U not seasonally adjusted from 1913, read whole
-    val (_, cdlog, cWindow) = cpiChanges(centuryFile, "", "9999")
-    val cRecord = MarketSim.cpiCenturyReadings(cdlog)
-    eprintln(s"${fredName(centuryFile)}: ${cdlog.length} monthly changes $cWindow; ${rowList(MarketSim.CpiCenturyRows, cRecord)}")
-    printTipsGroup(set, MarketSim.CpiCenturyRows, fredName(centuryFile), cWindow, cdlog.length, cRecord,
-                   MarketSim.cpiCenturyResamples(cdlog, resamples, seed, run.block), alpha(2))
+    // the era: CPI-U not seasonally adjusted over [-erafrom, -erato], the whole file by default
+    val (_, cdlog, cWindow) = cpiChanges(centuryFile, eraFrom, eraTo)
+    val cRecord = MarketSim.cpiEraReadings(cdlog)
+    eprintln(s"${fredName(centuryFile)}: ${cdlog.length} monthly changes $cWindow; ${rowList(MarketSim.CpiEraRows, cRecord)}")
+    printTipsGroup(set, MarketSim.CpiEraRows, fredName(centuryFile), cWindow, cdlog.length, cRecord,
+                   MarketSim.cpiEraResamples(cdlog, resamples, seed, run.block), alpha(MarketSim.CpiEraRows.length))
 
     // the real yield and the breakeven at month ends over the real window, each with its month
     def monthLevels(file: String): (Vector[(String, Double)], String) =
@@ -1899,6 +1909,7 @@ object RecordBands {
                         header: Boolean, coupling: Boolean, worst: Boolean, multiyear: Boolean, long: Boolean,
                         rate: Boolean, bond: Boolean, bond10: Boolean,
                         afterRate: Option[String],               // `-rateafter`: the rate read beside the equity
+                        staysRate: Option[String],               // `-ratestays`: the same, for the rate floor stays
                         cash: Option[String],                    // `-bond10`: the short rate (FRED DFF)
                         splice: Vector[(String, String)],        // `-splice FILE -at DATE`, in order
                         column: Option[String])                  // `-column NAME`, a French industry file's
@@ -1910,6 +1921,7 @@ object RecordBands {
     var resamples = 20000; var seed = 20260918L; var header = false
     var joint = 0.10; var of = 0; var coupling = false; var worst = false; var rate = false; var bond = false
     var bond10 = false; var multiyear = false; var long = false; var rateafter = false
+    var ratestays = false
     eachArg(args, usage) {
       case "-yahoo"      => yahoo = consumeNext
       case "-french"     => french = consumeNext
@@ -1939,6 +1951,7 @@ object RecordBands {
       case "-bond"       => bond = true
       case "-bond10"     => bond10 = true
       case "-rateafter"  => rateafter = true
+      case "-ratestays"  => ratestays = true
       // the lag-free record's switches, read by `lagOf`, and the block, read by `blockOf`
       case "-recorded"   => ()
       // the resamples behind each band row, for `-scales` (`bandQuantiles`)
@@ -1953,6 +1966,7 @@ object RecordBands {
       fred = ""
       f
     val afterRate = Option.when(rateafter)(takeFred("-rateafter wants a -fred rate"))
+    val staysRate = Option.when(ratestays)(takeFred("-ratestays wants a -fred rate"))
     // `-bond10` reads the short rate beside its DGS10 file, for the excess-return row
     val cash = Option.when(bond10)(takeFred("-bond10 wants a -fred DFF beside the DGS10 file"))
     val source = (yahoo.nonEmpty, french.nonEmpty, fred.nonEmpty) match
@@ -1969,7 +1983,7 @@ object RecordBands {
     rows.find(r => !MarketSim.RecordBandRows.contains(r))
       .foreach(r => usage(s"-rows names [$r], which is not a record-band row"))
     Opts(source, from, to, set, series, rows, resamples, seed, joint, of, header, coupling, worst, multiyear, long,
-         rate, bond, bond10, afterRate, cash, splice, Option.when(column.nonEmpty)(column))
+         rate, bond, bond10, afterRate, staysRate, cash, splice, Option.when(column.nonEmpty)(column))
 
   /** The window's daily log returns, each with the date it ended on -- or, on a `-fred` source,
     * the window's daily rate levels, no session dropped. */
@@ -2000,6 +2014,10 @@ object RecordBands {
         val rates = readFred(rateFile).toMap
         val joined = dated.flatMap((d, x) => rates.get(d).map(v => (x, v)))
         printRateAfterRows(o, joined.map(_._1).toArray, joined.map(_._2).toArray, window)
+      case None if o.staysRate.nonEmpty =>
+        // the rate on the equity's session dates: a session without a rate is dropped
+        val rates = readFred(o.staysRate.get).toMap
+        printRateStayRows(o, dated.flatMap((d, _) => rates.get(d)).toArray, window)
       case None =>
         if o.coupling then printCouplingRows(o, r, window)
         else if o.multiyear then printMultiYearRows(o, r, window)
@@ -2261,6 +2279,23 @@ object RecordBands {
     * equity window, joined on the equity's session dates: the record by `rateAfterOfReturns`,
     * its paired block resamples by `rateAfterResamples`, a joint band over the two -- the rate
     * rows' columns. */
+  /** THE RATE FLOOR STAYS (`-ratestays`) on a `-fred` rate beside a `-yahoo` or `-french` equity
+    * window, joined on the equity's session dates: the record by `rateStayReadings`, the stays' own
+    * resample by `rateStayResamples`, a joint band over the two -- the rate rows' columns. */
+  def printRateStayRows(o: Opts, rate: Array[Double], window: String): Unit =
+    val record = MarketSim.rateStayReadings(rate)
+    eprintln(f"${o.series}%s: ${rate.length}%d sessions $window%s joined with the rate; ${record(0)}%.4f stays a century, " +
+             f"the longest ${record(1)}%.4f y; ${o.resamples}%d resamples, seed ${o.seed}%d")
+    val reads = MarketSim.rateStayResamples(rate, o.resamples, o.seed)
+    if o.header then printBandHeader(Vector("-header"))
+    val ks = MarketSim.RateStayRows.indices.toVector
+    val alpha = o.joint * ks.length / (if o.of == 0 then ks.length else o.of)
+    val (c, edges) = MarketSim.recordBandJoint(reads, ks, alpha)
+    for (k, (lo, hi)) <- ks.zip(edges) do
+      val qs = bandQuantiles(record(k), reads.map(_(k)))
+      println(f"${o.set}%s\t${MarketSim.RateStayRows(k)}%s\t${o.series}%s\t$window%s\t${rate.length}%d\t${o.resamples}%d\t${record(k)}%.6f\t" +
+              qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
+
   def printRateAfterRows(o: Opts, r: Array[Double], rate: Array[Double], window: String)(using run: Run): Unit =
     val record = MarketSim.rateAfterOfReturns(r, rate)
     eprintln(f"${o.series}%s: ${r.length}%d sessions $window%s joined with the rate; post-trough mean " +

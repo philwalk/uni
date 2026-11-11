@@ -1,5 +1,31 @@
 ## v0.25.1 — 2026-10-30
 
+**The collapse bound.** A world may not end its market: at most one history in 200 may hold a 252-session log
+return beyond twice the record's worst (`Anchors.worst_year`: the S&P's -1.03, the year to June 1932, the edge a year
+at -87%; the Nasdaq's -1.20, the year to September 2001). The gate `no collapse` is in the realism class and is read
+once on a membership's pooled histories, in the search as in `-validate`: a single read of 200 histories sets one
+aside and cannot tell a world that collapses once in a hundred from one that never does. Medians and placements do
+not see such histories, and both earlier 0.25.1 recipes held them (the S&P's bound history at -2.44 against the edge
+-2.06). The report prints the bound's history, the edge and the read's worst year.
+
+**Two ceilings hold a world inside the bound.** `-slowcap` bounds the slow vol state's lift of the price's vol (the
+state passes unchanged below zero and through a smooth ceiling above, its mean restored); `-drawdowncap` bounds the
+drawdown's gap in the vol's answer to it the same way. Both are 0 when off, bit-identical, written in a world's block
+only when on, and searched with the families they bound. The collapses were the slow state and, on the Nasdaq, the
+drawdown term compounding without limit; with the ceilings the ledger pays nothing for the bound.
+
+**The 0.25.1 recipes and sets re-solved under the bound.** `0.25.1-sp500` is member 0 of a 32-member set, `-slowcap`
+3.77, `-drawdowncap` 0.97 and `-spikeneg` 0.62: the set ledger 36.32 against the earlier set's 42.41, -6.09 [-7.07,
+-4.29], every member inside the bound (the worst member's bound history -2.01, the median -1.74). `0.25.1-nasdaq` is
+member 0 of a 47-member set, `-slowcap` 3.21 and `-drawdowncap` 0.94: 34.03 against 38.35, -4.32 [-5.66, -2.69],
+every member inside the bound (edge -2.40, the median -2.05). Known gaps: the S&P set carries the record outside the
+central 95% of its pool on `vol coupling monthly corr`, `vol coupling quarterly corr` and `return lag-1 autocorr`
+(the record below the pool on each: the model's losses lift its vol less than the record's do); the Nasdaq set on
+`decline length p50 y long`, with `vol coupling monthly corr` at the pool's 4% point.
+
+**`Path::price_returns` on a path built without its kept returns** computes them from the price; it recursed without
+end.
+
 **The rate floor's stays.** Two rows read the floor's shape, which the two floor shares cannot: `rate floor stays
 per century`, how often a stay of three months or more under 0.50% starts, and `rate floor stay max years`, the
 longest one. The record's floor time is two stays, 2008-12..2016-12 and 2020-03..2022-05 (DFF on the equity's
@@ -8,7 +34,7 @@ is a flicker of days, all before 1963); the S&P recipe's is 8.3 dips a century, 
 years, the same 15% of sessions. The rows' band is the stays' own resample, the count a Poisson draw at the record's
 rate and each length a draw from the record's stays, since no block of sessions carries an eight-year stay (a
 one-year block bootstrap reads nine stays a century on the record itself). `record_bands -ratestays`;
-`recordbands-2026-11-08.tsv`; Rust only.
+`recordbands-2026-11-08.tsv`.
 
 **The inflation pulse's other side.** `-spikeneg` is the share of the spike channel's arrivals whose pulse is
 negative, the sign a draw on the spike's own stream only while the share is on (0 is bit-identical). The fiat era's
@@ -16,9 +42,8 @@ deflations are energy collapses, not regimes: the price level falls one to two p
 after a 5.5% peak, 2014-15) and the year-over-year rate sits below zero for five to twelve months. A negative pulse
 does that, the policy rate follows it down and the breakeven's estimate swings below with it; the deflation regime
 (`-deflprob`, a target below zero held for years) reads 23 months against the record's longest 8. Searched 0-1,
-written in a world's block only when on. The S&P recipe keeps the dial at 0: a re-solve with it reaches the three
-deflation rows and the rate floor share (ledger 31.7 against 40.0) but fails the release rule on the vol coupling
-rows, the open item.
+written in a world's block only when on. The S&P recipe carries it at 0.62 and reaches the three deflation rows
+and the rate floor share with it.
 
 **The fiat era's rows.** Two graded rows spanned a monetary regime break and graded the model's one regime
 against the other. `bond stress share %` is read on the DGS20 par bond since 1983 (0.04%; 1.81% in 1962-1982, the
@@ -27,7 +52,7 @@ the 1962-2026 read reported. `cpi deflation share %` (the year-over-year rate be
 (2.6%; 30.4% in 1913-1953, the gold standard's slides), with `cpi deflation spells per century` and `cpi deflation
 spell max months` beside it and `cpi 4%+ spells per century` on the same window, and the century read reported. Read
 so, the model's bond passes the stress rows and its deflation fails on shape: four-year regimes against the era's
-five-month dips. Rust only; the Scala twin keeps the century rows.
+five-month dips.
 
 **The bond stress share reads the model as it reads the record.** A history's `bond stress share %` is
 `bond_stress_share` on its own bond returns, the reconstruction the DGS20 par bond is read with; the spiral's

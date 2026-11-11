@@ -16,9 +16,9 @@ class RecordBandSuite extends FunSuite:
   /** the record-band fixture's rows, then the conditional rate rows' (`rateafter-2026-09-30.tsv`,
     * the same columns) without their header */
   private lazy val lines: Vector[String] =
-    fixtureLines("recordbands-2026-11-06.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
+    fixtureLines("recordbands-2026-11-08.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1) ++
       fixtureLines("volexit-2026-10-20.tsv").drop(1) ++ fixtureLines("volstate-2026-10-20.tsv").drop(1) ++
-      fixtureLines("bond10-2026-10-05.tsv").drop(1) ++ fixtureLines("tips-2026-10-29.tsv").drop(1) ++
+      fixtureLines("bond10-2026-10-05.tsv").drop(1) ++ fixtureLines("tips-2026-11-07.tsv").drop(1) ++
       fixtureLines("stockbond-2026-10-18.tsv").drop(1)
 
   private def row(set: String, name: String): Vector[Double] =
@@ -55,10 +55,10 @@ class RecordBandSuite extends FunSuite:
     for (set, a) <- sets do
       assertEquals(a.recordBands.map(_.name),
         MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows ++ MarketSim.RateAfterRows ++
-          MarketSim.VolExitRows ++ MarketSim.Bond10BandRows ++ MarketSim.CpiBandRows ++ MarketSim.CpiCenturyRows ++
+          MarketSim.VolExitRows ++ MarketSim.Bond10BandRows ++ MarketSim.CpiBandRows ++ MarketSim.CpiEraRows ++
           MarketSim.RealYieldBandRows ++ MarketSim.BreakevenBandRows ++ MarketSim.TipsBandRows ++ MarketSim.RealRateBandRows ++
-          MarketSim.StockBondBandRows ++ Vector(MarketSim.CpiNewsRow, MarketSim.BondStressRow),
-        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows, Bond10BandRows, CpiBandRows, CpiCenturyRows, RealYieldBandRows, BreakevenBandRows, TipsBandRows, RealRateBandRows, StockBondBandRows, CpiNewsRow, BondStressRow")
+          MarketSim.StockBondBandRows ++ Vector(MarketSim.CpiNewsRow) ++ MarketSim.BondStressRows ++ MarketSim.RateStayRows,
+        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows, VolExitRows, Bond10BandRows, CpiBandRows, CpiEraRows, RealYieldBandRows, BreakevenBandRows, TipsBandRows, RealRateBandRows, StockBondBandRows, CpiNewsRow, BondStressRows, RateStayRows")
       for b <- a.recordBands do
         val r = row(set, b.name)
         assertEquals(b.record, r.head, s"$set ${b.name}: record")
@@ -589,7 +589,7 @@ class RecordBandSuite extends FunSuite:
       // a window closing on December 31st spans its last year entire
       val ym = r(3).split("\\.\\.").map(d => d.take(4).toInt * 12 + d.slice(5, 7).toInt)
       val span = (ym(1) - ym(0) + 1) / 12
-      if MarketSim.CpiCenturyRows.contains(b.name) then
+      if MarketSim.CpiEraRows.contains(b.name) then
         // rates per unit time read on the paths' own length: the century is longer than any path
         assert(MarketSim.recordBandYears(a, b.name) <= span, s"$set ${b.name}: read within ${r(3)}")
       else

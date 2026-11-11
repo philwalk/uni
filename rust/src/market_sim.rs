@@ -715,7 +715,7 @@ fn refused(bad: bool, why: &str) -> Option<String> {
 /// every range `calibrate` sweeps. A `contains` test is false for NaN, so a NaN literal is
 /// refused here rather than reaching the model. Value-level checks only: a check on which flags
 /// were given stays in the parser.
-const WORLD_DOMAIN: [fn(&World) -> Option<String>; 164] = [
+const WORLD_DOMAIN: [fn(&World) -> Option<String>; 166] = [
     |w| share_refusal("-trendshare", w.trend_share),
     |w| share_refusal("-leverage", w.leverage),
     |w| share_refusal("-downshock", w.down_shock),
@@ -784,6 +784,7 @@ const WORLD_DOMAIN: [fn(&World) -> Option<String>; 164] = [
             .then(|| format!("-declinevolhalf {} must be above 0", w.decline_vol_half))
     },
     |w| non_neg_refusal("-drawdownvol", w.drawdown_vol),
+    |w| non_neg_refusal("-drawdowncap", w.drawdown_cap),
     |w| {
         refused(
             !(0.0..1.0).contains(&w.decline_vol_attack),
@@ -904,6 +905,7 @@ const WORLD_DOMAIN: [fn(&World) -> Option<String>; 164] = [
     },
     |w| non_neg_refusal("-slowvol", w.slow_vol),
     |w| non_neg_refusal("-slowlev", w.slow_lev),
+    |w| non_neg_refusal("-slowcap", w.slow_cap),
     |w| non_neg_refusal("-slowbeta", w.slow_beta),
     |w| {
         refused(
@@ -1385,6 +1387,7 @@ pub fn default_world() -> World {
         slow_share: 0.20,
         slow_vol: 0.894,
         slow_lev: 1.1,
+        slow_cap: 0.0,
         slow_phi: 0.996,
         slow_perm: 0.30,
         slow_beta: 0.55,
@@ -1425,6 +1428,7 @@ pub fn default_world() -> World {
         decline_vol: 0.0,
         decline_vol_half: 5.0,
         drawdown_vol: 0.0,
+        drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
@@ -1538,6 +1542,7 @@ fn v0_19_2() -> World {
         slow_share: 0.0,
         slow_vol: 0.894,
         slow_lev: 1.1,
+        slow_cap: 0.0,
         slow_phi: 0.996,
         slow_perm: 0.30,
         slow_beta: 0.55,
@@ -1618,6 +1623,7 @@ fn v0_19_2() -> World {
         decline_vol: 0.0,
         decline_vol_half: 5.0,
         drawdown_vol: 0.0,
+        drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
@@ -1772,6 +1778,7 @@ fn v0_24_1() -> World {
         decline_vol: 0.0,
         decline_vol_half: 5.0,
         drawdown_vol: 0.0,
+        drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
@@ -1820,6 +1827,7 @@ fn v0_24_1() -> World {
         slow_share: 0.2,
         slow_vol: 0.894,
         slow_lev: 1.1,
+        slow_cap: 0.0,
         slow_phi: 0.996,
         slow_perm: 0.3,
         slow_beta: 0.55,
@@ -2067,32 +2075,118 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
 /// worse at the earlier value returned to it. On the 36-row ledger 40.5 against 42.3 for the same
 /// recipe with the increment constant, the vol-process rows at the record (`z beyond 3 sds %` 1.33
 /// in its band, `log vol sd` 0.46, `vol doubling months %` 3.9), membership p 0.91, every class
-/// passing on every read and by the margin on 40 more.
+/// passing on every read and by the margin on 40 more. Then (2026-11-11) re-solved whole under the
+/// collapse bound (`COLLAPSE_GATE`) with the two ceilings (`slow_cap` 3.77, `drawdown_cap` 0.97)
+/// and the negative inflation pulse (`spike_neg` 0.62), 101 dials: the recipe before held
+/// collapsing histories (its bound history -2.44 against the edge -2.06; this one's -1.74). Its
+/// 32-member set 36.32 against the 65's 42.41, -6.09 [-7.07, -4.29]; set misses `vol coupling
+/// monthly corr`, `vol coupling quarterly corr` and `return lag-1 autocorr`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one recipe literal, every moved dial named"
+)]
 fn recipe_0251_sp500(mut w: World) -> World {
-    w.stress = 3.0298631;
-    w.rate_mean = 0.064741312;
-    w.vol_of_vol = 0.016982764;
-    w.jump_skew = 0.79916463;
-    w.jump_var = 0.13021428;
+    w.trend_share = 0.14538338;
+    w.depth = 16.460135;
+    w.stress = 3.0844373;
+    w.drift = 0.13994832;
+    w.fund_vol = 0.054122324;
+    w.rate_mean = 0.071925601;
+    w.vol_of_vol = 0.019915479;
+    w.leverage = 0.10212671;
+    w.down_shock = 0.019171689;
+    w.jump_skew = 0.76981152;
+    w.jump_var = 0.13434382;
     w.jump_rate = 0.0022997084;
-    w.news_bond = 0.47452643;
-    w.news_bond_skip = 0.017489922;
-    w.slow_bond_infl = 0.030234235;
+    w.news_rate = 2.1212435;
+    w.news_size = 0.021652093;
+    w.news_lev = 4.6887563;
+    w.news_revert = 0.44768380;
+    w.news_scale = 0.38429948;
+    w.news_bond = 0.43900536;
+    w.news_bond_skip = 0.058157602;
+    w.credit_regime = 0.24212182;
+    w.credit_regime_rate = 0.67784945;
+    w.slow_bond_infl = 0.10851959;
+    w.noise_skew = 0.91558440;
+    w.news_flip = 0.35505387;
+    w.value_pull = 0.12922871;
+    w.recovery_floor = 0.21255802;
+    w.boom_rate = 2.4767900;
+    w.boom_size = 0.63014953;
+    w.boom_len = 13.764899;
+    w.recess_rate = 0.40294192;
+    w.recess_size = 0.27429490;
+    w.recess_len = 1.4257376;
+    w.recess_recover = 0.77969946;
+    w.recess_news = 1.2992549;
+    w.recess_vol = 0.0064347984;
+    w.recess_reprice = 0.96792191;
+    w.recess_base = 0.36949491;
+    w.recess_shape = 2.1512282;
+    w.overshoot = 0.48347627;
+    w.overshoot_rate = 0.18790573;
+    w.recess_rec_mult = 1.6052534;
+    w.recess_credit = 13.918700;
+    w.recess_infl = 0.0000000;
+    w.regime_drift = 0.00089661829;
+    w.drift_sd = 0.011507561;
+    w.boom_fade = 5.3979063;
+    w.delev_rate = 0.65390908;
+    w.delev_from = 1.3754363;
+    w.delev_size = 0.19047633;
+    w.delev_len = 0.085374331;
+    w.vol_pull = 1.8357360;
+    w.belief_years = 2.7514651;
+    w.belief_leak = 0.32841736;
+    w.cap_years = 0.51017704;
+    w.cycle_sd = 0.16152393;
+    w.cycle_years = 20.000000;
     w.cycle_vol = 1.0000000;
-    w.term_premium = 0.069160855;
-    w.term_vol = 0.0048085213;
-    w.term_press = 1.0000000;
-    w.cpi_noise_level = 0.87106100;
-    w.policy_growth = 0.068884987;
-    w.yield_lag = 28.615200;
-    w.exp_anchor = 0.49890381;
-    w.yield_anchor = 0.72761553;
+    w.crowd_impact = 0.012324032;
+    w.crowd_adjust = 1.1650288;
+    w.term_premium = 0.052574915;
+    w.cpi_noise = 0.0057394285;
+    w.defl_prob = 0.0091910768;
+    w.defl_size = 0.035328025;
+    w.spike_rate = 0.45188566;
+    w.spike_neg = 0.61844287;
+    w.spike_size = 0.038030046;
+    w.term_vol = 0.0061125149;
+    w.term_press = 0.70262805;
+    w.cpi_noise_level = 0.87967506;
+    w.policy_growth = 0.12899392;
+    w.yield_beta = 0.0033838755;
+    w.yield_lag = 36.750095;
+    w.exp_anchor = 0.48926061;
+    w.yield_anchor = 0.66443120;
     w.vol_feedback = 0.29804100;
-    w.refuge = 0.13842340;
-    w.refuge_days = 1.3746700;
-    w.lev_gain = 4.5653900;
-    w.margin = 0.0079948400;
-    w.div_yield = 1.95;
+    w.value_cap = 0.0094504363;
+    w.value_cap_fall = 0.0043879941;
+    w.recess_spread = 0.093439673;
+    w.recess_transient = 0.23042519;
+    w.easing = 0.14681192;
+    w.floorhold = 0.13161498;
+    w.refuge = 0.11812463;
+    w.refuge_days = 1.1909195;
+    w.div_yield = 1.9500000;
+    w.lev_gain = 5.5657374;
+    w.noise_scale = 1.1442450;
+    w.decline_vol = 0.47903617;
+    w.decline_vol_half = 8.2772626;
+    w.drawdown_vol = 0.47015849;
+    w.drawdown_cap = 0.96999024;
+    w.decline_vol_attack = 0.91092179;
+    w.bust_amp = 0.090637511;
+    w.slow_share = 0.47542917;
+    w.slow_cap = 3.7723032;
+    w.slow_vol = 1.1543973;
+    w.slow_perm = 0.34505308;
+    w.slow_beta = 0.82677910;
+    w.infl_size = 0.054747101;
+    w.discount = 6.2660639;
+    w.discount_ref = 1.7926100;
+    w.margin = 0.0080000000;
     w
 }
 
@@ -2112,100 +2206,105 @@ fn recipe_0251_sp500(mut w: World) -> World {
 /// judge's seeds with `bond stress share %` reported (`NASDAQ_ERA_ROWS`), membership on every
 /// read; its 37-member set 32.97 against the 66's 37.60 under the release rule, -4.63 [-5.77,
 /// -3.38]; one set miss, `decline length p50 y long` (the record at the pool's 1.6% point), the
-/// 66's `vol doubling months %` cleared.
+/// 66's `vol doubling months %` cleared. Then (2026-11-11) re-solved under the collapse bound with
+/// the two ceilings held (`slow_cap` 3.21, `drawdown_cap` 0.94) and read back by family, 94 dials:
+/// 34.99 against 37.83 on the judge's seeds; its 47-member set 34.03 against the 37's 38.35, -4.32
+/// [-5.66, -2.69], every member inside the bound, the one set miss carried.
 fn recipe_0251_nasdaq(mut w: World) -> World {
-    w.depth = 13.496906;
+    w.depth = 14.448864;
+    w.stress = 3.5980618;
     w.fund_vol = 0.044888026;
     w.rate_mean = 0.034508216;
     w.vol_of_vol = 0.024148935;
     w.leverage = 0.079123047;
     w.down_shock = 0.00022523643;
-    w.news_rate = 7.624891;
+    w.jump_skew = 0.038618110;
+    w.jump_var = 0.093198762;
+    w.jump_rate = 0.0046262668;
+    w.news_rate = 5.6883432;
     w.news_size = 0.024258837;
     w.news_lev = 39.547822;
     w.news_revert = 0.23752839;
     w.news_scale = 0.33630068;
     w.news_bond = 0.24905600;
     w.news_bond_skip = 0.26802600;
-    w.credit_regime = 0.19926532;
-    w.credit_regime_rate = 1.6578246;
+    w.credit_regime = 0.23132005;
+    w.credit_regime_rate = 2.4166573;
     w.slow_bond_infl = 0.48413900;
     w.noise_skew = 0.16350944;
     w.news_flip = 0.65915399;
-    w.value_pull = 0.01924059;
+    w.value_pull = 0.019240590;
+    w.recovery_drag = 0.49878993;
+    w.recovery_floor = 0.21831132;
+    w.boom_rate = 1.0697937;
+    w.boom_size = 1.7194009;
+    w.boom_len = 1.9247560;
     w.recess_rate = 0.30511416;
     w.recess_size = 0.24720789;
     w.recess_len = 1.5143282;
     w.recess_recover = 0.84716992;
     w.recess_news = 1.0000000;
-    w.recess_vol = 0.0;
+    w.recess_vol = 0.0000000;
     w.recess_reprice = 0.91365258;
+    w.recess_base = 1.2553621;
     w.recess_shape = 1.5017152;
+    w.overshoot = 0.85783691;
+    w.overshoot_rate = 0.32824799;
     w.recess_rec_mult = 1.5790117;
     w.recess_credit = 0.037939692;
     w.recess_infl = 0.36695218;
+    w.boom_fade = 2.4789944;
+    w.delev_rate = 1.2022333;
+    w.delev_from = 5.0357040;
+    w.delev_size = 0.083384574;
+    w.delev_len = 0.14169131;
     w.vol_pull = 0.14505733;
-    w.belief_share = 0.712548;
+    w.belief_share = 0.71254800;
     w.belief_years = 2.0010612;
     w.belief_leak = 0.32513571;
     w.cap_years = 2.9336493;
-    w.cycle_sd = 0.0;
+    w.cycle_sd = 0.0000000;
     w.cycle_years = 8.1364908;
     w.cycle_vol = 1.0000000;
+    w.crowd_impact = 0.14932099;
+    w.crowd_adjust = 1.1635638;
     w.term_premium = 0.090792400;
-    w.cpi_noise = 0.0088475645;
-    w.defl_prob = 0.22970631;
-    w.defl_size = 0.042314495;
+    w.cpi_noise = 0.0094186678;
+    w.defl_prob = 0.18156909;
+    w.defl_size = 0.034980202;
+    w.spike_rate = 0.26011936;
+    w.spike_size = 0.0067448357;
     w.term_vol = 0.0056821201;
     w.term_press = 1.0000000;
     w.brk_vol = 0.0033537566;
-    w.cpi_noise_level = 0.81946259;
-    w.policy_growth = 0.0;
+    w.brk_nominal = 0.091217630;
+    w.cpi_noise_level = 0.89585897;
+    w.policy_growth = 0.095846395;
     w.yield_beta = 0.028855859;
     w.yield_lag = 24.417600;
-    w.exp_anchor = 0.43698579;
+    w.exp_anchor = 0.46574422;
     w.yield_anchor = 0.63363114;
     w.vol_feedback = 0.24874898;
     w.value_cap = 0.057041288;
-    w.value_cap_fall = 0.01460255;
+    w.value_cap_fall = 0.014602550;
     w.recess_spread = 0.15041412;
     w.recess_transient = 0.24414122;
-    w.easing = 0.074934795;
+    w.easing = 0.070540501;
     w.floorhold = 0.078657839;
     w.refuge = 0.10451699;
     w.refuge_days = 0.41558600;
     w.lev_gain = 4.1352583;
     w.noise_scale = 1.5334019;
-    w.slow_vol = 0.81823688;
-    w.infl_size = 0.040984028;
-    w.stress = 3.5980618;
-    w.jump_skew = 0.03861811;
-    w.jump_var = 0.093198762;
-    w.jump_rate = 0.0046262668;
-    w.margin = 0.0051318237;
-    w.boom_rate = 1.0697937;
-    w.boom_size = 1.7194009;
-    w.boom_len = 1.924756;
-    w.boom_fade = 2.4789944;
-    w.bust_amp = 0.17763277;
-    w.crowd_adjust = 1.1635638;
-    w.crowd_impact = 0.14932099;
-    w.delev_rate = 1.2022333;
-    w.delev_from = 5.035704;
-    w.delev_size = 0.083384574;
-    w.delev_len = 0.14169131;
-    w.overshoot = 0.85783691;
-    w.overshoot_rate = 0.32824799;
-    w.recovery_drag = 0.49878993;
-    w.recovery_floor = 0.21831132;
-    w.spike_rate = 0.26011936;
-    w.spike_size = 0.0067448357;
-    w.brk_nominal = 0.09121763;
     w.decline_vol = 0.051980829;
     w.decline_vol_half = 3.8943863;
     w.drawdown_vol = 0.86336817;
+    w.drawdown_cap = 0.93875320;
     w.decline_vol_attack = 0.076862136;
-    w.recess_base = 1.2553621;
+    w.bust_amp = 0.17763277;
+    w.slow_cap = 3.2131710;
+    w.slow_vol = 1.0633348;
+    w.infl_size = 0.043623249;
+    w.margin = 0.0051318237;
     w
 }
 
@@ -2429,6 +2528,7 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
         decline_vol: 0.0,
         decline_vol_half: 5.0,
         drawdown_vol: 0.0,
+        drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
@@ -3105,6 +3205,7 @@ fn recipes_0241(open: World, basket: World, nq_basket: World) -> (World, World, 
         w.slow_share = d1.slow_share;
         w.slow_vol = d1.slow_vol;
         w.slow_lev = d1.slow_lev;
+        w.slow_cap = d1.slow_cap;
         w.slow_phi = d1.slow_phi;
         w.slow_perm = d1.slow_perm;
         w.slow_beta = d1.slow_beta;
@@ -3262,6 +3363,7 @@ fn v0_23_0() -> World {
         slow_share: 0.0,
         slow_vol: 0.894,
         slow_lev: 1.1,
+        slow_cap: 0.0,
         slow_phi: 0.996,
         slow_perm: 0.30,
         slow_beta: 0.55,
@@ -3302,6 +3404,7 @@ fn v0_23_0() -> World {
         decline_vol: 0.0,
         decline_vol_half: 5.0,
         drawdown_vol: 0.0,
+        drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
@@ -3436,6 +3539,7 @@ fn v0_22_1() -> World {
         slow_share: 0.0,
         slow_vol: 0.894,
         slow_lev: 1.1,
+        slow_cap: 0.0,
         slow_phi: 0.996,
         slow_perm: 0.30,
         slow_beta: 0.55,
@@ -3476,6 +3580,7 @@ fn v0_22_1() -> World {
         decline_vol: 0.0,
         decline_vol_half: 5.0,
         drawdown_vol: 0.0,
+        drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
@@ -3612,6 +3717,7 @@ fn v0_22_0() -> World {
         slow_share: 0.0,
         slow_vol: 0.894,
         slow_lev: 1.1,
+        slow_cap: 0.0,
         slow_phi: 0.996,
         slow_perm: 0.30,
         slow_beta: 0.55,
@@ -3652,6 +3758,7 @@ fn v0_22_0() -> World {
         decline_vol: 0.0,
         decline_vol_half: 5.0,
         drawdown_vol: 0.0,
+        drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
@@ -3788,6 +3895,7 @@ fn v0_21_0() -> World {
         slow_share: 0.0,
         slow_vol: 0.894,
         slow_lev: 1.1,
+        slow_cap: 0.0,
         slow_phi: 0.996,
         slow_perm: 0.30,
         slow_beta: 0.55,
@@ -3828,6 +3936,7 @@ fn v0_21_0() -> World {
         decline_vol: 0.0,
         decline_vol_half: 5.0,
         drawdown_vol: 0.0,
+        drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
@@ -3924,6 +4033,7 @@ fn v0_20_0() -> World {
         slow_share: 0.0,
         slow_vol: 0.894,
         slow_lev: 1.1,
+        slow_cap: 0.0,
         slow_phi: 0.996,
         slow_perm: 0.30,
         slow_beta: 0.55,
@@ -4004,6 +4114,7 @@ fn v0_20_0() -> World {
         decline_vol: 0.0,
         decline_vol_half: 5.0,
         drawdown_vol: 0.0,
+        drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
@@ -4746,6 +4857,14 @@ pub struct World {
     /// and is strictly worse, because variance moved out of the amplifier then loses the leverage
     /// profile the amplifier was supplying.
     pub slow_lev: f64,
+    /// THE SLOW STATE'S CEILING: the channel's multiplier is the exponential of a Gaussian state
+    /// of sd `slow_lev`, which has no top (at 1.1 its p99 is 20 times the channel's scale and a
+    /// century in fifty holds a spell at 40 to 60, a year of sessions beyond 20%). With the cap
+    /// on, the state reaches the multiplier through `c(g) = g` below zero and `B tanh(g / B)`
+    /// above, `B = slow_cap * slow_lev`, and the normaliser is recomputed so the channel keeps
+    /// the variance share `slow_share` and `slow_vol` give it; the state's own recursion, its
+    /// memory and its leverage are untouched. No draw is consumed; 0 is off and bit-identical.
+    pub slow_cap: f64,
     /// the state's persistence. Scaled by sqrt(1 - phi^2) on input, so `slow_lev` stays in
     /// stationary units — unscaled, its variance runs 11x nominal and volatility reaches 200%.
     pub slow_phi: f64,
@@ -4986,6 +5105,12 @@ pub struct World {
     /// THE LINEAR VOL ANSWER TO THE DRAWDOWN (PLAN row 65, searched): the factor's `G` term (see
     /// `decline_vol`). 0 is off and bit-identical.
     pub drawdown_vol: f64,
+    /// THE DRAWDOWN GAP'S CEILING: the gap `G` has no top, and deep in a bust (a gap of two in
+    /// log) the factor triples the sd, the losses deepen the gap and a quarter falls a further
+    /// 1.6 to 2.6. With the cap on the term reads `B tanh(G / B)`, `B = drawdown_cap` in log
+    /// gap: the gap itself for a gap well under `B`, never above `B`. No draw is consumed; 0 is
+    /// off and bit-identical.
+    pub drawdown_cap: f64,
     /// the linear answer's ATTACK, 0 = none (see `decline_vol`): each session's decline passes
     /// through a fast EWMA with this weight before the decline state, and the gap through one
     /// before the factor, so the answer builds over three or four sessions and then holds, where
@@ -5176,7 +5301,7 @@ impl Path {
         if !self.price.is_empty() && self.price_lr.len() + 1 == self.price.len() {
             self.price_lr.clone()
         } else {
-            self.price_returns()
+            daily_returns(&self.price)
         }
     }
 
@@ -5459,6 +5584,23 @@ impl Path {
             return [f64::NAN; 3];
         }
         bond_stress_rows(&daily_returns(&self.bond))
+    }
+
+    /// The worst log return over any 252 consecutive sessions of the price, NaN on a path with
+    /// fewer.
+    #[must_use]
+    pub fn worst_year_lr(&self) -> f64 {
+        let lr = self.price_returns();
+        if lr.len() < DAYS_PER_YEAR {
+            return f64::NAN;
+        }
+        let mut sum = scala_sum(lr[..DAYS_PER_YEAR].iter().copied());
+        let mut worst = sum;
+        for i in DAYS_PER_YEAR..lr.len() {
+            sum += lr[i] - lr[i - DAYS_PER_YEAR];
+            worst = worst.min(sum);
+        }
+        worst
     }
 
     /// The bond stress share as a fraction, `bond_stress_rows`' first reading over 100.
@@ -8534,7 +8676,29 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     // scaled by sqrt(1 - phi^2) on input, so `slow_lev` is in units of the state's STATIONARY sd
     // and the centring is its variance; unscaled it runs 11x nominal and volatility reaches 200%.
     let slow_k = (1.0 - w.slow_phi * w.slow_phi).sqrt();
-    let slow_norm = w.slow_lev * w.slow_lev;
+    // the ceiling (`slow_cap`): linear below zero, bounded by `slow_cap_b` above; off, the
+    // identity and the closed-form normaliser
+    let slow_cap_b = w.slow_cap * w.slow_lev;
+    let slow_c = |g: f64| {
+        if slow_cap_b <= 0.0 || g <= 0.0 {
+            g
+        } else {
+            slow_cap_b * tanh_p(g / slow_cap_b)
+        }
+    };
+    let slow_norm = if slow_cap_b <= 0.0 {
+        w.slow_lev * w.slow_lev
+    } else {
+        // ln(E[exp(2 c(g))]) / 2 over g ~ N(0, slow_lev^2), a fixed midpoint rule on +-10 sd
+        let n = 20_000usize;
+        let du = 20.0 / n as f64;
+        let mut acc = 0.0f64;
+        for j in 0..n {
+            let u = -10.0 + (j as f64 + 0.5) * du;
+            acc += exp_det(-0.5 * u * u + 2.0 * slow_c(w.slow_lev * u)) * du;
+        }
+        0.5 * ln_det(acc / (2.0 * std::f64::consts::PI).sqrt())
+    };
     let slow_scale = SIGMA_N * w.slow_vol * (12.0 / w.depth);
     let mix = (1.0 - w.slow_share).sqrt();
     // the diffusion's scale (`noise_scale`): exactly `SIGMA_N` at 1
@@ -8950,6 +9114,12 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         } else {
             gap_s
         };
+        // the gap under its ceiling (`drawdown_cap`); off, the gap
+        let gap_in = if w.drawdown_cap > 0.0 {
+            w.drawdown_cap * tanh_p(gap_in / w.drawdown_cap)
+        } else {
+            gap_in
+        };
         let lin_m = 1.0 + w.decline_vol * decline_s + w.drawdown_vol * gap_in;
         // FAIR-VALUE NEWS JUMP (prototype): a permanent markdown repriced the SAME session — the
         // fundamental and the price take the full drop together, so the price/fair gap, and with
@@ -9088,8 +9258,8 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
         let mut slow_var = 0.0f64;
         if w.slow_share > 0.0 {
             let zs = slow_rng.randn();
-            let smul = exp_det(slow_g - slow_norm);
-            vp.slow_state = slow_g - slow_norm;
+            let smul = exp_det(slow_c(slow_g) - slow_norm);
+            vp.slow_state = slow_c(slow_g) - slow_norm;
             slow_var = w.slow_vol * w.slow_vol * smul * smul;
             let sm = slow_scale * smul * zs;
             // only `slow_perm` of it reaches the fundamental: the rest opens a gap the value
@@ -10854,6 +11024,16 @@ pub struct WorldStats {
     pub n_shapes: usize,
     pub censored: usize,
     pub clamp_pct: f64,
+    /// THE COLLAPSE BOUND's reading: over the read's histories' worst 252-session log returns,
+    /// the one the bound's allowance stops at (the worst once one history in `COLLAPSE_ONE_IN`,
+    /// rounded down, is set aside); NaN when no history holds a year
+    pub worst_year_edge: f64,
+    /// the worst 252-session log return of any history of the read
+    pub worst_year_min: f64,
+    /// the read's `COLLAPSE_KEEP` worst years, worst first, NaN where it holds fewer, and the
+    /// histories they are the worst of: what a pooled bound reads (`collapse_reading`)
+    pub worst_years_low: [f64; COLLAPSE_KEEP],
+    pub worst_year_count: usize,
     /// Share of equity sessions the halt bound.
     pub halt_pct: f64,
     /// Share of EQUITY tail sessions sitting ON the downward guard: the guard's grip on the tail,
@@ -18809,6 +18989,17 @@ fn path_reads(sims: &[Path], years: usize, nd: PathNeeds) -> Vec<PathRead> {
 )]
 fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) -> WorldStats {
     let med_by = |f: fn(&PathRead) -> f64| med(&per.iter().map(f).collect::<Vec<f64>>());
+    // the histories' worst years, worst first, for the collapse bound
+    let mut worst_years = sims
+        .par_iter()
+        .map(Path::worst_year_lr)
+        .filter(|x| !x.is_nan())
+        .collect::<Vec<f64>>();
+    worst_years.sort_by(f64::total_cmp);
+    let mut worst_years_low = [f64::NAN; COLLAPSE_KEEP];
+    for (slot, x) in worst_years_low.iter_mut().zip(&worst_years) {
+        *slot = *x;
+    }
     // the crash fits over the episodes pooled across the paths, in path then episode order
     let pooled = |f: fn(&PathRead) -> &[[f64; 2]]| {
         crash_fit(
@@ -18911,6 +19102,13 @@ fn stats_of_reads(sims: &[Path], per: &[PathRead], years: usize, nd: PathNeeds) 
         n_shapes: shapes.len(),
         censored: eps.iter().filter(|e| e.censored()).count(),
         clamp_pct: scala_sum(sims.iter().map(|s| s.clamped_days as f64)) / days * 100.0,
+        worst_year_edge: worst_years
+            .get(worst_years.len() / COLLAPSE_ONE_IN)
+            .copied()
+            .unwrap_or(f64::NAN),
+        worst_year_min: worst_years.first().copied().unwrap_or(f64::NAN),
+        worst_years_low,
+        worst_year_count: worst_years.len(),
         halt_pct: scala_sum(sims.iter().map(|s| s.eq_halt_days as f64)) / days * 100.0,
         tail_floor_pct: tail_floor_share,
         trend_share: scala_sum(sims.iter().map(|s| s.mean_trend_share)) / n_sims,
@@ -19288,6 +19486,30 @@ const GATE_YEARS: usize = 100;
 /// The REALISM bands on statistics a FIDELITY row also targets, as data. The gate reads them and
 /// so does the contract that no edge sits inside a target's own noise -- a test that restated
 /// the literals would pass forever after someone moved one here.
+/// The collapse bound: a history's worst 252-session log return may lie beyond this multiple of
+/// the record's (`Anchors::worst_year`) in at most one history in `COLLAPSE_ONE_IN` of a read.
+pub const COLLAPSE_MULTIPLE: f64 = 2.0;
+pub const COLLAPSE_ONE_IN: usize = 200;
+/// The worst years a read keeps for the pooled bound: enough while a read holds under
+/// `COLLAPSE_KEEP * COLLAPSE_ONE_IN` histories.
+pub const COLLAPSE_KEEP: usize = 16;
+/// The collapse bound's gate, by name: a membership grades it once on the pooled histories.
+pub const COLLAPSE_GATE: &str = "no collapse";
+
+/// The collapse bound's reading over reads pooled: of their kept worst years (`lows`, each worst
+/// first and NaN-padded) and history counts, the worst year once one history in
+/// `COLLAPSE_ONE_IN` of the pool, rounded down, is set aside; NaN when the pool keeps too few.
+#[must_use]
+pub fn collapse_reading(lows: &[[f64; COLLAPSE_KEEP]], counts: &[usize]) -> f64 {
+    let mut all: Vec<f64> = lows
+        .iter()
+        .flat_map(|l| l.iter().copied())
+        .filter(|x| !x.is_nan())
+        .collect();
+    all.sort_by(f64::total_cmp);
+    let n: usize = counts.iter().sum();
+    all.get(n / COLLAPSE_ONE_IN).copied().unwrap_or(f64::NAN)
+}
 pub const REALISM_VOL: (f64, f64) = (8.0, 40.0); // equity vol, % a year
 pub const REALISM_KURT: (f64, f64) = (4.0, 40.0); // daily kurtosis
 pub const REALISM_AC1: (f64, f64) = (0.10, 0.40); // lag-1 clustering
@@ -19521,6 +19743,23 @@ fn gate_checks_with(
         Gate::of(
             "no runaway drift",
             vec![Clause::open("", st.ann_ret, -30.0, 30.0)],
+            Realism,
+        ),
+        // THE COLLAPSE BOUND. A fall of twice the record's worst year is a market that ceased
+        // (the S&P's edge is a year at -87%); medians and placements cannot see one history in
+        // fifty doing it. A read with no year of sessions has nothing to grade and passes.
+        Gate::of(
+            COLLAPSE_GATE,
+            vec![Clause::closed(
+                "worst year, log",
+                if st.worst_year_edge.is_nan() {
+                    0.0
+                } else {
+                    st.worst_year_edge
+                },
+                COLLAPSE_MULTIPLE * a.worst_year,
+                INF,
+            )],
             Realism,
         ),
         // 0.02% ~ one clamped session per 20 path-years. The old bound (0.5%) would have
@@ -19971,6 +20210,10 @@ pub struct Anchors {
     pub name: &'static str,
     pub equity_window: &'static str,
     pub equity_years: usize,
+    /// the record's worst 252-session log return, the collapse bound's scale (`COLLAPSE_MULTIPLE`):
+    /// the S&P set's on the daily market of 1926-2026 (-1.03, the year to June 1932), the Nasdaq
+    /// set's on its index splice of 1971-2026 (-1.20, the year to September 2001)
+    pub worst_year: f64,
     /// THE VOLATILITY STATE's record window and horizon (`VOL_STATE_ROWS`): the Nasdaq set's is
     /// the long tech record, French's HiTec industry from 1954 spliced to QQQ in 1999
     /// (`volstate-2026-10-20.tsv`), 72 years; the S&P set's is its equity window
@@ -22076,6 +22319,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     equity_window: "S&P / CRSP 1954-2026",
     ret_vol_window: "CRSP 1954-2026",
     equity_years: 72,
+    worst_year: -1.03,
     vol_state_window: "S&P / CRSP 1954-2026",
     vol_state_years: 72,
     vol_state_reference: None,
@@ -22271,6 +22515,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     equity_window: "QQQ 1999-2026",
     ret_vol_window: "QQQ 1999-2026",
     equity_years: 27,
+    worst_year: -1.20,
     vol_state_window: "French HiTec 1954-07-01..1999-03-09 + QQQ 1999-03-10..2026-08-20",
     vol_state_years: 72,
     vol_state_reference: Some(VOL_STATE_QQQ_RECORD),
@@ -27274,7 +27519,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "bond10", "tips", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 108] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 110] = [
     "depth",
     "trendShare",
     "drift",
@@ -27290,6 +27535,8 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 108] = [
     "beliefShare",
     "capYears",
     "volOfVol",
+    "slowCap",
+    "drawdownCap",
     "jumpVar",
     "jumpRate",
     "leverage",
@@ -27399,7 +27646,7 @@ pub const SEARCH_LOG_DIALS: [&str; 3] = ["newsRate", "creditRegimeRate", "levGai
 /// and every child that drew one failed the valuation gates (down to 1e-5). In the tightness a
 /// step from off is a loose cap that rarely binds. A range's low end is off and its high end the
 /// tightest cap searched; every looser cap is inside it.
-pub const SEARCH_INV_DIALS: [&str; 2] = ["valueCap", "valueCapFall"];
+pub const SEARCH_INV_DIALS: [&str; 4] = ["valueCap", "valueCapFall", "slowCap", "drawdownCap"];
 /// The cap whose tightness is ln 2 (`SEARCH_INV_DIALS`).
 const SEARCH_CAP_REF: f64 = 0.01;
 
@@ -27542,6 +27789,16 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             0.030,
             |w, x| w.vol_of_vol = x,
             |w| w.vol_of_vol,
+        ),
+        // THE SLOW STATE'S CEILING, in sds of the state
+        ("slowCap", 0.0, 1.5, |w, x| w.slow_cap = x, |w| w.slow_cap),
+        // THE DRAWDOWN GAP'S CEILING, in log gap
+        (
+            "drawdownCap",
+            0.0,
+            0.3,
+            |w, x| w.drawdown_cap = x,
+            |w| w.drawdown_cap,
         ),
         // In the ranges from the release it arrived in. `fund_vol` sat outside them for four
         // releases and that is exactly why its defect survived four releases of one-knob-at-a-time
@@ -32050,12 +32307,19 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         (&["expAnchor"][..], "yieldAnchor", w.yield_anchor, 0.0),
         (&["cycleYears"][..], "cycleVol", w.cycle_vol, 0.0),
         (&["spikeRate"][..], "spikeNeg", w.spike_neg, 0.0),
+        (&["slowShare"][..], "slowCap", w.slow_cap, 0.0),
         (&["termVol"][..], "termPress", w.term_press, 0.0),
         (&["declineVol", "jumpResp"][..], "declineVolHalf", half, 5.0),
         (
             &["declineVolHalf", "declineVol", "jumpResp"][..],
             "drawdownVol",
             w.drawdown_vol,
+            0.0,
+        ),
+        (
+            &["drawdownVol", "declineVolHalf", "declineVol", "jumpResp"][..],
+            "drawdownCap",
+            w.drawdown_cap,
             0.0,
         ),
         (
@@ -33169,6 +33433,8 @@ pub const OPTIONAL_WORLD_KEYS: &[(&str, &str)] = &[
     ("termPress", "0"),
     ("cycleVol", "0"),
     ("spikeNeg", "0"),
+    ("slowCap", "0"),
+    ("drawdownCap", "0"),
 ];
 
 /// `-worldset F -worldindex K` runs member K of an exported archive. Pre-scanned as `-atrelease`
@@ -33253,6 +33519,11 @@ struct SeedRead {
     clauses: Vec<GateClause>,
     shown: Vec<&'static str>,
     gate_req: Vec<GateClass>,
+    /// the collapse bound's material (`collapse_reading`) and its edge; the read's own clause is
+    /// in neither `bounds` nor `clauses`
+    worst_years_low: [f64; COLLAPSE_KEEP],
+    worst_year_count: usize,
+    collapse_edge: f64,
 }
 
 /// `-validate -seeds S1,S2,...`: the seeds, the arguments each read runs on (`-seeds` and
@@ -33331,6 +33602,8 @@ struct Membership {
     histories: usize,
     bad: Vec<Vec<String>>,
     margins: Vec<Margin>,
+    /// the collapse bound on the pooled histories: its reading and its edge
+    collapse: (f64, f64),
 }
 
 fn membership(reads: &[SeedRead]) -> Membership {
@@ -33341,7 +33614,7 @@ fn membership(reads: &[SeedRead]) -> Membership {
     let margins = margins(&clauses);
     // from MARGIN_MIN_READS the margin alone decides the bounds; under it, every read must pass
     let margined = reads.len() >= MARGIN_MIN_READS;
-    let bad = (0..GateClass::ALL.len())
+    let mut bad: Vec<Vec<String>> = (0..GateClass::ALL.len())
         .map(|i| {
             if margined {
                 margins
@@ -33361,11 +33634,24 @@ fn membership(reads: &[SeedRead]) -> Membership {
             }
         })
         .collect();
+    // the collapse bound, once on the pool: a read of 200 histories sets one aside and cannot
+    // tell a world that collapses once in a hundred from one that never does
+    let collapse = (
+        collapse_reading(
+            &reads.iter().map(|r| r.worst_years_low).collect::<Vec<_>>(),
+            &reads.iter().map(|r| r.worst_year_count).collect::<Vec<_>>(),
+        ),
+        reads.first().map_or(f64::NAN, |r| r.collapse_edge),
+    );
+    if collapse.0 < collapse.1 {
+        bad[0].push(format!("pooled: {COLLAPSE_GATE}"));
+    }
     Membership {
         placement: placement(&pooled, PLACEMENT_ALPHA),
         histories,
         bad,
         margins,
+        collapse,
     }
 }
 
@@ -33613,6 +33899,12 @@ fn run_seeds(args: &[String], seeds: &[u64], rows_file: &str) {
             pass(r.bounds[2].is_empty())
         );
     }
+    println!(
+        "  {COLLAPSE_GATE}, pooled: the bound's history {} against the edge {}  {}",
+        jfs(m.collapse.0, 2),
+        jfs(m.collapse.1, 2),
+        pass(m.collapse.0.is_nan() || m.collapse.0 >= m.collapse.1)
+    );
     if margined {
         print_margins(&m.margins, reads.len());
     }
@@ -33963,6 +34255,8 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut slow_share = dw.slow_share;
     let mut slow_vol = dw.slow_vol;
     let mut slow_lev = dw.slow_lev;
+    let mut slow_cap = dw.slow_cap;
+    let mut drawdown_cap = dw.drawdown_cap;
     let mut slow_phi = dw.slow_phi;
     let mut slow_perm = dw.slow_perm;
     let mut slow_beta = dw.slow_beta;
@@ -34224,6 +34518,8 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-slowshare" => slow_share = req_f64(&mut it, "-slowshare"),
             "-slowvol" => slow_vol = req_f64(&mut it, "-slowvol"),
             "-slowlev" => slow_lev = req_f64(&mut it, "-slowlev"),
+            "-slowcap" => slow_cap = req_f64(&mut it, "-slowcap"),
+            "-drawdowncap" => drawdown_cap = req_f64(&mut it, "-drawdowncap"),
             "-slowphi" => slow_phi = req_f64(&mut it, "-slowphi"),
             "-slowperm" => slow_perm = req_f64(&mut it, "-slowperm"),
             "-slowbeta" => slow_beta = req_f64(&mut it, "-slowbeta"),
@@ -34519,6 +34815,8 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         slow_share,
         slow_vol,
         slow_lev,
+        slow_cap,
+        drawdown_cap,
         slow_phi,
         slow_perm,
         slow_beta,
@@ -35311,6 +35609,13 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         jf(st.dd_bd20, 0, 3)
     );
     println!(
+        "  worst year             the bound's history {} (the edge {}, twice the record's {}); the read's worst {}",
+        jfs(st.worst_year_edge, 2),
+        jfs(COLLAPSE_MULTIPLE * anchors.worst_year, 2),
+        jfs(anchors.worst_year, 2),
+        jfs(st.worst_year_min, 2)
+    );
+    println!(
         "  binding diagnostics    trend share {} (pinned {}%, target saturated {}%)   bond spiral {}% of sessions   clamped {}% of all sessions, {}% of tail sessions   halts {}%",
         jf(st.trend_share, 0, 2),
         jf(st.trend_pinned * 100.0, 0, 1),
@@ -35531,10 +35836,19 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
                 seed,
                 hrows,
                 ledger,
-                bounds,
-                clauses: gate_clauses_at(anchors, &verdict_st, &verdict_banded),
+                bounds: bounds
+                    .into_iter()
+                    .map(|b| b.into_iter().filter(|n| n != COLLAPSE_GATE).collect())
+                    .collect(),
+                clauses: gate_clauses_at(anchors, &verdict_st, &verdict_banded)
+                    .into_iter()
+                    .filter(|c| c.gate != COLLAPSE_GATE)
+                    .collect(),
                 shown,
                 gate_req,
+                worst_years_low: verdict_st.worst_years_low,
+                worst_year_count: verdict_st.worst_year_count,
+                collapse_edge: COLLAPSE_MULTIPLE * anchors.worst_year,
             });
         }
         exit_on_required(&bad, &gate_req);
@@ -48055,5 +48369,106 @@ mod world_domain_tests {
             world_domain_refusal(&nan).as_deref(),
             Some("-declinevolhalf NaN must be above 0")
         );
+    }
+}
+
+/// The collapse bound and the two ceilings that hold a world inside it.
+#[cfg(test)]
+mod collapse_tests {
+    use super::*;
+
+    fn priced(lr: &[f64]) -> Path {
+        let mut p = simulate(&default_world(), 30, 1);
+        let mut px = vec![100.0];
+        for r in lr {
+            px.push(px[px.len() - 1] * r.exp());
+        }
+        p.price = px;
+        p.price_lr = Vec::new();
+        p
+    }
+
+    #[test]
+    fn the_worst_year_is_the_least_sum_of_any_252_sessions() {
+        let mut rng = NumPyRng::new(20_261_110);
+        let lr: Vec<f64> = (0..1500).map(|_| 0.01 * rng.randn()).collect();
+        let brute = lr
+            .windows(DAYS_PER_YEAR)
+            .map(|w| w.iter().sum::<f64>())
+            .fold(f64::INFINITY, f64::min);
+        let got = priced(&lr).worst_year_lr();
+        assert!((got - brute).abs() < 1e-9, "{got} against {brute}");
+        let mut fall = vec![0.0; 600];
+        for r in &mut fall[100..352] {
+            *r = -0.01;
+        }
+        assert!((priced(&fall).worst_year_lr() + 2.52).abs() < 1e-9);
+        assert!(priced(&lr[..DAYS_PER_YEAR - 1]).worst_year_lr().is_nan());
+    }
+
+    #[test]
+    fn the_pooled_reading_sets_aside_one_history_in_two_hundred_of_the_pool() {
+        let mut a = [f64::NAN; COLLAPSE_KEEP];
+        let mut b = [f64::NAN; COLLAPSE_KEEP];
+        a[..3].copy_from_slice(&[-5.0, -1.9, -1.0]);
+        b[..3].copy_from_slice(&[-3.0, -2.5, -1.2]);
+        // 400 histories set two aside; 200 one; under 200 none
+        assert_eq!(collapse_reading(&[a, b], &[200, 200]), -2.5);
+        assert_eq!(collapse_reading(&[a], &[200]), -1.9);
+        assert_eq!(collapse_reading(&[a], &[199]), -5.0);
+        assert!(collapse_reading(&[[f64::NAN; COLLAPSE_KEEP]], &[0]).is_nan());
+    }
+
+    #[test]
+    fn a_collapsing_read_fails_realism_and_a_read_without_a_year_passes() {
+        let a = anchors_named("sp500");
+        let st = |edge: f64| {
+            let w = default_world();
+            let sims: Vec<Path> = (1..=4).map(|s| simulate(&w, 30, s)).collect();
+            let mut st = measure(&sims, 30);
+            st.worst_year_edge = edge;
+            st
+        };
+        let collapse = |edge: f64| {
+            gate_checks(a, &st(edge))
+                .into_iter()
+                .find(|g| g.0 == COLLAPSE_GATE)
+                .expect("the collapse bound's gate")
+                .1
+        };
+        assert!(collapse(COLLAPSE_MULTIPLE * a.worst_year + 0.01));
+        assert!(!collapse(COLLAPSE_MULTIPLE * a.worst_year - 0.01));
+        assert!(collapse(f64::NAN));
+    }
+
+    fn recipe(name: &str) -> World {
+        recipes()
+            .into_iter()
+            .find(|(n, _, _)| *n == name)
+            .expect("a recipe")
+            .1
+    }
+
+    #[test]
+    fn a_ceiling_far_above_its_state_leaves_the_path_and_a_binding_one_moves_it() {
+        let mut w = recipe("0.25.1-sp500");
+        w.slow_cap = 0.0;
+        w.drawdown_cap = 0.0;
+        let base = simulate(&w, 20, 7).price;
+        let with = |f: &dyn Fn(&mut World)| {
+            let mut v = w;
+            f(&mut v);
+            simulate(&v, 20, 7).price
+        };
+        let far = |p: &[f64]| {
+            p.iter()
+                .zip(&base)
+                .map(|(x, y)| (x / y).ln().abs())
+                .fold(0.0, f64::max)
+        };
+        assert!(far(&with(&|v| v.slow_cap = 1e6)) < 1e-4);
+        assert!(far(&with(&|v| v.drawdown_cap = 1e6)) < 1e-4);
+        assert!(far(&with(&|v| v.slow_cap = 1.0)) > 1e-3);
+        assert!(far(&with(&|v| v.drawdown_cap = 0.05)) > 1e-3);
     }
 }

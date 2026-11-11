@@ -303,8 +303,8 @@ pass `-anchors nasdaq`, since a member names no anchor set), `0.24.3-nasdaq.json
 their `score` and `worstRow` are that objective's readings. Every member of the three older sets starts at
 fair value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the swing's
 ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set was searched under
-it. **The 0.25.1 sets** are the two to draw from now: `0.25.1-sp500.json` (65 members) and
-`0.25.1-nasdaq.json` (37), member 0 the recipe itself, every member one the set loop admitted under the
+it. **The 0.25.1 sets** are the two to draw from now: `0.25.1-sp500.json` (32 members) and
+`0.25.1-nasdaq.json` (47), member 0 the recipe itself, every member one the set loop admitted under the
 membership rule on four fresh seeds at 200 × 100 that clears the margin on 40 more, its `coverageWeight`
 over those members, and scored against the 0.25.0 sets under the release rule (the CHANGELOG has the numbers
 and the set misses). The 0.25.0 sets were judged before the satellite's tail beta and the long bond's cut of
@@ -1323,7 +1323,9 @@ How it is read:
   TOGETHER, like a news jump, so the value channel has nothing to arbitrage and the move never passes
   through the spiral. Its volatility is long-memoried and asymmetric, which is what puts the abs-r profile
   back on the record's SHAPE. `-slowvol` sets its scale, `-slowlev` its own leverage effect, `-slowphi` its
-  persistence, `-slowperm` how much of each move is permanent, `-slowbeta` the bond's opposite-sign loading.
+  persistence, `-slowperm` how much of each move is permanent, `-slowbeta` the bond's opposite-sign loading,
+  `-slowcap` a ceiling on the state's lift of the vol (in units of `-slowlev`; the state unchanged below zero,
+  through a smooth ceiling above, its mean restored; 0 is no ceiling and bit-identical, keyed only when on).
   0 is bit-identical — [below](#the-vol-response-to-a-fall) | 0.20 | | `-bustamp` | THE BUST SWING: when a
   0.2-log drawdown opens under a peak that stood 0.5 log or more over the gap's 20-year mean, a months-long
   stationary swing of this amplitude is repriced the same session in the price and in perceived fair while
@@ -1870,7 +1872,10 @@ How it is read:
   the previous session's standardized decline, capped at 4. 0 is off and bit-identical; keyed in a world
   file only when on. Searched, 0-0.6 | 0 | | `-drawdownvol` | THE VOL'S ANSWER TO THE DRAWDOWN: `g` in the
   same factor, the log gap of the printed close below the previous 250 closes' high. 0 is off and bit-
-  identical; keyed only when on. Searched, 0-6 | 0 | | `-declinevolattack` | THE ANSWER'S ATTACK: in [0, 1),
+  identical; keyed only when on. Searched, 0-6 | 0 | | `-drawdowncap` | THE DRAWDOWN ANSWER'S CEILING: the log
+   gap `-drawdownvol` reads passes through a smooth ceiling at this depth, so a deep drawdown stops raising
+   the vol that deepens it. 0 is no ceiling and bit-identical; keyed only when on. Searched | 0 | |
+   `-declinevolattack` | THE ANSWER'S ATTACK: in [0, 1),
   shapes both terms into a rise that peaks about four sessions after the decline instead of the session
   after. Inert and unwritten while both terms are 0. Searched, 0-0.95 | 0 | | `-declinevolhalf` | the
   decline memory's half-life in sessions. Inert and unwritten while `-declinevol` is 0. Searched, 2-20 | 5 |
@@ -2860,6 +2865,15 @@ convention's objective no longer holds up); over every ledger row the S&P set mi
 corr` and the Nasdaq set `decline length p50 y long`, its open item; the sets bred before the convention (56
 and 37) significantly better than the 0.25.0 sets, the S&P set bred under it within sampling error of those,
 and each Nasdaq re-solve's set significantly better than the set before it (the CHANGELOG has the numbers).
+Both are then re-solved whole under THE COLLAPSE BOUND, the realism gate `no collapse`: at most one history in
+200, read on a membership's pooled histories, may hold a 252-session log return beyond twice the record's worst
+(-1.03 on the S&P, -1.20 on the Nasdaq). The recipes before it held such histories; the two ceilings
+(`-slowcap` 3.77 and `-drawdowncap` 0.97 on the S&P, 3.21 and 0.94 on the Nasdaq) keep a world inside it at no
+cost on the ledger, and the S&P's carries the negative inflation pulse (`-spikeneg` 0.62). The sets are 32
+and 47 members, every member inside the bound: 36.32 against the earlier S&P set's 42.41 and 34.03 against the
+Nasdaq's 38.35. The S&P set misses `vol coupling monthly corr`, `vol coupling quarterly corr` and `return
+lag-1 autocorr` (the model's losses lift its vol less than the record's do), the Nasdaq set `decline length
+p50 y long`.
 
 **`0.25.0-sp500` and `0.25.0-nasdaq`** are each member 0 of its `0.25.0` set, a world admitted
 under the membership rule with every class passing on each of four fresh seeds at 200 × 100. The

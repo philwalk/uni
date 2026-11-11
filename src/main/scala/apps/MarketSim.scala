@@ -1572,6 +1572,18 @@ object MarketSim:
     * `SpikeDecay` -- the short sharp inflations the regime cannot make. */
   final case class WorldExt(termPremium: Double = 0.0, cpiNoise: Double = 0.0, deflProb: Double = 0.0,
                             deflSize: Double = 0.0, spikeRate: Double = 0.0, spikeSize: Double = 0.0,
+                            // THE PULSES' OTHER SIDE: the share of the spike channel's arrivals whose
+                            // pulse is negative, the sign a draw on the spike's stream only while the
+                            // share is on (0 = every pulse up, bit-identical)
+                            spikeNeg: Double = 0.0,
+                            // THE SLOW STATE'S CEILING: the channel's state reaches its multiplier
+                            // through c(g) = g below zero and B tanh(g / B) above, B = slowCap x
+                            // slowLev, the normaliser recomputed so the channel keeps its variance
+                            // share; no draw is consumed; 0 is off and bit-identical
+                            slowCap: Double = 0.0,
+                            // THE DRAWDOWN GAP'S CEILING: the linear vol answer's gap term reads
+                            // B tanh(G / B), B = drawdownCap in log gap; 0 is off and bit-identical
+                            drawdownCap: Double = 0.0,
                             // THE TIPS LEG (item 60): a third bond market at this duration (0 = off),
                             // the nominal leg's state and flows at its scale on its own stream, marked
                             // to the nominal leg's yield LESS the market's ten-year inflation
@@ -1938,11 +1950,36 @@ object MarketSim:
         .orElse(Option.when(names.exists(_.exists(_.isNaN)))("basket"))
         .orElse(Option.when(sectors.exists(_.exists(_.isNaN)))("sectors"))
 
-    /** The share of the path's sessions with the bond stress index above 0.5, the spiral's share;
-      * a tail's is the tail's own. */
-    def pctBondStress: Double =
-      if bondStressHi.isEmpty then Double.NaN
-      else bondStressHi.count(identity).toDouble / bondStressHi.length.toDouble
+    /** THE BOND STRESS ROWS (`BondStressRows`): `MarketSim.bondStressRows` on the path's bond
+      * returns, the statistic the record is read with, the share in percent.  The spiral's own
+      * index (`bondStressHi`, `meanBondStress`) never sees the yield repricing added to the bond's
+      * log price outside the step and stays a diagnostic.  NaN where the path holds no bond or too
+      * short a one. */
+    def bondStressRows: Vector[Double] =
+      if bond.length <= DaysPerYear + 1 then Vector.fill(3)(Double.NaN)
+      else MarketSim.bondStressRows(dailyReturns(bond))
+
+    /** The worst log return over any 252 consecutive sessions of the price, NaN on a path with
+      * fewer. */
+    def worstYearLr: Double =
+      val lr = dailyReturns(price)
+      if lr.length < DaysPerYear then Double.NaN
+      else
+        def least(a: Double, b: Double): Double = if a.isNaN then b else if b.isNaN then a else math.min(a, b)
+        var sum = 0.0
+        var i = 0
+        while i < DaysPerYear do
+          sum += lr(i)
+          i += 1
+        var worst = sum
+        while i < lr.length do
+          sum += lr(i) - lr(i - DaysPerYear)
+          worst = least(worst, sum)
+          i += 1
+        worst
+
+    /** The bond stress share as a fraction, `bondStressRows`' first reading over 100. */
+    def pctBondStress: Double = bondStressRows(0) / 100.0
 
   /** THE shipped world.  `main` seeds its mutable CLI vars from this and `usage` interpolates its
     * numbers, so every default is written in exactly one place.  Help text that restates a constant
@@ -2671,7 +2708,12 @@ object MarketSim:
     * On the 36-row ledger 40.5 against 42.3 for the same recipe with the increment constant, the
     * vol-process rows at the record (`z beyond 3 sds %` 1.33 in its band, `log vol sd` 0.46, `vol
     * doubling months %` 3.9), membership p 0.91, every class passing on every read and by the margin
-    * on 40 more.
+    * on 40 more.  Then (2026-11-11) re-solved whole under the collapse bound (`CollapseGate`) with
+    * the two ceilings (`slowCap` 3.77, `drawdownCap` 0.97) and the negative inflation pulse
+    * (`spikeNeg` 0.62), 101 dials: the recipe before held collapsing histories (its bound history
+    * -2.44 against the edge -2.06; this one's -1.74).  Its 32-member set 36.32 against the 65's
+    * 42.41, -6.09 [-7.07, -4.29]; set misses `vol coupling monthly corr`, `vol coupling quarterly
+    * corr` and `return lag-1 autocorr`.
     *
     * `0.25.1-nasdaq` (2026-11-05), as the S&P's: `yieldAnchor` 0.63 and `termPress` 1, the rate and
     * bond side re-solved around them, on the Nasdaq's own era the breakeven premium's innovation too;
@@ -2689,7 +2731,10 @@ object MarketSim:
     * stress share %` reported (`NasdaqEraRows`), membership on every read; its 37-member set 32.97
     * against the 66's 37.60 under the release rule, -4.63 [-5.77, -3.38]; one set miss, `decline
     * length p50 y long` (the record at the pool's 1.6% point), the 66's `vol doubling months %`
-    * cleared.  Both literals are the Rust twin's `recipe_0251_sp500` and `recipe_0251_nasdaq`,
+    * cleared.  Then (2026-11-11) re-solved under the collapse bound with the two ceilings held
+    * (`slowCap` 3.21, `drawdownCap` 0.94) and read back by family, 94 dials: 34.99 against 37.83 on
+    * the judge's seeds; its 47-member set 34.03 against the 37's 38.35, -4.32 [-5.66, -2.69], every
+    * member inside the bound, the one set miss carried.  Both literals are the Rust twin's `recipe_0251_sp500` and `recipe_0251_nasdaq`,
     * field for field. */
   val Recipes0251: Vector[(String, World, String)] =
     def base(name: String): World =
@@ -2697,46 +2742,70 @@ object MarketSim:
     val sp = base("0.25.0-sp500")
     val nq = base("0.25.0-nasdaq")
     Vector(("0.25.1-sp500",
-            sp.copy(stress = 3.0298631, rateMean = 0.064741312, volOfVol = 0.016982764, jumpSkew = 0.79916463,
-                    jumpVar = 0.13021428, jumpRate = 0.0022997084, newsBond = 0.47452643,
-                    newsBondSkip = 0.017489922, slowBondInfl = 0.030234235, refuge = 0.13842340,
-                    refugeDays = 1.3746700, levGain = 4.5653900, margin = 0.0079948400, divYield = 1.95,
-                    ext = sp.ext.copy(cycleVol = 1.0000000, termPremium = 0.069160855, termVol = 0.0048085213,
-                                      termPress = 1.0000000, cpiNoiseLevel = 0.87106100,
-                                      policyGrowth = 0.068884987, yieldLag = 28.615200, expAnchor = 0.49890381,
-                                      yieldAnchor = 0.72761553, volFeedback = 0.29804100)),
+            sp.copy(trendShare = 0.14538338, depth = 16.460135, stress = 3.0844373, drift = 0.13994832,
+                    fundVol = 0.054122324, rateMean = 0.071925601, volOfVol = 0.019915479, leverage = 0.10212671,
+                    downShock = 0.019171689, jumpSkew = 0.76981152, jumpVar = 0.13434382, jumpRate = 0.0022997084,
+                    newsRate = 2.1212435, newsSize = 0.021652093, newsLev = 4.6887563, newsRevert = 0.44768380,
+                    newsScale = 0.38429948, newsBond = 0.43900536, newsBondSkip = 0.058157602,
+                    creditRegime = 0.24212182, creditRegimeRate = 0.67784945, slowBondInfl = 0.10851959,
+                    noiseSkew = 0.91558440, newsFlip = 0.35505387, valuePull = 0.12922871,
+                    recoveryFloor = 0.21255802, boomRate = 2.4767900, boomSize = 0.63014953, boomLen = 13.764899,
+                    recessRate = 0.40294192, recessSize = 0.27429490, recessLen = 1.4257376,
+                    recessRecover = 0.77969946, recessNews = 1.2992549, recessVol = 0.0064347984,
+                    recessReprice = 0.96792191, recessBase = 0.36949491, recessShape = 2.1512282,
+                    overshoot = 0.48347627, overshootRate = 0.18790573, recessRecMult = 1.6052534,
+                    recessCredit = 13.918700, recessInfl = 0.0000000, regimeDrift = 0.00089661829,
+                    driftSd = 0.011507561, boomFade = 5.3979063, delevRate = 0.65390908, delevFrom = 1.3754363,
+                    delevSize = 0.19047633, delevLen = 0.085374331, volPull = 1.8357360, beliefYears = 2.7514651,
+                    beliefLeak = 0.32841736, capYears = 0.51017704, cycleSd = 0.16152393, cycleYears = 20.000000,
+                    crowdImpact = 0.012324032, easing = 0.14681192, floorhold = 0.13161498, refuge = 0.11812463,
+                    refugeDays = 1.1909195, divYield = 1.9500000, levGain = 5.5657374, bustAmp = 0.090637511,
+                    slowShare = 0.47542917, slowVol = 1.1543973, slowPerm = 0.34505308, slowBeta = 0.82677910,
+                    inflSize = 0.054747101, discount = 6.2660639, discountRef = 1.7926100, margin = 0.0080000000,
+                    ext = sp.ext.copy(cycleVol = 1.0000000, crowdAdjust = 1.1650288, termPremium = 0.052574915,
+                                      cpiNoise = 0.0057394285, deflProb = 0.0091910768, deflSize = 0.035328025,
+                                      spikeRate = 0.45188566, spikeNeg = 0.61844287, spikeSize = 0.038030046,
+                                      termVol = 0.0061125149, termPress = 0.70262805, cpiNoiseLevel = 0.87967506,
+                                      policyGrowth = 0.12899392, yieldBeta = 0.0033838755, yieldLag = 36.750095,
+                                      expAnchor = 0.48926061, yieldAnchor = 0.66443120, volFeedback = 0.29804100,
+                                      valueCap = 0.0094504363, valueCapFall = 0.0043879941,
+                                      recessSpread = 0.093439673, recessTransient = 0.23042519,
+                                      noiseScale = 1.1442450, declineVol = 0.47903617, declineVolHalf = 8.2772626,
+                                      drawdownVol = 0.47015849, drawdownCap = 0.96999024,
+                                      declineVolAttack = 0.91092179, slowCap = 3.7723032)),
             "sp500"),
            ("0.25.1-nasdaq",
-            nq.copy(depth = 13.496906, fundVol = 0.044888026, rateMean = 0.034508216, volOfVol = 0.024148935,
-                    leverage = 0.079123047, downShock = 0.00022523643, newsRate = 7.624891,
-                    newsSize = 0.024258837, newsLev = 39.547822, newsRevert = 0.23752839,
-                    newsScale = 0.33630068, newsBond = 0.24905600, newsBondSkip = 0.26802600,
-                    creditRegime = 0.19926532, creditRegimeRate = 1.6578246, slowBondInfl = 0.48413900,
-                    noiseSkew = 0.16350944, newsFlip = 0.65915399, valuePull = 0.01924059,
+            nq.copy(depth = 14.448864, stress = 3.5980618, fundVol = 0.044888026, rateMean = 0.034508216,
+                    volOfVol = 0.024148935, leverage = 0.079123047, downShock = 0.00022523643,
+                    jumpSkew = 0.038618110, jumpVar = 0.093198762, jumpRate = 0.0046262668, newsRate = 5.6883432,
+                    newsSize = 0.024258837, newsLev = 39.547822, newsRevert = 0.23752839, newsScale = 0.33630068,
+                    newsBond = 0.24905600, newsBondSkip = 0.26802600, creditRegime = 0.23132005,
+                    creditRegimeRate = 2.4166573, slowBondInfl = 0.48413900, noiseSkew = 0.16350944,
+                    newsFlip = 0.65915399, valuePull = 0.019240590, recoveryDrag = 0.49878993,
+                    recoveryFloor = 0.21831132, boomRate = 1.0697937, boomSize = 1.7194009, boomLen = 1.9247560,
                     recessRate = 0.30511416, recessSize = 0.24720789, recessLen = 1.5143282,
-                    recessRecover = 0.84716992, recessNews = 1.0000000, recessVol = 0.0,
-                    recessReprice = 0.91365258, recessShape = 1.5017152, recessRecMult = 1.5790117,
-                    recessCredit = 0.037939692, recessInfl = 0.36695218, volPull = 0.14505733,
-                    beliefShare = 0.712548, beliefYears = 2.0010612, beliefLeak = 0.32513571,
-                    capYears = 2.9336493, cycleSd = 0.0, cycleYears = 8.1364908, easing = 0.074934795,
-                    floorhold = 0.078657839, refuge = 0.10451699, refugeDays = 0.41558600, levGain = 4.1352583,
-                    slowVol = 0.81823688, inflSize = 0.040984028, recessBase = 1.2553621, stress = 3.5980618, jumpSkew = 0.03861811,
-                    jumpVar = 0.093198762, jumpRate = 0.0046262668, margin = 0.0051318237, boomRate = 1.0697937,
-                    boomSize = 1.7194009, boomLen = 1.924756, boomFade = 2.4789944, bustAmp = 0.17763277,
-                    crowdImpact = 0.14932099, delevRate = 1.2022333, delevFrom = 5.035704, delevSize = 0.083384574,
-                    delevLen = 0.14169131, overshoot = 0.85783691, overshootRate = 0.32824799,
-                    recoveryDrag = 0.49878993, recoveryFloor = 0.21831132,
-                    ext = nq.ext.copy(cycleVol = 1.0000000, termPremium = 0.090792400, cpiNoise = 0.0088475645,
-                                      deflProb = 0.22970631, deflSize = 0.042314495, termVol = 0.0056821201,
-                                      termPress = 1.0000000, brkVol = 0.0033537566, cpiNoiseLevel = 0.81946259,
-                                      policyGrowth = 0.0, yieldBeta = 0.028855859, yieldLag = 24.417600,
-                                      expAnchor = 0.43698579, yieldAnchor = 0.63363114,
-                                      volFeedback = 0.24874898, valueCap = 0.057041288,
-                                      valueCapFall = 0.01460255, recessSpread = 0.15041412,
+                    recessRecover = 0.84716992, recessNews = 1.0000000, recessVol = 0.0000000,
+                    recessReprice = 0.91365258, recessBase = 1.2553621, recessShape = 1.5017152,
+                    overshoot = 0.85783691, overshootRate = 0.32824799, recessRecMult = 1.5790117,
+                    recessCredit = 0.037939692, recessInfl = 0.36695218, boomFade = 2.4789944,
+                    delevRate = 1.2022333, delevFrom = 5.0357040, delevSize = 0.083384574, delevLen = 0.14169131,
+                    volPull = 0.14505733, beliefShare = 0.71254800, beliefYears = 2.0010612,
+                    beliefLeak = 0.32513571, capYears = 2.9336493, cycleSd = 0.0000000, cycleYears = 8.1364908,
+                    crowdImpact = 0.14932099, easing = 0.070540501, floorhold = 0.078657839, refuge = 0.10451699,
+                    refugeDays = 0.41558600, levGain = 4.1352583, bustAmp = 0.17763277, slowVol = 1.0633348,
+                    inflSize = 0.043623249, margin = 0.0051318237,
+                    ext = nq.ext.copy(cycleVol = 1.0000000, crowdAdjust = 1.1635638, termPremium = 0.090792400,
+                                      cpiNoise = 0.0094186678, deflProb = 0.18156909, deflSize = 0.034980202,
+                                      spikeRate = 0.26011936, spikeSize = 0.0067448357, termVol = 0.0056821201,
+                                      termPress = 1.0000000, brkVol = 0.0033537566, brkNominal = 0.091217630,
+                                      cpiNoiseLevel = 0.89585897, policyGrowth = 0.095846395,
+                                      yieldBeta = 0.028855859, yieldLag = 24.417600, expAnchor = 0.46574422,
+                                      yieldAnchor = 0.63363114, volFeedback = 0.24874898, valueCap = 0.057041288,
+                                      valueCapFall = 0.014602550, recessSpread = 0.15041412,
                                       recessTransient = 0.24414122, noiseScale = 1.5334019,
-                                      brkNominal = 0.09121763, spikeRate = 0.26011936, spikeSize = 0.0067448357,
-                                      crowdAdjust = 1.1635638, declineVol = 0.051980829, declineVolHalf = 3.8943863,
-                                      drawdownVol = 0.86336817, declineVolAttack = 0.076862136)),
+                                      declineVol = 0.051980829, declineVolHalf = 3.8943863,
+                                      drawdownVol = 0.86336817, drawdownCap = 0.93875320,
+                                      declineVolAttack = 0.076862136, slowCap = 3.2131710)),
             "nasdaq"))
 
   val Recipes: Vector[(String, World, String)] =
@@ -3064,6 +3133,7 @@ object MarketSim:
     w => nonNegRefusal("-deflsize", w.ext.deflSize),
     w => nonNegRefusal("-spikerate", w.ext.spikeRate),
     w => nonNegRefusal("-spikesize", w.ext.spikeSize),
+    w => shareRefusal("-spikeneg", w.ext.spikeNeg),
     w => nonNegRefusal("-termvol", w.ext.termVol),
     w => nonNegRefusal("-termpress", w.ext.termPress),
     w => nonNegRefusal("-brkvol", w.ext.brkVol),
@@ -3084,6 +3154,7 @@ object MarketSim:
     w => nonNegRefusal("-declinevol", w.ext.declineVol),
     w => Option.when(w.ext.declineVolHalf.isNaN || w.ext.declineVolHalf <= 0.0)(s"-declinevolhalf ${w.ext.declineVolHalf} must be above 0"),
     w => nonNegRefusal("-drawdownvol", w.ext.drawdownVol),
+    w => nonNegRefusal("-drawdowncap", w.ext.drawdownCap),
     w => refused(!(w.ext.declineVolAttack >= 0.0 && w.ext.declineVolAttack < 1.0), "-declinevolattack is a persistence in [0, 1)"),
     w => nonNegRefusal("-yieldlag", w.ext.yieldLag),
     w => refused(!(w.ext.expAnchor >= 0.0 && w.ext.expAnchor <= 1.0), "-expanchor is a share from 0 to 1"),
@@ -3136,6 +3207,7 @@ object MarketSim:
     w => refused(!(w.stressAdapt >= 0.0 && w.stressAdapt < 1.0) || w.stressAdapt <= 0.0, "-stressadapt is an EWMA weight in (0, 1)"),
     w => nonNegRefusal("-slowvol", w.slowVol),
     w => nonNegRefusal("-slowlev", w.slowLev),
+    w => nonNegRefusal("-slowcap", w.ext.slowCap),
     w => nonNegRefusal("-slowbeta", w.slowBeta),
     w => refused(!(w.slowShare >= 0.0 && w.slowShare < 1.0), "-slowshare is a share in [0, 1)"),
     w => refused(!(w.slowPhi >= 0.0 && w.slowPhi < 1.0), "-slowphi is a persistence in [0, 1)"),
@@ -4890,7 +4962,7 @@ object MarketSim:
   private def isBondRow(n: String): Boolean =
     BondBandRows.contains(n) || Bond10BandRows.contains(n) || BondCrashRows.contains(n) ||
       RealYieldBandRows.contains(n) || BreakevenBandRows.contains(n) || TipsBandRows.contains(n) ||
-      RealRateBandRows.contains(n) || StockBondBandRows.contains(n) || n == BondStressRow
+      RealRateBandRows.contains(n) || StockBondBandRows.contains(n) || BondStressRows.contains(n)
 
   /** THE READ OF A TERM-PREMIUM MOVE from the cache of the current world's read: `w` the move's
     * verdict world, which differs from the cached read's only by its term premium, `st` and `hr`
@@ -5545,7 +5617,24 @@ object MarketSim:
     // scaled by sqrt(1 - phi^2) on input, so `slowLev` is in units of the state's STATIONARY sd
     // and the centring is its variance; unscaled it runs 11x nominal and volatility reaches 200%.
     private val slowK = Math.sqrt(1.0 - w.slowPhi * w.slowPhi)
-    private val slowNorm = w.slowLev * w.slowLev
+    // the ceiling (`WorldExt.slowCap`): linear below zero, bounded by `slowCapB` above; off, the
+    // identity and the closed-form normaliser
+    private val slowCapB = w.ext.slowCap * w.slowLev
+    private def slowC(g: Double): Double =
+      if slowCapB <= 0.0 || g <= 0.0 then g else slowCapB * tanhP(g / slowCapB)
+    private val slowNorm =
+      if slowCapB <= 0.0 then w.slowLev * w.slowLev
+      else
+        // ln(E[exp(2 c(g))]) / 2 over g ~ N(0, slowLev^2), a fixed midpoint rule on +-10 sd
+        val n = 20000
+        val du = 20.0 / n.toDouble
+        var acc = 0.0
+        var j = 0
+        while j < n do
+          val u = -10.0 + (j.toDouble + 0.5) * du
+          acc += expDet(-0.5 * u * u + 2.0 * slowC(w.slowLev * u)) * du
+          j += 1
+        0.5 * lnDet(acc / Math.sqrt(2.0 * Math.PI))
     private val slowScale = SigmaN * w.slowVol * (12.0 / w.depth)
     private val mix = Math.sqrt(1.0 - w.slowShare)
     // the diffusion's scale (`WorldExt.noiseScale`): exactly `SigmaN` at 1
@@ -5806,6 +5895,8 @@ object MarketSim:
       if w.ext.drawdownVol > 0.0 && w.ext.declineVolAttack > 0.0 then
         gapAtt = w.ext.declineVolAttack * gapAtt + (1.0 - w.ext.declineVolAttack) * gapS
       gapIn = if w.ext.declineVolAttack > 0.0 then gapAtt else gapS
+      // the gap under its ceiling (`WorldExt.drawdownCap`); off, the gap
+      if w.ext.drawdownCap > 0.0 then gapIn = w.ext.drawdownCap * tanhP(gapIn / w.ext.drawdownCap)
       linM = 1.0 + w.ext.declineVol * declineS + w.ext.drawdownVol * gapIn
 
     /** A lump of the recession's markdown landing at once (see `WorldExt.recessStep`): the
@@ -5939,8 +6030,8 @@ object MarketSim:
       slowVar = 0.0
       if w.slowShare > 0.0 then
         val zs = slowRng.randn()
-        val smul = expDet(slowG - slowNorm)
-        vs.slowState = slowG - slowNorm
+        val smul = expDet(slowC(slowG) - slowNorm)
+        vs.slowState = slowC(slowG) - slowNorm
         slowVar = w.slowVol * w.slowVol * smul * smul
         val sm = slowScale * smul * zs
         // only `slowPerm` of it reaches the fundamental: the rest opens a gap the value channel
@@ -5968,7 +6059,10 @@ object MarketSim:
       // the spikes: a pulse that decays, arrivals on their own stream; nothing at rate 0
       if w.ext.spikeRate > 0.0 then
         spike -= SpikeDecay * spike * dt
-        if spikeRng.nextDouble() < w.ext.spikeRate * dt then spike += Math.abs(spikeRng.randn()) * w.ext.spikeSize
+        if spikeRng.nextDouble() < w.ext.spikeRate * dt then
+          val pulse = Math.abs(spikeRng.randn()) * w.ext.spikeSize
+          // the pulse's side (`WorldExt.spikeNeg`): a draw only while the share is on
+          spike += (if w.ext.spikeNeg > 0.0 && spikeRng.nextDouble() < w.ext.spikeNeg then -pulse else pulse)
       press = inflPress + spike
       // THE REAL SIDE's expectations (`expInfl10`, `realRate`) and the session's price-level
       // change, drawn here on its own stream so the leg can index to it this session; the level
@@ -8328,9 +8422,21 @@ object MarketSim:
                               // at `CrashSeenRef`, the slope per point), read as the bond's is
                               bond10Vol: Double, bond10Growth: Double, bond10Infl: Double,
                               bond10Excess: Double,   // the leg's log return over the short rate, pts/yr
-                              // THE PRICE LEVEL's rows (item 60; `CpiBandRows`, `CpiCenturyRows`): the
+                              // THE PRICE LEVEL's rows (item 60; `CpiBandRows`, `CpiEraRows`): the
                               // median over paths of each, the path's CPI read by 21-session months
-                              cpiRows: Vector[Double], cpiCentury: Vector[Double],
+                              cpiRows: Vector[Double], cpiEra: Vector[Double],
+                              // `BondStressRows`' second and third readings, the median over paths
+                              bondStressSpells: Double, bondStressLen: Double,
+                              // THE COLLAPSE BOUND's reading: over the read's histories' worst
+                              // 252-session log returns, the one the bound's allowance stops at (the
+                              // worst once one history in `CollapseOneIn`, rounded down, is set
+                              // aside; NaN when no history holds a year); the worst of any history;
+                              // the read's `CollapseKeep` worst years, worst first, NaN where it
+                              // holds fewer, and the histories they are the worst of
+                              worstYearEdge: Double, worstYearMin: Double,
+                              worstYearsLow: Vector[Double], worstYearCount: Int,
+                              // median per-path `rateStayReadings` (`RateStayRows`)
+                              rateStays: Vector[Double],
                               // the rate's persistence at twelve months (`CpiPersistenceRow`), the
                               // median over paths
                               cpiPersist: Double,
@@ -8441,6 +8547,7 @@ object MarketSim:
            stockBond = b.stockBond, stockBondReported = b.stockBondReported,
            tips = b.tips, corrCalm = b.corrCalm, corrInfl = b.corrInfl,
            meanBondStress = b.meanBondStress, pctBondStress = b.pctBondStress,
+           bondStressSpells = b.bondStressSpells, bondStressLen = b.bondStressLen,
            tailHedge = b.tailHedge, ddBd5 = b.ddBd5, ddBd10 = b.ddBd10, ddBd20 = b.ddBd20,
            ddB1010 = b.ddB1010, clampPct = b.clampPct)
 
@@ -8689,15 +8796,15 @@ object MarketSim:
     def ofRows(rows: Iterable[String]): PathNeeds =
       rows.foldLeft(None): (nd, n) =>
         if RecordBandClusterRows.contains(n) then nd.copy(cluster = true)
-        else if RateBandRows.contains(n) then nd.copy(rate = true)
+        else if RateBandRows.contains(n) || RateStayRows.contains(n) then nd.copy(rate = true)
         else if RateAfterRows.contains(n) then nd.copy(rateAfter = true)
         else if Bond10BandRows.contains(n) || StockBondBandRows.contains(n) then nd.copy(bond10 = true)
-        else if CpiBandRows.contains(n) || CpiCenturyRows.contains(n) || n == CpiPersistenceRow ||
+        else if CpiBandRows.contains(n) || CpiEraRows.contains(n) || n == CpiPersistenceRow ||
                 n == CpiNewsRow then
           nd.copy(cpi = true)
         else if RealYieldBandRows.contains(n) || BreakevenBandRows.contains(n) || TipsBandRows.contains(n) ||
                 RealRateBandRows.contains(n) then nd.copy(real = true)
-        else if BondBandRows.contains(n) || n == BondStressRow then nd.copy(bond = true)
+        else if BondBandRows.contains(n) || BondStressRows.contains(n) then nd.copy(bond = true)
         else if ExtremeTargets.contains(n) then nd.copy(rest = true)
         else nd.copy(equity = true)
 
@@ -8731,7 +8838,9 @@ object MarketSim:
     profitDecline: Vector[Double],
     shortRate: Double, rateFloor: Double,   // `rateReadings` of the path's rate
     postRate: Double, postFloor: Double,    // `rateAfterReadings` of the path's price and rate
-    cpiRows: Vector[Double], cpiCentury: Vector[Double],   // `cpiRowsOfPath`; NaN when not asked for
+    cpiRows: Vector[Double], cpiEra: Vector[Double],   // `cpiRowsOfPath`; NaN when not asked for
+    bondStress: Vector[Double],                            // `Path.bondStressRows`; NaN when not asked for
+    rateStays: Vector[Double],                             // `rateStayReadings`; NaN when not asked for
     cpiPersist: Double,                                    // `cpiPersistenceOfPath`; NaN when not asked for
     stockBond: Vector[Double], stockBondReported: Vector[Double],   // `stockBondOfPath`
     cpiNews: Double,                                       // `cpiNewsOfPath`
@@ -8925,7 +9034,9 @@ object MarketSim:
       shortRate = rate(0), rateFloor = rate(1),
       postRate = post(0), postFloor = post(1),
       cpiRows = if nd.cpi then cpiRowsOfPath(sp.cpi)._1 else Vector.fill(4)(Double.NaN),
-      cpiCentury = if nd.cpi then cpiRowsOfPath(sp.cpi)._2 else Vector.fill(2)(Double.NaN),
+      cpiEra = if nd.cpi then cpiRowsOfPath(sp.cpi)._2 else Vector.fill(4)(Double.NaN),
+      bondStress = if nd.bond then sp.bondStressRows else Vector.fill(3)(Double.NaN),
+      rateStays = if nd.rate || rest then rateStayReadings(sp.rate) else Vector.fill(2)(Double.NaN),
       cpiPersist = if nd.cpi then cpiPersistenceOfPath(sp.cpi) else Double.NaN,
       stockBond = stockBond._1, stockBondReported = stockBond._2,
       cpiNews = if nd.cpi then cpiNewsOfPath(sp.cpi) else Double.NaN,
@@ -8954,6 +9065,8 @@ object MarketSim:
     // `isFinite`, not `!isNaN`: an infinite path is no more a datum than a NaN one, and `pctile`
     // drops the same set, so a median and the percentiles printed beside it describe the same paths.
     def med(v: Seq[Double]) = { val f = finiteSorted(v.toArray); if f.isEmpty then Double.NaN else f(f.length / 2) }
+    // the histories' worst years, worst first, for the collapse bound
+    val worstYears = parMap(sims)(_.worstYearLr).filter(x => !x.isNaN).sorted(using Ordering.Double.TotalOrdering)
     val eps    = per.flatMap(_.episodes)
     val shapes = eps.map(_.shape).filter(x => !x.isNaN)
     // the crash fits over the episodes pooled across the paths, in path then episode order
@@ -9049,7 +9162,13 @@ object MarketSim:
       postRate = med(per.map(_.postRate)),
       postFloor = med(per.map(_.postFloor)),
       cpiRows = Vector.tabulate(4)(k => med(per.map(_.cpiRows(k)))),
-      cpiCentury = Vector.tabulate(2)(k => med(per.map(_.cpiCentury(k)))),
+      cpiEra = Vector.tabulate(4)(k => med(per.map(_.cpiEra(k)))),
+      bondStressSpells = med(per.map(_.bondStress(1))), bondStressLen = med(per.map(_.bondStress(2))),
+      rateStays = Vector.tabulate(2)(k => med(per.map(_.rateStays(k)))),
+      worstYearEdge = worstYears.lift(worstYears.length / CollapseOneIn).getOrElse(Double.NaN),
+      worstYearMin = worstYears.headOption.getOrElse(Double.NaN),
+      worstYearsLow = worstYears.take(CollapseKeep).padTo(CollapseKeep, Double.NaN),
+      worstYearCount = worstYears.length,
       cpiPersist = med(per.map(_.cpiPersist)),
       realRows = Vector.tabulate(13)(k => med(per.map(_.realRows(k)))),
       realReported = Vector.tabulate(6)(k => med(per.map(_.realReported(k)))),
@@ -9099,6 +9218,23 @@ object MarketSim:
     * grades the horizon, not the world.  The report section still describes the caller's
     * ensemble; only the verdict is pinned. */
   val GateYears = 100
+
+  /** The collapse bound: a history's worst 252-session log return may lie beyond this multiple of
+    * the record's (`Anchors.worstYear`) in at most one history in `CollapseOneIn` of a read. */
+  val CollapseMultiple: Double = 2.0
+  val CollapseOneIn: Int = 200
+  /** The worst years a read keeps for the pooled bound: enough while a read holds under
+    * `CollapseKeep * CollapseOneIn` histories. */
+  val CollapseKeep: Int = 16
+  /** The collapse bound's gate, by name: a membership grades it once on the pooled histories. */
+  val CollapseGate: String = "no collapse"
+
+  /** The collapse bound's reading over reads pooled: of their kept worst years (`lows`, each worst
+    * first and NaN-padded) and history counts, the worst year once one history in `CollapseOneIn`
+    * of the pool, rounded down, is set aside; NaN when the pool keeps too few. */
+  def collapseReading(lows: Vector[Vector[Double]], counts: Vector[Int]): Double =
+    val all = lows.flatten.filter(x => !x.isNaN).sorted(using Ordering.Double.TotalOrdering)
+    all.lift(counts.sum / CollapseOneIn).getOrElse(Double.NaN)
 
   /** The REALISM bands on statistics a FIDELITY row also targets, as data.  The gate reads them
     * and so does the contract that no edge sits inside a target's own noise -- a test that
@@ -9262,6 +9398,12 @@ object MarketSim:
                Clause.closed("V shapes", st.vCount.toDouble, shapeFloor, Inf),
                Clause.closed("U shapes", st.uCount.toDouble, shapeFloor, Inf)), Realism),
       Gate("no runaway drift",          Vector(Clause.open("", st.annRet, -30.0, 30.0)), Realism),
+      // THE COLLAPSE BOUND.  A fall of twice the record's worst year is a market that ceased (the
+      // S&P's edge is a year at -87%); medians and placements cannot see one history in fifty
+      // doing it.  A read with no year of sessions has nothing to grade and passes.
+      Gate(CollapseGate,
+           Vector(Clause.closed("worst year, log", if st.worstYearEdge.isNaN then 0.0 else st.worstYearEdge,
+                                CollapseMultiple * a.worstYear, Inf)), Realism),
       // 0.02% ~ one clamped session per 20 path-years.  The old bound (0.5%) would have passed a
       // world where the clamp was already reshaping kurtosis by a third.
       Gate("clamp rarely binds",        Vector(Clause.open("", st.clampPct, NegInf, 0.02)), Realism),
@@ -9649,13 +9791,13 @@ object MarketSim:
     bond10Window: String, bond10Years: Int,
     // THE PRICE LEVEL's record windows (item 60; `tips-2026-10-29.tsv`): CPI-U over the rate's
     // window, and the century (not seasonally adjusted, from 1913) read on the world's histories
-    // of `cpiCenturyYears`, the paths' own length
+    // of `cpiEraYears`, the paths' own length
     cpiWindow: String, cpiYears: Int,
     // the record's year-over-year persistence at twelve months over `cpiWindow`
     // (`CpiPersistenceRow`; `cpipersist-2026-10-12.tsv`), graded among the world's histories of
     // `cpiYears`
     cpiPersistence: Double,
-    cpiCenturyWindow: String, cpiCenturyYears: Int,
+    cpiEraWindow: String, cpiEraYears: Int,
     // THE REAL SIDE's record windows (item 60; `tips-2026-10-29.tsv`): DFII10 and T10YIE at month
     // ends over the TIPS era, the par TIPS beside the DGS10 par bond and the market on their
     // common sessions, and the policy rate less the next year's inflation over the rate's window;
@@ -9679,6 +9821,10 @@ object MarketSim:
     // FRED's corporate profits after tax, quarterly, 1947-2026 (`profits-2026-10-19.tsv`), one
     // ruler for both sets, read on the world's histories of `profitYears`
     profitWindow: String, profitYears: Int, profitDecline: Vector[Double],
+    // the record's worst 252-session log return, the collapse bound's scale (`CollapseMultiple`):
+    // the S&P set's on the daily market of 1926-2026 (-1.03, the year to June 1932), the Nasdaq
+    // set's on its index splice of 1971-2026 (-1.20, the year to September 2001)
+    worstYear: Double,
     // THE BOND SPIRAL'S record window (`BondStressRow`, `recordbands-2026-09-26.tsv`): the stress
     // recursion run on DGS20 over every session since 1962, read on the world's histories of
     // `spiralYears`; one series, so one window for both sets
@@ -9776,6 +9922,12 @@ object MarketSim:
     /** `RecentRows` read as the banded rows read them (`statsOfReads` on each history alone), their
       * joint band at `RecentReportedAlpha`: the century read of rows graded on the recent era */
     case Recent
+    /** `BondStressRows` read on the histories' bond returns, their joint band at
+      * `RecentReportedAlpha`: the whole record since 1962 beside the fiat-era grade */
+    case BondStress
+    /** `CpiEraRows` read on the histories' CPI, their joint band at `RecentReportedAlpha`: the
+      * century since 1913 beside the fiat-era grade */
+    case CpiEra
 
     /** The family's row names, in its readings' order. */
     def rows: Vector[String] = this match
@@ -9784,6 +9936,8 @@ object MarketSim:
       case Coupling  => Vector("bubble coupling 3y")
       case VolState  => VolStateRows
       case Recent    => Sp500RecentRows
+      case BondStress => BondStressRows
+      case CpiEra     => CpiEraRows
 
   /** WHERE A REPORTED RECORD'S WINDOW OPENS on a path: at the path's last `years` (the record's
     * windows end together, `recordWindow`), or at the first session with `years` left whose valuation
@@ -10009,13 +10163,13 @@ object MarketSim:
       Vector(-2.873544, 5.681290, 9.495094, 11.491122, 12.839354, 13.861276, 14.729763, 15.630088, 16.385245, 17.061003, 17.764423, 18.482143, 19.197881, 19.881713, 20.586833, 21.328241, 22.130656, 23.022657, 24.074554, 25.382077, 27.357668, 31.148465, 38.255577),
       0.488875, (5.864532, 30.896168)),
     RecordBand("bond10 vol per duration", 1.028623,
-      Vector(0.745022, 0.866291, 0.908784, 0.933807, 0.951129, 0.964725, 0.977189, 0.988839, 0.999548, 1.009831, 1.019170, 1.029164, 1.039033, 1.048724, 1.059101, 1.070319, 1.082067, 1.096044, 1.111658, 1.131763, 1.161695, 1.217523, 1.399679),
+      Vector(0.745022, 0.866291, 0.908784, 0.933807, 0.951129, 0.964725, 0.977189, 0.988839, 0.999548, 1.009831, 1.01917, 1.029164, 1.039033, 1.048724, 1.059101, 1.070319, 1.082067, 1.096044, 1.111658, 1.131763, 1.161695, 1.217523, 1.399679),
       0.481525, (0.880103, 1.196692)),
     RecordBand("bond10 depth vs vol", 0.538402,
-      Vector(0.014588, 0.098099, 0.186019, 0.248408, 0.296960, 0.338790, 0.379023, 0.417377, 0.451582, 0.486341, 0.522120, 0.558168, 0.596334, 0.638650, 0.682208, 0.734126, 0.788801, 0.853616, 0.933131, 1.037088, 1.206957, 1.564555, 2.793507),
+      Vector(0.014588, 0.098099, 0.186019, 0.248408, 0.29696, 0.33879, 0.379023, 0.417377, 0.451582, 0.486341, 0.52212, 0.558168, 0.596334, 0.63865, 0.682208, 0.734126, 0.788801, 0.853616, 0.933131, 1.037088, 1.206957, 1.564555, 2.793507),
       0.481525, (0.125246, 1.441048)),
     RecordBand("bond10 excess return pts/yr", 0.781738,
-      Vector(-3.882580, -1.623677, -0.918350, -0.533359, -0.277844, -0.066187, 0.110474, 0.262406, 0.415373, 0.554616, 0.682755, 0.824784, 0.953751, 1.091371, 1.232566, 1.383343, 1.539699, 1.720187, 1.908403, 2.177713, 2.577178, 3.320535, 5.534430),
+      Vector(-3.88258, -1.623677, -0.91835, -0.533359, -0.277844, -0.066187, 0.110474, 0.262406, 0.415373, 0.554616, 0.682755, 0.824784, 0.953751, 1.091371, 1.232566, 1.383343, 1.539699, 1.720187, 1.908403, 2.177713, 2.577178, 3.320535, 5.53443),
       0.481525, (-1.374034, 3.064007)),
     RecordBand("cpi mean %/yr", 3.472994,
       Vector(1.973952, 2.418333, 2.711631, 2.881076, 3.003486, 3.095929, 3.178072, 3.257325, 3.329831, 3.404234, 3.475131, 3.545144, 3.615196, 3.688937, 3.767198, 3.851136, 3.936039, 4.032239, 4.148598, 4.300800, 4.542226, 4.968944, 6.228945),
@@ -10029,12 +10183,18 @@ object MarketSim:
     RecordBand("cpi 4%+ share %", 29.569267,
       Vector(0.931315, 11.292200, 16.880093, 19.674040, 21.769499, 23.515716, 24.912689, 26.193248, 27.473807, 28.754366, 29.918510, 31.199069, 32.246799, 33.527357, 34.691502, 36.088475, 37.485448, 39.115250, 40.977881, 43.538999, 47.147846, 53.667055, 67.869616),
       0.495425, (9.545984, 56.461001)),
-    RecordBand("cpi deflation share % (century)", 12.731310,
-      Vector(0.962250, 4.293116, 6.365655, 7.623982, 8.512213, 9.252406, 9.992598, 10.584752, 11.250925, 11.769060, 12.361214, 12.879349, 13.471503, 14.063657, 14.729830, 15.396003, 16.062176, 16.876388, 17.838638, 19.170984, 21.169504, 24.796447, 36.935603),
-      0.496325, (3.182828, 26.868986)),
-    RecordBand("cpi 4%+ spells per century", 19.383260,
-      Vector(7.929515, 12.334802, 14.977974, 16.740088, 17.621145, 18.502203, 19.383260, 20.264317, 20.264317, 21.145374, 22.026432, 22.026432, 22.907489, 23.788546, 23.788546, 24.669604, 25.550661, 26.431718, 27.312775, 28.193833, 30.837004, 34.361233, 43.171806),
-      0.496325, (11.453744, 36.123348)),
+    RecordBand("cpi deflation share %", 2.561118,
+      Vector(0.000000, 0.000000, 0.000000, 0.465658, 0.698487, 0.814901, 0.931315, 1.047730, 1.396973, 1.513388, 1.629802, 1.746217, 1.862631, 1.979045, 2.211874, 2.444703, 2.561118, 2.793946, 3.143190, 3.492433, 4.074505, 5.122235, 7.566938),
+      0.494200, (0.000000, 5.355064)),
+    RecordBand("cpi 4%+ spells per century", 15.172414,
+      Vector(2.758621, 8.275862, 11.034483, 12.413793, 13.793103, 15.172414, 15.172414, 16.551724, 16.551724, 17.931034, 17.931034, 19.310345, 19.310345, 20.689655, 20.689655, 22.068966, 22.068966, 23.448276, 24.827586, 26.206897, 28.965517, 33.103448, 45.517241),
+      0.494200, (6.896552, 34.482759)),
+    RecordBand("cpi deflation spells per century", 5.517241,
+      Vector(0.000000, 0.000000, 0.000000, 1.379310, 1.379310, 1.379310, 2.758621, 2.758621, 2.758621, 4.137931, 4.137931, 4.137931, 4.137931, 5.517241, 5.517241, 5.517241, 6.896552, 6.896552, 8.275862, 8.275862, 9.655172, 12.413793, 20.689655),
+      0.494200, (0.000000, 13.793103)),
+    RecordBand("cpi deflation spell max months", 8.000000,
+      Vector(0.000000, 0.000000, 0.000000, 3.000000, 5.000000, 5.000000, 5.000000, 6.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 9.000000, 11.000000, 12.000000, 13.000000, 20.000000),
+      0.494200, (0.000000, 13.000000)),
     RecordBand("real yield monthly change sd pp", 0.222184,
       Vector(0.144199, 0.165579, 0.182603, 0.191029, 0.196428, 0.201525, 0.205661, 0.209392, 0.212523, 0.215477, 0.218343, 0.221074, 0.223869, 0.226999, 0.230165, 0.233120, 0.236023, 0.238971, 0.242718, 0.248255, 0.254535, 0.267193, 0.275313),
       0.496825, (0.156584, 0.271120)),
@@ -10089,9 +10249,21 @@ object MarketSim:
     RecordBand("cpi news by inflation seen", 0.627660,
       Vector(0.459739, 0.526073, 0.553627, 0.567810, 0.577015, 0.584085, 0.589996, 0.595132, 0.600027, 0.604223, 0.608267, 0.611988, 0.615628, 0.619406, 0.623245, 0.627050, 0.631097, 0.635411, 0.640117, 0.645969, 0.654192, 0.668159, 0.701658),
       0.490025, (0.526064, 0.668159)),
-    RecordBand("bond stress share %", 0.660576,
-      Vector(0.000000, 0.035137, 0.091356, 0.147576, 0.189740, 0.224877, 0.260014, 0.295151, 0.330288, 0.365425, 0.400562, 0.428672, 0.463809, 0.498946, 0.541110, 0.583275, 0.632467, 0.688686, 0.758960, 0.850316, 0.990864, 1.271961, 2.094167),
-      0.450225, (0.091356, 0.990864)))
+    RecordBand("bond stress share %", 0.044449,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.011112, 0.011112, 0.022225, 0.022225, 0.033337, 0.033337, 0.044449, 0.044449, 0.055562, 0.066674, 0.077786, 0.088899, 0.122236, 0.200022, 0.511168),
+      0.445925, (0.000000, 0.111123)),
+    RecordBand("bond stress spells per century", 2.800311,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 5.600622, 5.600622, 5.600622, 8.400933, 8.400933, 11.201245, 16.801867, 33.603734),
+      0.445925, (0.000000, 11.201245)),
+    RecordBand("bond stress spell max sessions", 4.000000,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 1.000000, 1.000000, 2.000000, 2.000000, 2.000000, 2.000000, 3.000000, 3.000000, 4.000000, 4.000000, 4.000000, 4.000000, 7.000000, 9.000000, 31.000000),
+      0.445925, (0.000000, 7.000000)),
+    RecordBand("rate floor stays per century", 2.781457,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 1.390728, 1.390728, 1.390728, 1.390728, 1.390728, 1.390728, 2.781457, 2.781457, 2.781457, 2.781457, 2.781457, 4.172185, 4.172185, 4.172185, 4.172185, 5.562914, 6.953642, 8.344371, 12.516556),
+      0.488875, (0.000000, 8.344371)),
+    RecordBand("rate floor stay max years", 8.031746,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 2.142857, 2.142857, 2.142857, 2.142857, 2.142857, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746),
+      0.488875, (0.000000, 8.031746)))
 
   /** The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ
     * 1999-03-11..2026-08-20. */
@@ -10198,12 +10370,18 @@ object MarketSim:
     RecordBand("cpi 4%+ share %", 12.852665,
       Vector(0.000000, 0.000000, 2.821317, 4.702194, 6.583072, 7.836991, 8.777429, 9.717868, 10.971787, 11.598746, 12.539185, 13.479624, 14.420063, 15.360502, 16.300940, 17.241379, 18.495298, 19.749216, 21.316614, 23.197492, 26.018809, 31.347962, 43.887147),
       0.495525, (0.000000, 33.542320)),
-    RecordBand("cpi deflation share % (century)", 12.731310,
-      Vector(0.962250, 4.293116, 6.365655, 7.623982, 8.512213, 9.252406, 9.992598, 10.584752, 11.250925, 11.769060, 12.361214, 12.879349, 13.471503, 14.063657, 14.729830, 15.396003, 16.062176, 16.876388, 17.838638, 19.170984, 21.169504, 24.796447, 36.935603),
-      0.496325, (3.182828, 26.868986)),
-    RecordBand("cpi 4%+ spells per century", 19.383260,
-      Vector(7.929515, 12.334802, 14.977974, 16.740088, 17.621145, 18.502203, 19.383260, 20.264317, 20.264317, 21.145374, 22.026432, 22.026432, 22.907489, 23.788546, 23.788546, 24.669604, 25.550661, 26.431718, 27.312775, 28.193833, 30.837004, 34.361233, 43.171806),
-      0.496325, (11.453744, 36.123348)),
+    RecordBand("cpi deflation share %", 2.561118,
+      Vector(0.000000, 0.000000, 0.000000, 0.465658, 0.698487, 0.814901, 0.931315, 1.047730, 1.396973, 1.513388, 1.629802, 1.746217, 1.862631, 1.979045, 2.211874, 2.444703, 2.561118, 2.793946, 3.143190, 3.492433, 4.074505, 5.122235, 7.566938),
+      0.494200, (0.000000, 5.355064)),
+    RecordBand("cpi 4%+ spells per century", 15.172414,
+      Vector(2.758621, 8.275862, 11.034483, 12.413793, 13.793103, 15.172414, 15.172414, 16.551724, 16.551724, 17.931034, 17.931034, 19.310345, 19.310345, 20.689655, 20.689655, 22.068966, 22.068966, 23.448276, 24.827586, 26.206897, 28.965517, 33.103448, 45.517241),
+      0.494200, (6.896552, 34.482759)),
+    RecordBand("cpi deflation spells per century", 5.517241,
+      Vector(0.000000, 0.000000, 0.000000, 1.379310, 1.379310, 1.379310, 2.758621, 2.758621, 2.758621, 4.137931, 4.137931, 4.137931, 4.137931, 5.517241, 5.517241, 5.517241, 6.896552, 6.896552, 8.275862, 8.275862, 9.655172, 12.413793, 20.689655),
+      0.494200, (0.000000, 13.793103)),
+    RecordBand("cpi deflation spell max months", 8.000000,
+      Vector(0.000000, 0.000000, 0.000000, 3.000000, 5.000000, 5.000000, 5.000000, 6.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 8.000000, 9.000000, 11.000000, 12.000000, 13.000000, 20.000000),
+      0.494200, (0.000000, 13.000000)),
     RecordBand("real yield monthly change sd pp", 0.222184,
       Vector(0.144199, 0.165579, 0.182603, 0.191029, 0.196428, 0.201525, 0.205661, 0.209392, 0.212523, 0.215477, 0.218343, 0.221074, 0.223869, 0.226999, 0.230165, 0.233120, 0.236023, 0.238971, 0.242718, 0.248255, 0.254535, 0.267193, 0.275313),
       0.496825, (0.156584, 0.271120)),
@@ -10258,9 +10436,21 @@ object MarketSim:
     RecordBand("cpi news by inflation seen", 0.594286,
       Vector(0.344517, 0.464881, 0.516889, 0.537208, 0.549389, 0.558201, 0.565458, 0.571463, 0.576770, 0.581524, 0.585897, 0.589968, 0.593835, 0.597577, 0.601199, 0.605031, 0.608665, 0.612535, 0.616866, 0.621757, 0.629113, 0.640698, 0.681304),
       0.490025, (0.464874, 0.640698)),
-    RecordBand("bond stress share %", 0.660576,
-      Vector(0.000000, 0.035137, 0.091356, 0.147576, 0.189740, 0.224877, 0.260014, 0.295151, 0.330288, 0.365425, 0.400562, 0.428672, 0.463809, 0.498946, 0.541110, 0.583275, 0.632467, 0.688686, 0.758960, 0.850316, 0.990864, 1.271961, 2.094167),
-      0.450225, (0.091356, 0.990864)))
+    RecordBand("bond stress share %", 0.044449,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.011112, 0.011112, 0.022225, 0.022225, 0.033337, 0.033337, 0.044449, 0.044449, 0.055562, 0.066674, 0.077786, 0.088899, 0.122236, 0.200022, 0.511168),
+      0.445925, (0.000000, 0.111123)),
+    RecordBand("bond stress spells per century", 2.800311,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 2.800311, 5.600622, 5.600622, 5.600622, 8.400933, 8.400933, 11.201245, 16.801867, 33.603734),
+      0.445925, (0.000000, 11.201245)),
+    RecordBand("bond stress spell max sessions", 4.000000,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 1.000000, 1.000000, 2.000000, 2.000000, 2.000000, 2.000000, 3.000000, 3.000000, 4.000000, 4.000000, 4.000000, 4.000000, 7.000000, 9.000000, 31.000000),
+      0.445925, (0.000000, 7.000000)),
+    RecordBand("rate floor stays per century", 7.300116,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 3.650058, 3.650058, 3.650058, 3.650058, 3.650058, 3.650058, 7.300116, 7.300116, 7.300116, 7.300116, 7.300116, 10.950174, 10.950174, 10.950174, 10.950174, 14.600232, 18.250290, 21.900348, 32.850521),
+      0.488875, (0.000000, 21.900348)),
+    RecordBand("rate floor stay max years", 8.031746,
+      Vector(0.000000, 0.000000, 0.000000, 0.000000, 2.142857, 2.142857, 2.142857, 2.142857, 2.142857, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746, 8.031746),
+      0.488875, (0.000000, 8.031746)))
 
   /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
     * rather than re-measured (except the two the 0.22 releases re-anchored -- `medDepth` and
@@ -10279,7 +10469,11 @@ object MarketSim:
     * placed among the world's histories of the equity window's length.  Never graded: it shows what
     * the recent-era grades cost against the whole record. */
   val Sp500Reported: Vector[ReportedRecord] = Vector(
-    ReportedRecord(RowFamily.Recent, "S&P / CRSP 1954-2026", 72, Vector(16.820747, 0.929212, 0.910645, 0.908589)))
+    ReportedRecord(RowFamily.Recent, "S&P / CRSP 1954-2026", 72, Vector(16.820747, 0.929212, 0.910645, 0.908589)),
+    // the bond stress rows on the whole DGS20 record, two monetary regimes (`recordbands-2026-11-07.tsv`)
+    ReportedRecord(RowFamily.BondStress, "DGS20 par bond 1962-2026", 64, Vector(0.660576, 14.167252, 40.000000)),
+    // the cpi era rows on the century, the gold standard's deflations included (`tips-2026-11-07.tsv`)
+    ReportedRecord(RowFamily.CpiEra, "CPI-U 1913-2026", 100, Vector(12.731310, 19.383260, 14.977974, 42.000000)))
 
   val Sp500EraRows: Vector[String] =
     Vector("breakeven monthly change sd pp", "breakeven own change sd pp", "breakeven vs yield corr monthly",
@@ -10325,7 +10519,7 @@ object MarketSim:
     bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029058,
     bond10Window = "DGS10 par bond, 1962-2026", bond10Years = 64,
     cpiWindow = "CPI-U, 1954-2026", cpiYears = 72, cpiPersistence = 0.730419,
-    cpiCenturyWindow = "CPI-U not seasonally adjusted, 1913-2026", cpiCenturyYears = 100,
+    cpiEraWindow = "CPI-U not seasonally adjusted, 1954-2026", cpiEraYears = 72,
     realWindow = "DFII10 and T10YIE month ends, 2003-2026", realYears = 23,
     tipsWindow = "par TIPS on DFII10 and CPI-U beside the DGS10 par bond, 2003-2026", tipsYears = 23,
     realRateWindow = "DFF less the next year's CPI-U, 1954-2025", realRateYears = 71,
@@ -10335,7 +10529,8 @@ object MarketSim:
     bondCrashWindow = "DGS20 over the market's declines, 1962-2026", bondCrashYears = 64,
     bondCrash = (7.452071032058898, -2.2524223912823658),
     profitWindow = ProfitWindow, profitYears = ProfitYears, profitDecline = ProfitDeclineRecord,
-    spiralWindow = "DGS20 par bond, 1962-2026", spiralYears = 64,
+    worstYear = -1.03,
+    spiralWindow = "DGS20 par bond, 1983-2026", spiralYears = 43,
     // CRSP 2009-2024, lag-free (`recordbands-2026-11-05.tsv`, the recent era): 18.50
     vol = 18.5,          volSd = 0.12,
     // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 14.22, where
@@ -10450,7 +10645,7 @@ object MarketSim:
     bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029058,
     bond10Window = "DGS10 par bond, 1999-2026", bond10Years = 27,
     cpiWindow = "CPI-U, 1999-2026", cpiYears = 27, cpiPersistence = 0.258078,
-    cpiCenturyWindow = "CPI-U not seasonally adjusted, 1913-2026", cpiCenturyYears = 100,
+    cpiEraWindow = "CPI-U not seasonally adjusted, 1954-2026", cpiEraYears = 72,
     realWindow = "DFII10 and T10YIE month ends, 2003-2026", realYears = 23,
     tipsWindow = "par TIPS on DFII10 and CPI-U beside the DGS10 par bond, 2003-2026", tipsYears = 23,
     realRateWindow = "DFF less the next year's CPI-U, 1999-2025", realRateYears = 26,
@@ -10460,7 +10655,8 @@ object MarketSim:
     bondCrashWindow = "DGS20 over HiTec's declines, 1962-2026", bondCrashYears = 64,
     bondCrash = (5.498491841992273, -1.5239526467521316),
     profitWindow = ProfitWindow, profitYears = ProfitYears, profitDecline = ProfitDeclineRecord,
-    spiralWindow = "DGS20 par bond, 1962-2026", spiralYears = 64,
+    worstYear = -1.20,
+    spiralWindow = "DGS20 par bond, 1983-2026", spiralYears = 43,
     vol = 26.90,         volSd = 0.18,
     // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 19.97, where calendar
     // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) -- the bottom of the 18.2-21.5 phase range.
@@ -10651,6 +10847,13 @@ object MarketSim:
     * above 0.5, in percent, against the same recursion run on DGS20 1962-2026 (`Anchors.spiralWindow`);
     * banded, read on the world's histories of `spiralYears`, a placement unit of its own. */
   val BondStressRow: String = "bond stress share %"
+  /** THE BOND STRESS ROWS (`bondStressRows`): the share, how often a spell above 0.5 starts per
+    * hundred years, and the longest spell in sessions, over the record's window -- the fiat era
+    * since 1983 (ruled 2026-11-07): the DGS20 par bond reads 1.81% in 1962-1982 and 0.04% since, so
+    * the whole record graded the model's one monetary regime against the other; the 1962-2026 read
+    * is reported beside the rows. */
+  val BondStressRows: Vector[String] =
+    Vector(BondStressRow, "bond stress spells per century", "bond stress spell max sessions")
 
   /** One fidelity row of `fitTargets`: name, reading, target, weight. */
   type FitTarget = (String, WorldStats => Double, Double, Double)
@@ -10828,8 +11031,10 @@ object MarketSim:
     (CpiBandRows(1), st => st.cpiRows(1), bandRecord(a, CpiBandRows(1)), 0.0),
     (CpiBandRows(2), st => st.cpiRows(2), bandRecord(a, CpiBandRows(2)), 0.0),
     (CpiBandRows(3), st => st.cpiRows(3), bandRecord(a, CpiBandRows(3)), 0.0),
-    (CpiCenturyRows(0), st => st.cpiCentury(0), bandRecord(a, CpiCenturyRows(0)), 0.0),
-    (CpiCenturyRows(1), st => st.cpiCentury(1), bandRecord(a, CpiCenturyRows(1)), 0.0),
+    (CpiEraRows(0), st => st.cpiEra(0), bandRecord(a, CpiEraRows(0)), 0.0),
+    (CpiEraRows(1), st => st.cpiEra(1), bandRecord(a, CpiEraRows(1)), 0.0),
+    (CpiEraRows(2), st => st.cpiEra(2), bandRecord(a, CpiEraRows(2)), 0.0),
+    (CpiEraRows(3), st => st.cpiEra(3), bandRecord(a, CpiEraRows(3)), 0.0),
     // the rate's persistence at twelve months: the record's percentile among the world's histories
     // of the CPI window's length (`ExtremeTargets`), never priced
     (CpiPersistenceRow, st => st.cpiPersist, a.cpiPersistence, 0.0),
@@ -10926,6 +11131,8 @@ object MarketSim:
     (ProfitDeclineRows(4), st => st.profitDecline(4), a.profitDecline(4), 0.0),
     // THE BOND SPIRAL'S SHARE (`BondStressRow`), judged by its band, never priced
     (BondStressRow, st => st.pctBondStress * 100.0, bandRecord(a, BondStressRow), 0.0),
+    (BondStressRows(1), st => st.bondStressSpells, bandRecord(a, BondStressRows(1)), 0.0),
+    (BondStressRows(2), st => st.bondStressLen, bandRecord(a, BondStressRows(2)), 0.0),
     // Does the refuge hold exactly where it is needed -- stock-bond correlation on calm sessions
     // with the equity return below its own calm q10, against the pair's own record
     // (tailcorr-2026-08-31.tsv).  Calm-conditioned on BOTH sides by construction: the TLT window
@@ -10945,6 +11152,11 @@ object MarketSim:
     // unconditional rows leave open.  Graded like them; the share additive.
     ("post-trough rate %", st => st.postRate,                         a.postRate,   wgt(0.5, a.postRateSd)),
     ("post-trough floor share %", st => st.postFloor,                 a.postFloor,  wgt(0.5, a.postFloorSd)),
+    // THE RATE FLOOR STAYS (`RateStayRows`): the floor's shape, which the shares cannot read --
+    // the stays of three months or more that start a century and the longest in years; ledger rows
+    // graded by their record bands, the stays' own resample
+    (RateStayRows(0), st => st.rateStays(0), bandRecord(a, RateStayRows(0)), 0.0),
+    (RateStayRows(1), st => st.rateStays(1), bandRecord(a, RateStayRows(1)), 0.0),
     // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return spends
     // under water rather than as three absolute levels -- see `EquityD10Corr` for the relation and
     // `eqDepthVsReal` for what the ratio means.  A level target is a statement about one fund; a
@@ -11023,7 +11235,8 @@ object MarketSim:
     * a log ratio has no meaning across zero and its wrong-sign penalty grows as the reading nears it. */
   val AdditiveTargets: Set[String] =
     Set("vol-timing edge pts/yr", "vol-exit timing pts/yr", "vol-exit 3x interaction pts/yr", "high-vol fifth return pts/yr",
-        "rate floor share %", "post-trough floor share %", "bond10 excess return pts/yr") ++ BondCrashRows
+        "rate floor share %", "post-trough floor share %", "rate floor stays per century",
+        "rate floor stay max years", "bond10 excess return pts/yr") ++ BondCrashRows
 
   /** The admissible interval for a per-path fidelity ratio on a row WITHOUT a `RecordBand`, and the
     * admissible percentile band for an `ExtremeTargets` row.  Stated ONCE: the report, the sidecar
@@ -12883,6 +13096,59 @@ object MarketSim:
     * and its rate path of equal length; the record's rate is the daily effective federal funds
     * rate on the equity's session dates.  NaN with no decline. */
   val RateAfterRows: Vector[String] = Vector("post-trough rate %", "post-trough floor share %")
+
+  /** THE RATE FLOOR STAYS (`rateStayReadings`; accepted 2026-11-08): the floor's SHAPE, which the
+    * two floor shares cannot read.  A stay is `RateStaySessions` or more consecutive sessions under
+    * `RateFloor`; the rows are how often one starts per hundred years and the longest one in years
+    * (0 where none).  Read on the rate alone over the set's rate window, the record the daily
+    * effective federal funds rate on the equity's session dates. */
+  val RateStayRows: Vector[String] = Vector("rate floor stays per century", "rate floor stay max years")
+  /** three months of sessions: a stay, where a dip is shorter */
+  val RateStaySessions: Int = DaysPerYear / 4
+
+  /** The stays on a rate path: the lengths in sessions of its maximal runs under `RateFloor` of
+    * `RateStaySessions` or more. */
+  private def rateStays(rate: Array[Double]): Vector[Int] =
+    (rate.iterator ++ Iterator.single(Double.PositiveInfinity)).foldLeft((Vector.empty[Int], 0)) {
+      case ((out, run), x) =>
+        if x < RateFloor then (out, run + 1)
+        else (if run >= RateStaySessions then out :+ run else out, 0)
+    }._1
+
+  /** `RateStayRows` on one rate path (decimal): the stays that start per hundred years of the path
+    * and the longest in years, 0 where none. */
+  def rateStayReadings(rate: Array[Double]): Vector[Double] =
+    val stays = rateStays(rate)
+    val years = rate.length.toDouble / DaysPerYear.toDouble
+    Vector(stays.length.toDouble / years * 100.0, stays.maxOption.getOrElse(0).toDouble / DaysPerYear.toDouble)
+
+  /** THE STAYS' OWN RESAMPLE behind `RateStayRows`' record band: a stay of eight years fits in no
+    * block of sessions, so the cloud is drawn from the stays themselves -- in each resample the
+    * count is a Poisson draw at the record's rate over the record's length and every stay's length
+    * a draw from the record's stays, all from one `NumPyRNG(seed)`, resample-major; a record
+    * without a stay resamples to zeros. */
+  def rateStayResamples(rate: Array[Double], resamples: Int, seed: Long): Vector[Vector[Double]] =
+    val stays = rateStays(rate)
+    val years = rate.length.toDouble / DaysPerYear.toDouble
+    val rng = new NumPyRNG(seed)
+    Vector.fill(resamples) {
+      if stays.isEmpty then Vector(0.0, 0.0)
+      else
+        val k = poissonDraw(rng, stays.length.toDouble)
+        val longest = Vector.fill(k)(stays(rng.nextBoundedInt(stays.length))).maxOption.getOrElse(0)
+        Vector(k.toDouble / years * 100.0, longest.toDouble / DaysPerYear.toDouble)
+    }
+
+  /** A Poisson draw at `mean` (Knuth's product of uniforms), the same on both twins: `expDet` and
+    * the generator's own uniforms. */
+  private def poissonDraw(rng: NumPyRNG, mean: Double): Int =
+    val limit = expDet(-mean)
+    var k = 0
+    var p = rng.nextDouble()
+    while p > limit do
+      k += 1
+      p *= rng.nextDouble()
+    k
   val RateAfterSessions: Int = 2 * DaysPerYear
   val RateAfterDeclinePct: Double = 20.0
 
@@ -12989,10 +13255,13 @@ object MarketSim:
   val CpiPersistenceRow: String = "cpi yoy persistence 12m"
   val CpiReportedRows: Vector[String] =
     Vector("cpi yoy negative share %", "cpi 4%+ spell median months", "cpi 4%+ spell max months")
-  /** THE CENTURY's CPI rows (`cpiCenturyReadings`, CPI-U not seasonally adjusted from 1913): the
-    * share of months whose year-over-year rate is below zero, the deflation tail, and how often a
-    * 4%+ spell STARTS per hundred years. */
-  val CpiCenturyRows: Vector[String] = Vector("cpi deflation share % (century)", "cpi 4%+ spells per century")
+  /** THE FIAT ERA's CPI rows (`cpiEraReadings`, CPI-U not seasonally adjusted 1954-2026; ruled
+    * 2026-11-07): the share of months whose year-over-year rate is below zero, how often a 4%+
+    * spell STARTS per hundred years, how often a deflation spell starts per hundred years, and the
+    * longest deflation spell in months (0 where none starts).  The century from 1913 is two
+    * monetary regimes and is reported beside the rows. */
+  val CpiEraRows: Vector[String] = Vector("cpi deflation share %", "cpi 4%+ spells per century",
+                                          "cpi deflation spells per century", "cpi deflation spell max months")
   /** The 10-year real yield (`realYieldReadings`, month-end DFII10 in percent): the sd of its
     * month-to-month change, the one row of its record that is not the TIPS era's own (the record
     * is 2003-2026, where the model's rates anchor on 1954-2026: its level and the sd of its level
@@ -13396,11 +13665,11 @@ object MarketSim:
   def recordBandYears(a: Anchors, name: String): Int =
     if a.recentRows.contains(name) then a.recentYears
     else if RecordBandClusterRows.contains(name) then a.clusterYears
-    else if RateBandRows.contains(name) || RateAfterRows.contains(name) then a.rateYears
+    else if RateBandRows.contains(name) || RateAfterRows.contains(name) || RateStayRows.contains(name) then a.rateYears
     else if Bond10BandRows.contains(name) then a.bond10Years
     else if BondBandRows.contains(name) then a.bondYears
     else if CpiBandRows.contains(name) || name == CpiPersistenceRow || name == CpiNewsRow then a.cpiYears
-    else if CpiCenturyRows.contains(name) then a.cpiCenturyYears
+    else if CpiEraRows.contains(name) then a.cpiEraYears
     else if RealYieldBandRows.contains(name) || BreakevenBandRows.contains(name) then a.realYears
     else if TipsBandRows.contains(name) then a.tipsYears
     else if RealRateBandRows.contains(name) then a.realRateYears
@@ -13409,7 +13678,7 @@ object MarketSim:
     else if BondCrashRows.contains(name) then a.bondCrashYears
     else if ProfitDeclineRows.contains(name) then a.profitYears
     else if VolStateRows.contains(name) then a.volStateYears
-    else if name == BondStressRow then a.spiralYears
+    else if BondStressRows.contains(name) then a.spiralYears
     else a.equityYears
 
   /** The percentiles a `RecordBand` carries: every 5th, and the 1st and 99th so a reading past the
@@ -13645,17 +13914,30 @@ object MarketSim:
                    blockYears: Option[Int] = None): Vector[Vector[Double]] =
     blockResamplesOf(dlog, monthlyBlockOf(blockYears), resamples, seed, cpiReadings)
 
-  /** `CpiCenturyRows` on monthly log changes of a price level. */
-  def cpiCenturyReadings(dlog: Array[Double]): Vector[Double] =
+  /** `CpiEraRows` on monthly log changes of a price level: the spell rates per hundred years of
+    * the changes' span, the longest deflation spell 0 where none starts. */
+  def cpiEraReadings(dlog: Array[Double]): Vector[Double] =
     val yoy = yoyPct(dlog)
-    Vector(deflationShare(yoy), spells4pct(yoy).length / (dlog.length.toDouble / MonthsPerYear) * 100.0)
+    val years = dlog.length.toDouble / MonthsPerYear.toDouble
+    val defl = deflationSpells(yoy)
+    Vector(deflationShare(yoy), spells4pct(yoy).length.toDouble / years * 100.0,
+           defl.length.toDouble / years * 100.0, defl.foldLeft(0.0)(math.max))
+
+  /** The lengths in months of the spells of year-over-year rates below `DeflationEdge`. */
+  private def deflationSpells(yoy: Array[Double]): Vector[Double] =
+    val (out, run) = yoy.foldLeft((Vector.empty[Double], 0)) { case ((out, run), y) =>
+      if y < DeflationEdge then (out, run + 1)
+      else if run > 0 then (out :+ run.toDouble, 0)
+      else (out, 0)
+    }
+    if run > 0 then out :+ run.toDouble else out
 
   /** The price level's rows on a path's daily CPI: the level every 21 sessions, its log changes,
-    * read as the record's months are (`cpiReadings`, `cpiCenturyReadings`). */
+    * read as the record's months are (`cpiReadings`, `cpiEraReadings`). */
   def cpiRowsOfPath(cpi: Array[Double]): (Vector[Double], Vector[Double]) =
     val dlog = cpiMonthsOfPath(cpi)
-    if dlog.length < 2 * MonthsPerYear then (Vector.fill(4)(Double.NaN), Vector.fill(2)(Double.NaN))
-    else (cpiReadings(dlog), cpiCenturyReadings(dlog))
+    if dlog.length < 2 * MonthsPerYear then (Vector.fill(4)(Double.NaN), Vector.fill(4)(Double.NaN))
+    else (cpiReadings(dlog), cpiEraReadings(dlog))
 
   /** A path's daily CPI as monthly log changes: the level every 21 sessions. */
   private def cpiMonthsOfPath(cpi: Array[Double]): Array[Double] =
@@ -13752,10 +14034,10 @@ object MarketSim:
          Vector(meanA(ry), sdA(ry), meanA(be), sdA(be), meanA(ry.take(rr.length)) - meanA(rr),
                 (expDet(worst) - 1.0) * 100.0))
 
-  /** `recordResamples` on monthly log changes in five-year blocks, read by `cpiCenturyReadings`. */
-  def cpiCenturyResamples(dlog: Array[Double], resamples: Int, seed: Long,
+  /** `recordResamples` on monthly log changes in five-year blocks, read by `cpiEraReadings`. */
+  def cpiEraResamples(dlog: Array[Double], resamples: Int, seed: Long,
                           blockYears: Option[Int] = None): Vector[Vector[Double]] =
-    blockResamplesOf(dlog, monthlyBlockOf(blockYears), resamples, seed, cpiCenturyReadings)
+    blockResamplesOf(dlog, monthlyBlockOf(blockYears), resamples, seed, cpiEraReadings)
 
   /** Each month end's change from the one before. */
   private def monthlyChanges(x: Array[Double]): Array[Double] =
@@ -13978,26 +14260,42 @@ object MarketSim:
     * squared return at 0.005 from 0.01^2, the index 0.96 of itself plus 0.04 of the standardised
     * loss less 0.399, floored at zero -- and the share of sessions above 0.5 after a one-year
     * burn-in, in percent; NaN on a series no longer than the burn-in. */
-  def bondStressShare(rets: Array[Double]): Double =
-    if rets.length <= DaysPerYear then Double.NaN
+  def bondStressShare(rets: Array[Double]): Double = bondStressRows(rets)(0)
+
+  /** `BondStressRows` on a bond's daily log returns, the index read after a one-year burn-in: the
+    * share of sessions above 0.5 in percent, the spells above 0.5 that start per hundred years, and
+    * the longest spell in sessions (0 where none starts); all NaN on a series no longer than the
+    * burn-in. */
+  def bondStressRows(rets: Array[Double]): Vector[Double] =
+    if rets.length <= DaysPerYear then Vector.fill(3)(Double.NaN)
     else
       var scaleVar = 0.01 * 0.01
       var stress   = 0.0
       var hi       = 0
+      var spells   = 0
+      var run      = 0
+      var longest  = 0
       var i        = 0
       while i < rets.length do
         val scale = math.sqrt(scaleVar)
         val ret   = math.max(-0.50, math.min(0.50, rets(i)))
         scaleVar = 0.995 * scaleVar + 0.005 * ret * ret
         stress = math.max(0.0, 0.96 * stress + 0.04 * (math.max(-ret, 0.0) / scale - 0.399))
-        if i >= DaysPerYear && stress > 0.5 then hi += 1
+        if i >= DaysPerYear then
+          if stress > 0.5 then
+            hi += 1
+            if run == 0 then spells += 1
+            run += 1
+            longest = math.max(longest, run)
+          else run = 0
         i += 1
-      100.0 * hi.toDouble / (rets.length - DaysPerYear).toDouble
+      val n = (rets.length - DaysPerYear).toDouble
+      Vector(100.0 * hi.toDouble / n, spells.toDouble / (n / DaysPerYear.toDouble) * 100.0, longest.toDouble)
 
-  /** `blockResamples` of a bond's daily log returns, read by `bondStressShare`. */
+  /** `blockResamples` of a bond's daily log returns, read by `bondStressRows`. */
   def bondStressResamples(rets: Array[Double], resamples: Int, seed: Long,
                           blockYears: Option[Int] = None): Vector[Vector[Double]] =
-    blockResamples(rets, resamples, seed, r => Vector(bondStressShare(r)), blockYears)
+    blockResamples(rets, resamples, seed, bondStressRows, blockYears)
 
   /** `blockResamples` with blocks of `l` observations: a year of sessions, or of months. */
   private def blockResamplesOf(r: Array[Double], l: Int, resamples: Int, seed: Long,
@@ -14325,7 +14623,7 @@ object MarketSim:
     * and every child that drew one failed the valuation gates (down to 1e-5).  In the tightness a
     * step from off is a loose cap that rarely binds.  A range's low end is off and its high end the
     * tightest cap searched; every looser cap is inside it. */
-  val SearchInvDials: Vector[String] = Vector("valueCap", "valueCapFall")
+  val SearchInvDials: Vector[String] = Vector("valueCap", "valueCapFall", "slowCap", "drawdownCap")
   /** The cap whose tightness is ln 2 (`SearchInvDials`). */
   private val SearchCapRef: Double = 0.01
 
@@ -14371,7 +14669,7 @@ object MarketSim:
   val CalibrateDialOrder: Vector[String] = Vector(
     "depth", "trendShare", "drift", "fundVol", "crowdImpact", "stress", "valuePull",
     "recoveryDrag", "recoveryFloor", "disasterRate", "disasterSize", "disasterRecover",
-    "beliefShare", "capYears", "volOfVol", "jumpVar", "jumpRate", "leverage", "downShock",
+    "beliefShare", "capYears", "volOfVol", "slowCap", "drawdownCap", "jumpVar", "jumpRate", "leverage", "downShock",
     "jumpSkew", "newsRate", "newsSize", "refugeDays", "easing", "refuge", "inflSize",
     "discount", "margin", "slowShare", "slowVol", "slowBeta", "slowPerm", "beliefYears", "bustAmp",
     "cycleSd", "cycleYears", "beliefLeak", "newsLev", "newsRevert", "newsScale", "newsBond",
@@ -14383,6 +14681,7 @@ object MarketSim:
     "discountRef", "driftSd", "boomFade", "delevRate", "delevFrom", "delevSize", "delevLen",
     "recessReprice", "recessBase", "recessShape", "overshoot", "overshootRate", "recessRecMult",
     "recessCredit", "recessInfl", "termPremium", "cpiNoise", "deflProb", "deflSize", "spikeRate", "spikeSize",
+    "spikeNeg",
     "termVol", "brkVol", "brkNominal", "cpiNoiseLevel", "policyGrowth", "yieldBeta",
     "yieldLag", "expAnchor", "volFeedback", "valueCap", "valueCapFall", "recessSpread", "recessTransient",
     "noiseScale", "crowdAdjust", "declineVol", "drawdownVol", "declineVolAttack", "declineVolHalf",
@@ -14414,6 +14713,10 @@ object MarketSim:
     ("beliefShare",   0.0, 0.97, (w, x) => w.copy(beliefShare = x), _.beliefShare),
     ("capYears",      0.0, 8.0, (w, x) => w.copy(capYears = x), _.capYears),
     ("volOfVol",   0.010, 0.030, (w, x) => w.copy(volOfVol = x), _.volOfVol),
+    // THE SLOW STATE'S CEILING, in sds of the state
+    ("slowCap",     0.0, 1.5, (w, x) => w.copy(ext = w.ext.copy(slowCap = x)), _.ext.slowCap),
+    // THE DRAWDOWN GAP'S CEILING, in log gap
+    ("drawdownCap", 0.0, 0.3, (w, x) => w.copy(ext = w.ext.copy(drawdownCap = x)), _.ext.drawdownCap),
     // In the ranges from the release it arrived in.  `fundVol` sat outside them for four releases
     // and that is exactly why its defect survived four releases of one-knob-at-a-time sweeps; a
     // mechanism the search cannot reach is a mechanism nobody will find the wrong value of.
@@ -14544,6 +14847,8 @@ object MarketSim:
     ("deflSize",     0.0,  0.10, (w, x) => w.copy(ext = w.ext.copy(deflSize = x)), _.ext.deflSize),
     ("spikeRate",    0.0,  1.0,  (w, x) => w.copy(ext = w.ext.copy(spikeRate = x)), _.ext.spikeRate),
     ("spikeSize",    0.0,  0.08, (w, x) => w.copy(ext = w.ext.copy(spikeSize = x)), _.ext.spikeSize),
+    // the pulses' other side: the share of arrivals that are falls of the price level
+    ("spikeNeg",     0.0,  1.0, (w, x) => w.copy(ext = w.ext.copy(spikeNeg = x)), _.ext.spikeNeg),
     // the term state's innovation (item 60): 0.0069 is the record's 0.22 pp a month
     ("termVol",      0.0,  0.02, (w, x) => w.copy(ext = w.ext.copy(termVol = x)), _.ext.termVol),
     // the breakeven premium's innovation (item 60): 0.0055 is the record's 0.159 pp a month
@@ -15087,12 +15392,14 @@ object MarketSim:
   /** The other half of the partition.  Read only by the partition test -- the report has no bond
     * section to drive; the list exists so a new fidelity target cannot land unclassified. */
   val BondTargets = Vector(
-    "bond vol % (24y)", "bond crash at 2% infl", "bond crash per % infl", "bond stress share %", "bond depth vs vol",
+    "bond vol % (24y)", "bond crash at 2% infl", "bond crash per % infl", "bond stress share %",
+    "bond stress spells per century", "bond stress spell max sessions", "bond depth vs vol",
     "bond10 vol per duration", "bond10 depth vs vol", "bond10 excess return pts/yr",
     "tail hedge corr", "short rate %", "rate floor share %", "post-trough rate %",
-    "post-trough floor share %",
+    "post-trough floor share %", "rate floor stays per century", "rate floor stay max years",
     "cpi mean %/yr", "cpi yoy sd pp", "cpi monthly sd pp", "cpi 4%+ share %",
-    "cpi deflation share % (century)", "cpi 4%+ spells per century", "cpi yoy persistence 12m",
+    "cpi deflation share %", "cpi 4%+ spells per century", "cpi deflation spells per century",
+    "cpi deflation spell max months", "cpi yoy persistence 12m",
     "real yield monthly change sd pp", "breakeven monthly change sd pp", "breakeven own change sd pp",
     "breakeven vs yield corr monthly",
     "tips vol per duration", "tips depth vs vol", "tips vs bond10 corr", "tips vs equity corr monthly",
@@ -15328,7 +15635,8 @@ object MarketSim:
     (a.bubbleWindow, a.bubbleYears, "bubble coupling 3y" +: MultiYearLongRows),
     // The rate's record over the equity window's dates -- see `Anchors.rateWindow`.
     (a.rateWindow, a.rateYears,
-     Vector("short rate %", "rate floor share %", "post-trough rate %", "post-trough floor share %")),
+     Vector("short rate %", "rate floor share %", "post-trough rate %", "post-trough floor share %",
+            "rate floor stays per century", "rate floor stay max years")),
     // The Shiller record is one series shared by every anchor set, at its own century horizon.
     ("Shiller CAPE 1881-2023", 100, Vector("valuation dispersion", "upper wing months %", "lower wing months %")),
     // The timing rows' record: Shiller's monthly S&P with dividends, at the century horizon.
@@ -15347,13 +15655,13 @@ object MarketSim:
     // the profit decline rows' record: FRED's corporate profits after tax, quarterly since 1947
     (a.profitWindow, a.profitYears, ProfitDeclineRows),
     // the bond spiral's record: the stress recursion on the same 20-year Treasury, every session
-    (a.spiralWindow, a.spiralYears, Vector(BondStressRow)),
+    (a.spiralWindow, a.spiralYears, BondStressRows),
     (a.bond10Window, a.bond10Years,
      Vector("bond10 vol per duration", "bond10 depth vs vol", "bond10 excess return pts/yr")),
     // the price level's two records (item 60): CPI-U over the rate's window, and the century
     (a.cpiWindow, a.cpiYears, CpiBandRows),
     (a.cpiWindow, a.cpiYears, Vector(CpiPersistenceRow)),
-    (a.cpiCenturyWindow, a.cpiCenturyYears, CpiCenturyRows),
+    (a.cpiEraWindow, a.cpiEraYears, CpiEraRows),
     // the real side's four records (item 60): the real yield and the breakeven at month ends over
     // the TIPS era, the par TIPS beside the nominal par bond and the market, and the policy rate
     // less the next year's inflation over the rate's window
@@ -15492,16 +15800,17 @@ object MarketSim:
     ("TIMING_ROWS", TimingRows),
     ("BOND_CRASH_ROWS", BondCrashRows),
     ("PROFIT_DECLINE_ROWS", ProfitDeclineRows),
-    ("BOND_STRESS_ROW", Vector(BondStressRow)),
+    ("BOND_STRESS_ROWS", BondStressRows),
     ("RECORD_BAND_ROWS", RecordBandPlacementRows),
     ("RATE_BAND_ROWS", RateBandRows),
     ("RATE_AFTER_ROWS", RateAfterRows),
+    ("RATE_STAY_ROWS", RateStayRows),
     ("BOND_BAND_ROWS", BondBandRows),
     ("BOND10_BAND_ROWS", Bond10BandRows),
     ("CPI_BAND_ROWS", CpiBandRows),
     ("CPI_PERSISTENCE_ROW", Vector(CpiPersistenceRow)),
     ("CPI_REPORTED_ROWS", CpiReportedRows),
-    ("CPI_CENTURY_ROWS", CpiCenturyRows),
+    ("CPI_ERA_ROWS", CpiEraRows),
     ("REAL_YIELD_BAND_ROWS", RealYieldBandRows),
     ("REAL_YIELD_REPORTED_ROWS", RealYieldReportedRows),
     ("BREAKEVEN_BAND_ROWS", BreakevenBandRows),
@@ -15827,6 +16136,49 @@ object MarketSim:
       val e2 = 2.0 * x.zipWithIndex.map((v, i) => ((2 * (i + 1)).toDouble - (n + 1).toDouble) * v).sum /
         (n * n).toDouble
       e1 - 0.5 * e2
+
+  /** THE RECORD'S CLOUD (ruled 2026-11-07): the record is one draw of a 72-year statistic, with the
+    * resample spread the ledger table carries as its scale; the energy score reads it as a normal
+    * cloud at the record with that sd, laid out as `CloudK` deterministic quantile points,
+    * (k + 1/2) / K, symmetric by construction.  A discrete cloud so that a real joint resample can
+    * take the points' place without a change of formula, and so that no error function enters the
+    * arithmetic the twins and the tools must agree on. */
+  val CloudK: Int = 25
+  private val CloudHalf: Vector[Double] = Vector(
+    2.0537489106318225, 1.554773594596853, 1.2815515655446008, 1.080319340814956,
+    0.9153650878428141, 0.7721932141886849, 0.6433454053929168, 0.5244005127080407,
+    0.4124631294414046, 0.3054807880993974, 0.2018934791418509, 0.10043372051146975)
+
+  /** The cloud's k-th point in units of its sd, k in 0 until CloudK, from the lowest. */
+  def cloudPoint(k: Int): Double =
+    if k < CloudHalf.length then -CloudHalf(k)
+    else if k == CloudHalf.length then 0.0
+    else CloudHalf(CloudK - 1 - k)
+
+  /** Half the cloud's own mean absolute difference, E|Y - Y'| / 2 in units of its sd: the sum over
+    * the pairs k < l of |q_k - q_l| over K^2, a plain left fold so every reader of the cloud gets
+    * the same bits (0.554; a normal's is 1 / sqrt(pi), 0.564). */
+  def cloudSpread: Double =
+    val pairs = for k <- 0 until CloudK; l <- (k + 1) until CloudK yield math.abs(cloudPoint(k) - cloudPoint(l))
+    pairs.foldLeft(0.0)(_ + _) / (CloudK * CloudK).toDouble
+
+  /** THE ENERGY SCORE (ruled 2026-11-07): the energy distance between the finite readings and the
+    * record's cloud, the record `y` with its resample sd `s`: the mean over the cloud's points of
+    * E|X - y_k|, less E|X - X'| / 2 (the sorted-sample form `crps` uses), less the cloud's own
+    * E|Y - Y'| / 2.  It is the CRPS when `s` is 0, zero when the readings are the cloud itself, and
+    * least for readings spread as the record's own uncertainty is.  NaN under two readings or a
+    * non-finite record or sd. */
+  def energyScore(xs: Vector[Double], y: Double, s: Double): Double =
+    val x = xs.filter(_.isFinite).sorted(using Ordering.Double.TotalOrdering)
+    val n = x.length
+    if n < 2 || !y.isFinite || !s.isFinite || s < 0.0 then Double.NaN
+    else
+      val e1 = (0 until CloudK).foldLeft(0.0): (acc, k) =>
+        val yk = y + s * cloudPoint(k)
+        acc + x.map(v => math.abs(v - yk)).sum / n.toDouble
+      val e2 = 2.0 * x.zipWithIndex.map((v, i) => ((2 * (i + 1)).toDouble - (n + 1).toDouble) * v).sum /
+        (n * n).toDouble
+      e1 / CloudK.toDouble - 0.5 * e2 - s * cloudSpread
 
   /** The record's own resample sd on a banded row, (p95 - p5) / 3.29 of its record band's spread:
     * the yardstick a row's CRPS is summed in.  None where the row carries no record band. */
@@ -16276,6 +16628,12 @@ object MarketSim:
           val s = statsOfReads(Vector(sims(k)), Vector(per(k)), rec.years, nd)
           Vector(s.vol * 100.0, s.vr20Out, s.vr60Out, s.vr120Out)
         }
+        (r, jointEdges(r, 4, RecentReportedAlpha))
+      case RowFamily.BondStress =>
+        val r = parMap(sims)(_.bondStressRows)
+        (r, jointEdges(r, 3, RecentReportedAlpha))
+      case RowFamily.CpiEra =>
+        val r = parMap(sims)(p => cpiRowsOfPath(p.cpi)._2)
         (r, jointEdges(r, 4, RecentReportedAlpha))
     rec.family.rows.indices.toVector.map { k =>
       val real = rec.records(k)
@@ -17656,7 +18014,7 @@ object MarketSim:
   val OptionalWorldKeys: Vector[(String, String)] = Vector(
     ("volPullStep", "0"), ("recessStep", "0"), ("recessSteps", "0"), ("declineVol", "0"),
     ("declineVolHalf", "5"), ("drawdownVol", "0"), ("declineVolAttack", "0"), ("yieldAnchor", "0"),
-    ("termPress", "0"), ("cycleVol", "0"))
+    ("termPress", "0"), ("cycleVol", "0"), ("spikeNeg", "0"), ("slowCap", "0"), ("drawdownCap", "0"))
 
   /** Every `World` field, in declaration order, as the indented body of a JSON object.  A world
     * that reaches a consumer without its parameters cannot be re-simulated.
@@ -17769,10 +18127,13 @@ object MarketSim:
       (Vector("recessStep", "recessTransient"), "recessSteps", w.ext.recessSteps, 0.0),
       (Vector("jumpResp"), "declineVol", w.ext.declineVol, 0.0),
       (Vector("expAnchor"), "yieldAnchor", w.ext.yieldAnchor, 0.0),
-      (Vector("termVol"), "termPress", w.ext.termPress, 0.0),
       (Vector("cycleYears"), "cycleVol", w.ext.cycleVol, 0.0),
+      (Vector("spikeRate"), "spikeNeg", w.ext.spikeNeg, 0.0),
+      (Vector("slowShare"), "slowCap", w.ext.slowCap, 0.0),
+      (Vector("termVol"), "termPress", w.ext.termPress, 0.0),
       (Vector("declineVol", "jumpResp"), "declineVolHalf", half, 5.0),
       (Vector("declineVolHalf", "declineVol", "jumpResp"), "drawdownVol", w.ext.drawdownVol, 0.0),
+      (Vector("drawdownVol", "declineVolHalf", "declineVol", "jumpResp"), "drawdownCap", w.ext.drawdownCap, 0.0),
       (Vector("drawdownVol", "declineVolHalf", "declineVol", "jumpResp"), "declineVolAttack", attack, 0.0)
     ).foldLeft(withStep) { case (fs, (after, key, x, off)) =>
       if x != off then
@@ -18268,7 +18629,10 @@ $body
     * over the reads (`margins`), the rows its verdict printed, and the classes the run requires. */
   private final case class SeedRead(seed: Long, hrows: Vector[HistoryRow], ledger: Vector[HistoryRow],
                                     bounds: Map[GateClass, Vector[String]], clauses: Vector[GateClause],
-                                    shown: Set[String], gateReq: Set[GateClass])
+                                    shown: Set[String], gateReq: Set[GateClass],
+                                    // the collapse bound's material (`collapseReading`) and its edge;
+                                    // the read's own clause is in neither `bounds` nor `clauses`
+                                    worstYearsLow: Vector[Double], worstYearCount: Int, collapseEdge: Double)
 
   /** THE MARGIN's tail: a member's reads must predict its next read outside a bound at most this
     * often, so a world in a set fails a bound on under 0.5% of the reads a consumer takes. */
@@ -18436,9 +18800,17 @@ $body
     val ms        = margins(reads.map(_.clauses))
     // from MarginMinReads the margin alone decides the bounds; under it, every read must pass
     val margined  = reads.length >= MarginMinReads
-    val bad = GateClass.values.map(c => c -> (
+    val bad0 = GateClass.values.map(c => c -> (
       if margined then ms.filter(m => !m.ok && m.cls == c).map(m => s"margin: ${m.named}")
       else reads.flatMap(r => r.bounds(c).map(f => s"seed ${r.seed}: $f")))).toMap
+    // the collapse bound, once on the pool: a read of 200 histories sets one aside and cannot tell
+    // a world that collapses once in a hundred from one that never does
+    val collapse = (collapseReading(reads.map(_.worstYearsLow), reads.map(_.worstYearCount)),
+                    reads.headOption.fold(Double.NaN)(_.collapseEdge))
+    val bad =
+      if collapse._1 < collapse._2 then
+        bad0.updated(GateClass.Realism, bad0(GateClass.Realism) :+ s"pooled: $CollapseGate")
+      else bad0
     val pl = placement(pooled, PlacementAlpha)
     eprintln(f"placed the record among $histories%d histories in ${(System.nanoTime - t0) / 1e9}%.2f s")
     if rowsFile.nonEmpty then
@@ -18455,6 +18827,8 @@ $body
               f"mechanism ${pass(r.bounds(GateClass.Mechanism).isEmpty)}%s   " +
               f"fidelity bands ${pass(r.bounds(GateClass.Fidelity).isEmpty)}%s")
     }
+    println(f"  $CollapseGate%s, pooled: the bound's history ${collapse._1}%+.2f against the edge " +
+            f"${collapse._2}%+.2f  ${pass(collapse._1.isNaN || collapse._1 >= collapse._2)}%s")
     if margined then printMargins(ms, reads.length)
     println()
     println(s"  the record among the ${reads.length} reads' $histories histories pooled:")
@@ -18676,6 +19050,7 @@ $body
     var termPremium = dw.ext.termPremium
     var cpiNoise = dw.ext.cpiNoise; var deflProb = dw.ext.deflProb; var deflSize = dw.ext.deflSize
     var spikeRate = dw.ext.spikeRate; var spikeSize = dw.ext.spikeSize; var termVol = dw.ext.termVol
+    var spikeNeg = dw.ext.spikeNeg; var slowCap = dw.ext.slowCap; var drawdownCap = dw.ext.drawdownCap
     var termPress = dw.ext.termPress; var cycleVol = dw.ext.cycleVol
     var brkVol = dw.ext.brkVol; var brkNominal = dw.ext.brkNominal
     var discountYield = dw.ext.discountYield; var cpiNoiseLevel = dw.ext.cpiNoiseLevel
@@ -18850,6 +19225,9 @@ $body
       case "-deflsize"   => deflSize = numOr("-deflsize", consumeNext)
       case "-spikerate"  => spikeRate = numOr("-spikerate", consumeNext)
       case "-spikesize"  => spikeSize = numOr("-spikesize", consumeNext)
+      case "-spikeneg"   => spikeNeg = numOr("-spikeneg", consumeNext)
+      case "-slowcap"    => slowCap = numOr("-slowcap", consumeNext)
+      case "-drawdowncap" => drawdownCap = numOr("-drawdowncap", consumeNext)
       case "-termvol"    => termVol = numOr("-termvol", consumeNext)
       case "-termpress"  => termPress = numOr("-termpress", consumeNext)
       case "-cyclevol"   => cycleVol = numOr("-cyclevol", consumeNext)
@@ -19041,6 +19419,7 @@ $body
                   duration = duration, bond10 = bond10,
                   ext = WorldExt(termPremium = termPremium, cpiNoise = cpiNoise, deflProb = deflProb, deflSize = deflSize,
                                  spikeRate = spikeRate, spikeSize = spikeSize, tips = tips, termVol = termVol,
+                                 spikeNeg = spikeNeg, slowCap = slowCap, drawdownCap = drawdownCap,
                                  termPress = termPress, cycleVol = cycleVol, brkVol = brkVol, brkNominal = brkNominal,
                                  discountYield = discountYield, cpiNoiseLevel = cpiNoiseLevel,
                                  policyGrowth = policyGrowth, yieldBeta = yieldBeta,
@@ -19375,6 +19754,9 @@ $body
             f"${equityDepthExpected(0.20, EquityD20Corr, eqVolPct, st.retVol)}%.3f")
     println(f"    bond                 >5%% ${st.ddBd5}%.3f   >10%% ${st.ddBd10}%.3f   >20%% ${st.ddBd20}%.3f" +
             f"      real TLT   -   / 0.510 /   -")
+    println(f"  worst year             the bound's history ${st.worstYearEdge}%+.2f (the edge " +
+            f"${CollapseMultiple * anchors.worstYear}%+.2f, twice the record's ${anchors.worstYear}%+.2f); " +
+            f"the read's worst ${st.worstYearMin}%+.2f")
     println(f"  binding diagnostics    trend share ${st.trendShare}%.2f (pinned ${st.trendPinned * 100}%.1f%%, " +
             f"target saturated ${st.targetSat * 100}%.1f%%)   bond spiral ${st.pctBondStress * 100}%.1f%% of sessions   " +
             f"clamped ${st.clampPct}%.3f%% of all sessions, " +
@@ -19481,8 +19863,10 @@ $body
       // the classes on the bounds alone, before the placement's failures join fidelity: what a read
       // of `-seeds` brings to the membership over every read
       if keep then
-        Some(SeedRead(seed, hrows, keptLedger, badBase, gateClausesAt(anchors, verdictSt, verdictBanded),
-                      shown, gateReq))
+        Some(SeedRead(seed, hrows, keptLedger, badBase.view.mapValues(_.filter(_ != CollapseGate)).toMap,
+                      gateClausesAt(anchors, verdictSt, verdictBanded).filter(_.gate != CollapseGate),
+                      shown, gateReq, verdictSt.worstYearsLow, verdictSt.worstYearCount,
+                      CollapseMultiple * anchors.worstYear))
       else
         // exit code follows the classes this run declared it requires, nothing more
         exitOnRequired(bad, gateReq)
