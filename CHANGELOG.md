@@ -20,6 +20,16 @@ bit-identical, and the key is written in a world's block only when on. The recor
 -0.08) lives in its bursts: 18% of a move given back in the months whose volatility is 1.5 times the quarter before,
 4% outside them.
 
+**The first-leg break.** On the Nasdaq record 85% of the declines of 20% reach 20% on their first leg, before any
+rally of 8% off the low. `-legbreakdepth D`: when the log drawdown from the running peak first reaches D on a
+decline's first leg (no 8% rally off the low since the peak, no break since it), a sale of `-legbreaksize` in log
+return starts the next session, spread evenly over `-legbreakdays` sessions and then bought back evenly over
+`-legbreakback` sessions; no sale starts while one or its buy-back runs, and the mechanism takes no draw. The depth
+at 0 is off and bit-identical; the size is 0 and the sessions 10 and 75 when off, inert until the depth is on, whole
+sessions (the fraction dropped) and at least 1 then. The four keys are written in a world's block only while the
+break is on, and searched (depth 0-0.25, size 0-0.20, days 3-30, back 20-250), the last four dials of the search's
+table, which now holds 114. No recipe or set carries the break.
+
 **The ledger's rows weighted.** The set score weights the rows (the `weight` column of `-ledger FILE`): half by a
 row's independence of the other rows, half by its measured share of what a history gives a strategy that times the
 market, rotates between categories, draws an income or holds; each weight between 0.25 and 4, their mean 1, the same
@@ -40,6 +50,41 @@ was inside the 0.25.0 pool, so the release rule's no-row-lost test fails against
 
 **`Path::price_returns` on a path built without its kept returns** computes them from the price; it recursed without
 end.
+
+**The sector channel at 40 legs, with a trend that ends and a share count.** `-sectorchase` carries a share of a
+leg's relative return over the past year into its drift over the next (the record's industry trend is flat over
+months 2-12 and stops at a year, which the AR(1) drift cannot give); `-sectorlevelhalf` pulls a leg's level toward
+the legs' mean; `-sectorflow` gives each leg a share count, emitted as `logShares1..K` beside `logSector1..K`, that
+follows the past year's return and whose three-year growth lowers the leg's drift (in the record an industry's
+three-year capital flow lowers its next three years' relative return beside its own past returns, t -2.9);
+`-sectorbreadth` makes a share of the legs' idio variance common. All four are 0 off, bit-identical and written in a
+world's block only when on. `0.25.1-sp500` carries 40 legs (the legs reach no price), read against the 40
+industries of French's 49-industry file with a full history (`sectors-2026-11-12.tsv`; `record_bands -sectors`
+prints the table `industries40`, and with `-block` the graded rows' resamples on the ten industries or, with
+`-legs 40`, on those 40, `-reads FILE` writing them). A judged read costs 31% more at 40 legs. The emit schema
+stays 32: a file with the four dials off is byte-identical to the file before them. Earlier recipes keep ten legs
+and the ten-industry record.
+
+**Six sector rows for a strategy that follows money between sectors**, graded on a 40-leg channel:
+`sector strength months 13-24` (record -0.0095) and `sector strength months 61-120` (-0.0249), the rank correlation
+of the legs' returns that far back with the month's; `sector xs sd 10y / market sd` (9.391), the legs' 10-year
+spread over the market's monthly sd; `sector flow persistence 1y` (0.2256), `sector flow after return 1y` (0.0513)
+and `sector return after flow 3y` (-0.0405), rank correlations on the legs' share counts, absent while
+`-sectorflow` is off. Records in `sectors-2026-11-13.tsv`; bands from `record_bands -sectors DIR -block 5040
+-legs 40` (20-year blocks, which the rows' look-back needs).
+
+**The sector legs' shape.** Four dials read on the record's 40 industries. `-sectorbetalift` is added to every
+leg's beta, so the legs' mean beta is 1 + the lift (the industries' mean beta is 1.06). `-sectoridiospread` is the sd
+of a leg's log idio scale, drawn once a path, correlated 0.40 with the leg's beta draw and normalised to mean square
+1 (the industries' idio sds vary with a coefficient of variation of 0.27 and correlate 0.40 with their betas).
+`-sectoridioflat` is the share of the idio's vol held at the vol state's running rms: the idio's vol is
+ref^flat x state^(1 - flat), where at 0 it rides the vol state whole (the industries' month-to-month cross-sectional
+dispersion has a mean 0.91 of its rms). `-sectorbetanoise k` adds k^2 x the primary's squared session return to a
+leg's own idio variance. Each is 0 off, bit-identical and written in a world's block and the sidecar's sector block
+only when on; the spread takes its draws, after the legs' other draws of the path, only when on. `0.25.1-sp500`
+carries lift 0.06, spread 0.25, flat 0.3 and noise 0.43 with idio 0.735, chase 0.23 and breadth 0.063 (level
+half-life 12 years, flow 0.085): on the 90-member set the ledger reads 31.40 against 37.02 at ten legs, the two
+vol coupling rows still missed. The legs reach no price.
 
 **The rate floor's stays.** Two rows read the floor's shape, which the two floor shares cannot: `rate floor stays
 per century`, how often a stay of three months or more under 0.50% starts, and `rate floor stay max years`, the

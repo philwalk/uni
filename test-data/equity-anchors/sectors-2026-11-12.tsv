@@ -1,0 +1,29 @@
+# THE SECTOR ROWS AT 40 (2026-11-12): the record ruler of a 40-leg sector channel, read from the 40 industries of
+# Ken French's value-weighted monthly 49-industry portfolios that hold a return in every month, beside the market
+# (Mkt-RF + RF) and the bill rate, 1926-07 to 2026-08 (CRSP vintage 202608). Generator: `record_bands -sectors
+# <data> -resamples 2000 -seed 20260930`, table `industries40`, with `49_Industry_Portfolios.CSV` and
+# `F-F_Research_Data_Factors.CSV` in <data> as the library publishes them (unzipped; the first monthly block of
+# each, -99.99 a missing month). The rows' definitions are `sectors-2026-09-30.tsv`'s; the momentum is long the top
+# 12 of 40 and short the bottom 12.
+row	table	form	window	statistic	value	lo	hi	months
+momentum	industries40	12-1	all	mean spread	0.006639	0.004878	0.008060	1190
+momentum	industries40	12-1	all	t-stat	6.376813			1190
+momentum	industries40	12-1	all	share positive	0.619328			1190
+momentum	industries40	12-1	post-1963	mean spread	0.006171	0.004089	0.007971	758
+momentum	industries40	12-1	post-1963	t-stat	4.821839			758
+momentum	industries40	12-1	post-1963	share positive	0.610818			758
+momentum	industries40	6-1	all	mean spread	0.002936	0.000929	0.004672	1196
+momentum	industries40	6-1	all	t-stat	2.901927			1196
+momentum	industries40	6-1	all	share positive	0.581940			1196
+momentum	industries40	6-1	post-1963	mean spread	0.003013	0.001143	0.005033	758
+momentum	industries40	6-1	post-1963	t-stat	2.486535			758
+momentum	industries40	6-1	post-1963	share positive	0.564644			758
+trend	industries40	12m	all	positive minus negative	0.004813	-0.000575	0.009859	1190
+trend	industries40	12m	post-1963	positive minus negative	0.001493	-0.003850	0.006250	758
+trend	industries40	sma10	all	positive minus negative	0.004778	-0.000828	0.009870	1192
+trend	industries40	sma10	post-1963	positive minus negative	0.002118	-0.002973	0.006569	758
+shape	industries40		all	mean cross-sectional sd	0.042881			1202
+shape	industries40		all	market monthly sd	0.052916			1202
+shape	industries40		all	median pairwise correlation	0.618630			1202
+shape	industries40		market worst decile	median pairwise correlation	0.488988			121
+shape	industries40		market middle decile	median pairwise correlation	0.051949			116

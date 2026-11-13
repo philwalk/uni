@@ -152,7 +152,15 @@ object RecordBands {
     "              `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the",
     "              library publishes them (unzipped), the first monthly block of each; prints the",
     "              momentum, trend and shape rows of `sectors-2026-09-30.tsv`, with 5-95",
-    "              block-bootstrap bands where a row has one",
+    "              block-bootstrap bands where a row has one, and the same rows on the 49's",
+    "              industries with a full history (table `industries40`,",
+    "              `sectors-2026-11-12.tsv`); with -block, the graded rows on the ten industries",
+    "              (-legs 40: on those 40) and their resamples' band columns [-reads FILE: the",
+    "              resamples, one a line].  The long rows of `sectors-2026-11-13.tsv` (relative",
+    "              strength over months 13-24 and 61-120, the 10-year spread, the capital flow's",
+    "              three) are printed for the ten and the 40, an industry's capital its `Number of",
+    "              Firms in Portfolios` times its `Average Firm Size`; they look back ten years, so",
+    "              -block also takes 5040 here, twenty years of months a block",
     "",
     "-yahoo FILE   a daily series, in one of three published layouts told apart by the file itself:",
     "              a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo Finance's daily",
@@ -242,7 +250,9 @@ object RecordBands {
         args.lift(i + 1) match
           case Some("252") => Some(1)
           case Some("756") => Some(3)
-          case other       => usage(s"-block takes 252 or 756 (one or three years), not [${other.getOrElse("")}]")
+          // the sector panel's long rows look back ten years: twenty years of months a block
+          case Some("5040") if args.contains("-sectors") => Some(20)
+          case other       => usage(s"-block takes 252 or 756 (one or three years; 5040 under -sectors), not [${other.getOrElse("")}]")
 
   def lagOf(args: Seq[String]): Lag =
     @annotation.tailrec
@@ -1852,17 +1862,28 @@ object RecordBands {
     * of months, every column taking the same months, in the band columns, for -set (sp500). */
   def printSectorScaleRows(args: Vector[String], dir: String, years: Int)(using Run): Unit =
     val set = opt(args, "-set").getOrElse("sp500")
-    val (months, p) = sectorPanel(dir, "10_Industry_Portfolios.CSV")
+    // the ten industries, or with `-legs 40` the 49-industry file's 40 with a full history
+    val forty = opt(args, "-legs").contains("40")
+    val (months, p) =
+      if forty then
+        val (m, p0) = sectorPanel(dir, "49_Industry_Portfolios.CSV")
+        (m, fullHistory(p0))
+      else sectorPanel(dir, "10_Industry_Portfolios.CSV")
     val n = p.market.length
     val window = s"${months.head}..${months(n - 1)}"
     val (resamples, seed, joint) = resamplingOf(args)
     val idx = Array.tabulate(n)(_.toDouble)
     val reads = MarketSim.seriesResamples(idx, 12, years, resamples, seed) { x =>
       val at = x.map(_.toInt).toVector
-      MarketSim.sectorRowsOfPanel(MarketSim.SectorPanel(p.returns.map(c => at.map(c)), at.map(p.market), at.map(p.rf)))
+      MarketSim.sectorRowsOfPanel(MarketSim.SectorPanel(p.returns.map(c => at.map(c)), at.map(p.market), at.map(p.rf),
+                                                        p.flows.map(c => at.map(c))))
+    }
+    opt(args, "-reads").foreach { file =>
+      val text = (MarketSim.SectorRows.mkString("\t") +: reads.map(_.map(rustDebug).mkString("\t"))).mkString("", "\n", "\n")
+      file.asPath.write(text)
     }
     printBandHeader(args)
-    printResampledRows(set, "French10", window, n, MarketSim.SectorRows, MarketSim.sectorRowsOfPanel(p), reads, joint)
+    printResampledRows(set, if forty then "French40" else "French10", window, n, MarketSim.SectorRows, MarketSim.sectorRowsOfPanel(p), reads, joint)
 
   /** The modes that read their own arguments, by flag, in the order they are tried. */
   val OwnModes: Vector[String] = Vector("-scales", "-resampled", "-satellite", "-dividend", "-unlagged", "-basket",
@@ -2126,7 +2147,26 @@ object RecordBands {
     val table = Vector.tabulate(cols)(k => rows.map(r => r(k + 1).toDoubleOption.filter(_ > -99.0).map(_ / 100.0)))
     (dates, table)
 
-  /** The panel of one industry table beside the factors, aligned on the months both hold. */
+  /** The monthly block of one of Ken French's industry CSVs under the line that starts with `title`
+    * (`Number of Firms in Portfolios`, `Average Firm Size`): its months as `YYYY-MM` and its columns
+    * as published, a value at or under zero (the library's missing marks) `None`. */
+  def readFrenchBlock(file: String, title: String): (Vector[String], Vector[Vector[Option[Double]]]) =
+    val lines = Paths.get(file).lines.toVector.dropWhile(l => !l.trim.startsWith(title))
+      .map(_.split(",", -1).map(_.trim).toVector)
+    def isMonth(f: Vector[String]) = f.length > 1 && f(0).length == 6 && f(0).forall(c => c >= '0' && c <= '9')
+    val start = lines.indexWhere(isMonth)
+    if start < 0 then usage(s"$file: no monthly rows under [$title]")
+    val cols  = lines(start).length - 1
+    val rows  = lines.drop(start).takeWhile(isMonth)
+    for r <- rows if r.length != cols + 1 do usage(s"$file: a row of [$title] is not the block's width")
+    val dates = rows.map(r => s"${r(0).take(4)}-${r(0).drop(4)}")
+    val table = Vector.tabulate(cols)(k => rows.map(r => r(k + 1).toDoubleOption.filter(_ > 0.0)))
+    (dates, table)
+
+  /** The panel of one industry table beside the factors, aligned on the months both hold.  An
+    * industry's capital at a month's start is its firms times their average size, and its flow
+    * over the month the growth of that capital's log less its log return, `None` where the month,
+    * the next month's capital or the return is blank. */
   def sectorPanel(dir: String, table: String): (Vector[String], MarketSim.SectorPanel) =
     val (fd, fac) = readFrenchMonthly(s"$dir/F-F_Research_Data_Factors.CSV")
     val (id, ind) = readFrenchMonthly(s"$dir/$table")
@@ -2136,16 +2176,58 @@ object RecordBands {
     def must(v: Vector[Option[Double]]): Vector[Double] = v.map(_.getOrElse(usage("a blank in the factors file")))
     val mktRf = must(pick(fd, fac(0)))
     val rf    = must(pick(fd, fac(3)))
-    (months, MarketSim.SectorPanel(ind.map(c => pick(id, c)), mktRf.zip(rf).map(_ + _), rf))
+    val returns = ind.map(c => pick(id, c))
+    val file = s"$dir/$table"
+    val (nd, firms) = readFrenchBlock(file, "Number of Firms in Portfolios")
+    val (sd, size)  = readFrenchBlock(file, "Average Firm Size")
+    if firms.length != returns.length || size.length != returns.length then
+      usage(s"$file: the firms' and sizes' blocks are not the returns' width")
+    val flows = returns.indices.toVector.map { j =>
+      val (n, s) = (pick(nd, firms(j)), pick(sd, size(j)))
+      def cap(t: Int): Option[Double] =
+        for a <- n.lift(t).flatten; b <- s.lift(t).flatten yield MarketSim.lnDet(a * b)
+      months.indices.toVector.map { t =>
+        for c1 <- cap(t + 1); c0 <- cap(t); r <- returns(j)(t) yield c1 - c0 - MarketSim.lnDet(1.0 + r)
+      }
+    }
+    (months, MarketSim.SectorPanel(returns, mktRf.zip(rf).map(_ + _), rf, flows))
+
+  /** A double in the text the Rust twin's `{:?}` writes: the shortest digits that round-trip, plain
+    * from 1e-4 up to 1e16 and with an exponent outside, a whole number with `.0`. */
+  def rustDebug(x: Double): String =
+    if x.isNaN then "NaN"
+    else if x.isInfinite then (if x > 0 then "inf" else "-inf")
+    else if x == 0.0 then (if 1.0 / x < 0 then "-0.0" else "0.0")
+    else
+      val d = new java.math.BigDecimal(x.toString).stripTrailingZeros
+      val a = math.abs(x)
+      if a >= 1e-4 && a < 1e16 then
+        val t = d.toPlainString
+        if t.contains('.') then t else t + ".0"
+      else
+        val digits = d.unscaledValue.abs.toString
+        val exp = digits.length - 1 - d.scale
+        val mant = if digits.length == 1 then digits else s"${digits.head}.${digits.tail}"
+        s"${if x < 0 then "-" else ""}${mant}e$exp"
+
+  /** The panel's industries with a return in every month: the 49-industry table's 40 with a full
+    * history are the ruler a 40-sector channel is graded on. */
+  def fullHistory(p: MarketSim.SectorPanel): MarketSim.SectorPanel =
+    val full = p.returns.map(_.forall(_.isDefined))
+    def keep(cols: Vector[Vector[Option[Double]]]): Vector[Vector[Option[Double]]] =
+      cols.zip(full).collect { case (c, true) => c }
+    p.copy(returns = keep(p.returns), flows = keep(p.flows))
 
   /** THE SECTOR ROWS (`-sectors`): momentum (12-1 and 6-1, whole record and from 1963-07), the
     * per-sector trend (the 12-month sign and the 10-month SMA) and the cross-section shape, on the
     * 10- and 49-industry tables; one TSV row each, bands where a row has one. */
   def printSectorRows(dir: String, resamples: Int, seed: Long): Unit =
     println("row\ttable\tform\twindow\tstatistic\tvalue\tlo\thi\tmonths")
-    for (table, file, top) <- Vector(("industries10", "10_Industry_Portfolios.CSV", 3),
-                                     ("industries49", "49_Industry_Portfolios.CSV", 10)) do
-      val (months, p) = sectorPanel(dir, file)
+    for (table, file, top, full) <- Vector(("industries10", "10_Industry_Portfolios.CSV", 3, false),
+                                           ("industries49", "49_Industry_Portfolios.CSV", 10, false),
+                                           ("industries40", "49_Industry_Portfolios.CSV", 12, true)) do
+      val (months, p0) = sectorPanel(dir, file)
+      val p = if full then fullHistory(p0) else p0
       val from63 = months.indexWhere(_ >= "1963-07")
       if from63 < 0 then usage("no month from 1963-07")
       eprintln(s"$table: ${p.returns.length} industries, ${months.length} months ${months.head}..${months.last}; " +
@@ -2168,6 +2250,17 @@ object RecordBands {
       println(f"shape\t$table%s\t\tall\tmedian pairwise correlation\t${s(1)}%.6f\t\t\t${n(0)}%d")
       println(f"shape\t$table%s\t\tmarket worst decile\tmedian pairwise correlation\t${s(2)}%.6f\t\t\t${n(1)}%d")
       println(f"shape\t$table%s\t\tmarket middle decile\tmedian pairwise correlation\t${s(3)}%.6f\t\t\t${n(2)}%d")
+      // the long rows, on a table whose every industry holds a return in every month
+      if p.returns.forall(_.forall(_.isDefined)) then
+        val (l, ln) = MarketSim.sectorLongRows(p)
+        val forms = Vector(("strength", "13-24", "rank correlation with the next month"),
+                           ("strength", "61-120", "rank correlation with the next month"),
+                           ("shape", "10y", "mean cross-sectional sd of log returns"),
+                           ("flow", "1y", "rank correlation with the next year's flow"),
+                           ("flow", "1y", "rank correlation with the year before's return"),
+                           ("flow", "3y", "rank correlation with the return three years on"))
+        for ((kind, form, stat), k) <- forms.zipWithIndex do
+          println(f"$kind%s\t$table%s\t$form%s\tall\t$stat%s\t${l(k)}%.6f\t\t\t${ln(k)}%d")
 
   /** `date -> (modified duration, the prior observation's date)` of the n-year par Treasury
     * `readTreasury` rebuys at each observation, keyed by the date of the return it earns: the
@@ -2282,7 +2375,7 @@ object RecordBands {
   /** THE RATE FLOOR STAYS (`-ratestays`) on a `-fred` rate beside a `-yahoo` or `-french` equity
     * window, joined on the equity's session dates: the record by `rateStayReadings`, the stays' own
     * resample by `rateStayResamples`, a joint band over the two -- the rate rows' columns. */
-  def printRateStayRows(o: Opts, rate: Array[Double], window: String): Unit =
+  def printRateStayRows(o: Opts, rate: Array[Double], window: String)(using Run): Unit =
     val record = MarketSim.rateStayReadings(rate)
     eprintln(f"${o.series}%s: ${rate.length}%d sessions $window%s joined with the rate; ${record(0)}%.4f stays a century, " +
              f"the longest ${record(1)}%.4f y; ${o.resamples}%d resamples, seed ${o.seed}%d")

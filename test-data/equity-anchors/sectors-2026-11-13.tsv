@@ -1,0 +1,34 @@
+# THE SECTOR CHANNEL'S LONG ROWS (2026-11-13): relative strength beyond a year, the 10-year spread and the capital
+# flow between industries, read from Ken French's value-weighted monthly industry portfolios, 1926-07 to 2026-08
+# (CRSP vintage 202608): the ten industries (`industries10`) and the 49-industry file's 40 with a return in every
+# month (`industries40`). Generator: `record_bands -sectors <data>`, the files of `sectors-2026-09-30.tsv`, the
+# returns from each industry file's first monthly block and an industry's capital from its `Number of Firms in
+# Portfolios` and `Average Firm Size` blocks.
+#
+# The world is graded on the `industries40` rows, on a 40-leg sector channel; the ten's are the record's own.
+#
+# strength   each month from the 121st, the cross-sectional rank correlation of the industries' log returns over
+#            the months `form` back (13-24, 61-120) with their returns in the month; the mean over months.
+# shape 10y  each twelve months from the 120th, the cross-sectional sd (population) of the industries' log returns
+#            over the trailing 120 months; the mean. Graded over `sectors-2026-09-30.tsv`'s market monthly sd.
+# flow       an industry's capital at a month's start is its firms times their average size, and its flow over a
+#            month the growth of that capital's log less its log return: the growth of its share count. On the
+#            panel's years (twelve months from the first): the rank correlation of a year's flow with the next
+#            year's; of a year's flow with the year before's return; of a year's flow with the return three years
+#            on; each the mean over years.
+#
+# Ranks are ordinal, ties in the file's column order. `months` counts the periods a mean is over: months for the
+# strength rows, 10-year windows for the shape row, pairs of years for the flow rows.
+row	table	form	window	statistic	value	lo	hi	months
+strength	industries10	13-24	all	rank correlation with the next month	-0.023089			1082
+strength	industries10	61-120	all	rank correlation with the next month	-0.012973			1082
+shape	industries10	10y	all	mean cross-sectional sd of log returns	0.305351			91
+flow	industries10	1y	all	rank correlation with the next year's flow	0.347658			99
+flow	industries10	1y	all	rank correlation with the year before's return	0.128252			99
+flow	industries10	3y	all	rank correlation with the return three years on	-0.030178			97
+strength	industries40	13-24	all	rank correlation with the next month	-0.009522			1082
+strength	industries40	61-120	all	rank correlation with the next month	-0.024921			1082
+shape	industries40	10y	all	mean cross-sectional sd of log returns	0.496933			91
+flow	industries40	1y	all	rank correlation with the next year's flow	0.225641			99
+flow	industries40	1y	all	rank correlation with the year before's return	0.051276			99
+flow	industries40	3y	all	rank correlation with the return three years on	-0.040460			97

@@ -905,6 +905,70 @@ reads −0.44%. The Nasdaq world's booms carry it (+0.5%). The channel discloses
 existing rows never saw, the market's one-year time-series momentum, which is the next primary
 item; the row stays graded.
 
+### The channel at 40 sectors: the chase, the pull, the share counts
+
+A strategy that follows money between sectors needs three things the ten-leg channel does not hold: a trend that
+ends, a level that returns, and a quantity of capital. The record is the 40 industries of French's 49-industry
+file with a return in every month since 1926 (`sectors-2026-11-12.tsv`, table `industries40`; an industry's value
+is its firms times their average size, a year's flow the growth of that value less the return).
+
+- **The trend is flat for a year and then stops.** The rank correlation of an industry's relative return over
+  past months with the next month's reads +0.042 over months 2-6 and +0.057 over months 7-12, then -0.010 over
+  months 13-24 and -0.026 over months 61-120, in both halves of the century. An AR(1) drift front-loads the
+  trend and lets it linger. `-sectorchase g` carries the share g of a leg's relative return over the past 252
+  sessions into its drift over the next 252, which gives the flat year and the stop.
+- **The level returns.** The cross-sectional sd of 10-year relative returns is 0.50 log; legs with fixed betas
+  and random-walk idio spread without limit. `-sectorlevelhalf H` pulls a leg's log level toward the legs' mean
+  with a half-life of H years.
+- **Capital flow is its own state.** An industry's flow over the past three years lowers its relative return
+  over the next three (rank slope -0.084, t -2.9) beside its own past-year and past-ten-year returns, so the
+  flow is not a function of the prices. `-sectorflow L` gives each leg a share count, emitted as
+  `logShares1..K` (a leg's market value is its price times its shares): the shares grow at a persistent rate
+  (half-life 3.3 years, sd 3.7% a year), follow the past year's relative return (0.06 of it) and carry
+  transient noise (5.3% a year), stepped every 21 sessions; a leg's drift a year falls by L times its relative
+  share growth over the past three years. The legs start at unequal sizes (sd 1.5 in log).
+- **The industries share a breadth factor.** The 40 industries' returns net of the market correlate +0.05 with
+  each other (the 10's -0.04). `-sectorbreadth b` makes the share b of a leg's idio variance one draw the legs
+  share.
+- **The industries' mean beta is above 1.** The 40 industries' betas on the market average 1.06.
+  `-sectorbetalift m` adds m to every leg's beta, so the equal-weight aggregate's beta is 1 + m.
+- **The industries' own noise differs, and with beta.** Idio sd varies across the industries with a coefficient
+  of variation of 0.27 and correlates 0.40 with beta. `-sectoridiospread s` multiplies each leg's idio by
+  exp(s x u), u a unit normal drawn once a path and correlated 0.40 with the leg's beta draw, the multipliers
+  normalised to mean square 1; s is the sd of the legs' log idio scale. The draws come after the legs' other
+  draws of the path, and only when the dial is on.
+- **Dispersion is steadier than the market's vol.** The month-to-month cross-sectional dispersion of the 40
+  industries has a mean 0.91 of its rms. `-sectoridioflat f`, a share in 0..1, holds that share of the idio's
+  vol at the vol state's running rms: the idio rides ref^f x state^(1 - f), ref^2 the mean of the squared vol
+  state over the path so far; at 0 it rides the vol state whole.
+- **A leg's beta is not fixed from session to session.** `-sectorbetanoise k` adds k^2 x the primary's squared
+  session return to a leg's own idio variance, on the idio's own draw: a leg's response to the primary's move
+  varies with sd k around its beta.
+
+Every dial at 0 is off, bit-identical, and written in a world's block only when on. `0.25.1-sp500` carries K 40,
+idio 0.735, the AR(1) drift off, chase 0.23, level half-life 12, flow 0.085, breadth 0.063, beta lift 0.06, idio
+spread 0.25, idio flat 0.3 and beta noise 0.43; the legs reach no price, so the recipe's other rows do not move.
+
+A world with 40 legs is read against the 40-industry record on thirteen sector rows. Seven are the ten-leg
+channel's (momentum / xs sd 0.155, trend 12m 0.112, trend sma10 0.111, xs sd / market sd 0.810, pair corr 0.619,
+worst decile 0.489, middle decile 0.052). Six read what a strategy that follows money between sectors trades on
+(`sectors-2026-11-13.tsv`), and are graded at 40 legs only:
+
+| row | record | reads |
+|---|---|---|
+| `sector strength months 13-24` | -0.0095 | the rank correlation of the legs' returns over months 13-24 back with the month's |
+| `sector strength months 61-120` | -0.0249 | the same over months 61-120 back |
+| `sector xs sd 10y / market sd` | 9.391 | the legs' cross-sectional sd of 10-year log returns over the market's monthly sd |
+| `sector flow persistence 1y` | 0.2256 | the rank correlation of a year's flow with the next year's |
+| `sector flow after return 1y` | 0.0513 | of a year's flow with the year before's return |
+| `sector return after flow 3y` | -0.0405 | of a year's flow with the return three years on |
+
+The three flow rows are absent while `-sectorflow` is off. Their bands resample the record in 20-year blocks
+(`record_bands -sectors DIR -block 5040 -legs 40`), since a shorter block cuts the rows' look-back. Not graded:
+months 25-36 and 37-60 of the trend's lifetime (the record +0.008 and +0.007, the second differing in sign between
+the record's halves) and the flow with the same year's return (-0.03). A judged read costs 31% more at 40 legs
+than at 10. The earlier recipes and the anchor sets keep ten legs and the ten-industry record.
+
 ## How tight are the anchors? — `-noise`
 
 Every fidelity target is a point read from one historical record. `-noise` reports, per target, the
@@ -1713,7 +1777,16 @@ How it is read:
   an AR(1) state of sd `-sectordriftsd` (a fraction of the primary's annualized volatility) and half-life
   `-sectordrifthalf` years, centred across the legs. `-emit` gains `logSector1..K`. Graded on the ten-
   industry ruler as ratios that carry across primaries ([below](#the-sector-channel--sectors)). Anchored K
-  10, idio 0.7, drift 0.25, half-life 2 on both sets | 0 (off) | | `-macro` | THE MACRO PANEL: 1 emits seven
+  10, idio 0.7, drift 0.25, half-life 2 on both sets. `-sectorchase` (the share of a leg's past-year relative
+  return carried into its next year's drift), `-sectorlevelhalf` (the half-life in years of the pull of a
+  leg's level toward the legs' mean), `-sectorflow` (the share counts, `logShares1..K`, and the fall of a
+  leg's drift with its three-year relative share growth) and `-sectorbreadth` (the share of a leg's idio
+  variance the legs have in common) are 0 off, bit-identical and keyed only when on; with 40 legs the rows
+  are read against the 40-industry record. THE LEGS' SHAPE: `-sectorbetalift` (added to every leg's beta, the
+  legs' mean beta 1 + it; in (-1, 1)), `-sectoridiospread` (the sd of the legs' log idio scale, correlated
+  0.40 with beta), `-sectoridioflat` (the share, 0..1, of the idio's vol held at the vol state's running rms)
+  and `-sectorbetanoise` (its square x the primary's squared session return added to a leg's idio variance)
+  are 0 off, bit-identical and keyed only when on | 0 (off) | | `-macro` | THE MACRO PANEL: 1 emits seven
   observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond
   stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process
   implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd
@@ -1793,6 +1866,17 @@ How it is read:
   session in the months whose volatility is 1.5 times the quarter before and 4% outside them. A session gives
   back the share B x (b - 1) of its move in the next one, b its return's fast sd over its slow sd (0.95 and
   62/63 EWMAs of the squared return), capped at 0.5. 0 is off and bit-identical, keyed only when on | 0 | |
+  `-legbreakdepth` | THE FIRST-LEG BREAK: on the Nasdaq record 85% of the declines of 20% reach 20% on their
+  first leg, before any rally of 8% off the low. When the log drawdown from the running peak first reaches
+  this depth on a decline's first leg (no 8% rally off the low since the peak, no break since it) and no
+  sale or buy-back is running, a sale of `-legbreaksize` starts the next session, spread evenly over
+  `-legbreakdays` sessions and bought back evenly over `-legbreakback` sessions. Takes no draw. 0 is off and
+  bit-identical; the four keys are written only when on. Searched, 0-0.25 | 0 | | `-legbreaksize` | the
+  break's sale in log return, sized through the step's liquidity as the overshoot's give-back is; inert
+  while the depth is 0. Searched, 0-0.20 | 0 | | `-legbreakdays` | the sale's sessions, whole (the fraction
+  dropped), at least 1 while the break is on; inert while the depth is 0. Searched, 3-30 | 10 | |
+  `-legbreakback` | the buy-back's sessions, whole, at least 1 while the break is on; inert while the depth
+  is 0. Searched, 20-250 | 75 | |
   `-recesslen` | the recession's length in years; the
   recovery leg regains `-recessrecover` of the fall over twice this | 1.5 | | `-recessrecover` | the share
   of the recession's fall regained; the rest is permanent | 0.5 | | `-recessnews` | the news channel's event

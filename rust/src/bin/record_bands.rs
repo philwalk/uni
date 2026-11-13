@@ -168,7 +168,15 @@ const USAGE: &str =
                 `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the
                 library publishes them (unzipped), the first monthly block of each; prints the
                 momentum, trend and shape rows of `sectors-2026-09-30.tsv`, with 5-95
-                block-bootstrap bands where a row has one
+                block-bootstrap bands where a row has one, and the same rows on the 49's
+                industries with a full history (table `industries40`,
+                `sectors-2026-11-12.tsv`); with -block, the graded rows on the ten industries
+                (-legs 40: on those 40) and their resamples' band columns [-reads FILE: the
+                resamples, one a line]. The long rows of `sectors-2026-11-13.tsv` (relative
+                strength over months 13-24 and 61-120, the 10-year spread, the capital flow's
+                three) are printed for the ten and the 40, an industry's capital its `Number of
+                Firms in Portfolios` times its `Average Firm Size`; they look back ten years, so
+                -block also takes 5040 here, twenty years of months a block
 
   -yahoo FILE   a daily series, in one of three published layouts told apart by the file itself:
                 a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo Finance's daily
@@ -274,8 +282,10 @@ fn block_of(args: &[String]) -> Option<usize> {
     match args.get(i + 1).map(String::as_str) {
         Some("252") => Some(1),
         Some("756") => Some(3),
+        // the sector panel's long rows look back ten years: twenty years of months a block
+        Some("5040") if args.iter().any(|a| a == "-sectors") => Some(20),
         other => usage(&format!(
-            "-block takes 252 or 756 (one or three years), not [{}]",
+            "-block takes 252 or 756 (one or three years; 5040 under -sectors), not [{}]",
             other.unwrap_or("")
         )),
     }
@@ -3424,7 +3434,14 @@ fn print_sector_scale_rows(args: &[String], dir: &str, years: usize) {
         .position(|a| a == "-set")
         .and_then(|i| args.get(i + 1).cloned())
         .unwrap_or_else(|| "sp500".to_string());
-    let (months, p) = sector_panel(dir, "10_Industry_Portfolios.CSV");
+    // the ten industries, or with `-legs 40` the 49-industry file's 40 with a full history
+    let forty = args.windows(2).any(|a| a[0] == "-legs" && a[1] == "40");
+    let (months, p) = if forty {
+        let (m, p) = sector_panel(dir, "49_Industry_Portfolios.CSV");
+        (m, full_history(p))
+    } else {
+        sector_panel(dir, "10_Industry_Portfolios.CSV")
+    };
     let n = p.market.len();
     let window = format!("{}..{}", months[0], months[n - 1]);
     let (resamples, seed, joint) = resampling_of(args);
@@ -3437,14 +3454,37 @@ fn print_sector_scale_rows(args: &[String], dir: &str, years: usize) {
                 .iter()
                 .map(|c| x.iter().map(|i| c[at(i)]).collect())
                 .collect(),
+            flows: p
+                .flows
+                .iter()
+                .map(|c| x.iter().map(|i| c[at(i)]).collect())
+                .collect(),
             market: x.iter().map(|i| p.market[at(i)]).collect(),
             rf: x.iter().map(|i| p.rf[at(i)]).collect(),
         })
     });
+    if let Some(file) = args
+        .iter()
+        .position(|a| a == "-reads")
+        .and_then(|i| args.get(i + 1))
+    {
+        let mut text = ms::SECTOR_ROWS.join("\t");
+        for r in &reads {
+            text.push('\n');
+            text.push_str(
+                &r.iter()
+                    .map(|x| format!("{x:?}"))
+                    .collect::<Vec<_>>()
+                    .join("\t"),
+            );
+        }
+        text.push('\n');
+        std::fs::write(file, text).unwrap_or_else(|e| usage(&format!("-reads {file}: {e}")));
+    }
     print_band_header(args);
     print_resampled_rows(
         &set,
-        "French10",
+        if forty { "French40" } else { "French10" },
         &window,
         n,
         &ms::SECTOR_ROWS,
@@ -4375,7 +4415,43 @@ fn read_french_monthly(file: &str) -> (Vec<String>, Vec<Vec<Option<f64>>>) {
     (dates, table)
 }
 
-/// The panel of one industry table beside the factors, aligned on the months both hold.
+/// The monthly block of one of Ken French's industry CSVs under the line that starts with `title`
+/// (`Number of Firms in Portfolios`, `Average Firm Size`): its months as `YYYY-MM` and its columns
+/// as published, a value at or under zero (the library's missing marks) `None`.
+fn read_french_block(file: &str, title: &str) -> (Vec<String>, Vec<Vec<Option<f64>>>) {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    let lines: Vec<Vec<String>> = text
+        .lines()
+        .skip_while(|l| !l.trim().starts_with(title))
+        .map(|l| l.split(',').map(|f| f.trim().to_string()).collect())
+        .collect();
+    let is_month =
+        |f: &[String]| f.len() > 1 && f[0].len() == 6 && f[0].bytes().all(|b| b.is_ascii_digit());
+    let start = lines
+        .iter()
+        .position(|f| is_month(f))
+        .unwrap_or_else(|| usage(&format!("{file}: no monthly rows under [{title}]")));
+    let cols = lines[start].len() - 1;
+    let mut dates = Vec::new();
+    let mut table: Vec<Vec<Option<f64>>> = vec![Vec::new(); cols];
+    for f in lines[start..].iter().take_while(|f| is_month(f)) {
+        if f.len() != cols + 1 {
+            usage(&format!(
+                "{file}: a row of [{title}] is not the block's width"
+            ));
+        }
+        dates.push(format!("{}-{}", &f[0][0..4], &f[0][4..6]));
+        for (k, cell) in f[1..].iter().enumerate() {
+            table[k].push(cell.parse().ok().filter(|x: &f64| *x > 0.0));
+        }
+    }
+    (dates, table)
+}
+
+/// The panel of one industry table beside the factors, aligned on the months both hold. An
+/// industry's capital at a month's start is its firms times their average size, and its flow
+/// over the month the growth of that capital's log less its log return, `None` where the month,
+/// the next month's capital or the return is blank.
 fn sector_panel(dir: &str, table: &str) -> (Vec<String>, ms::SectorPanel) {
     let (fd, fac) = read_french_monthly(&format!("{dir}/F-F_Research_Data_Factors.CSV"));
     let (id, ind) = read_french_monthly(&format!("{dir}/{table}"));
@@ -4400,14 +4476,54 @@ fn sector_panel(dir: &str, table: &str) -> (Vec<String>, ms::SectorPanel) {
     let rf = must(pick(&fd, &fac[3]));
     let market: Vec<f64> = mkt_rf.iter().zip(&rf).map(|(a, b)| a + b).collect();
     let returns: Vec<Vec<Option<f64>>> = ind.iter().map(|c| pick(&id, c)).collect();
+    let file = format!("{dir}/{table}");
+    let (nd, firms) = read_french_block(&file, "Number of Firms in Portfolios");
+    let (sd, size) = read_french_block(&file, "Average Firm Size");
+    if firms.len() != returns.len() || size.len() != returns.len() {
+        usage(&format!(
+            "{file}: the firms' and sizes' blocks are not the returns' width"
+        ));
+    }
+    let flows: Vec<Vec<Option<f64>>> = (0..returns.len())
+        .map(|j| {
+            let (n, s) = (pick(&nd, &firms[j]), pick(&sd, &size[j]));
+            let cap = |t: usize| Some(ms::ln_det(n.get(t).copied()?? * s.get(t).copied()??));
+            (0..months.len())
+                .map(|t| Some(cap(t + 1)? - cap(t)? - ms::ln_det(1.0 + returns[j][t]?)))
+                .collect()
+        })
+        .collect();
     (
         months,
         ms::SectorPanel {
             returns,
             market,
             rf,
+            flows,
         },
     )
+}
+
+/// The panel's industries with a return in every month: the 49-industry table's 40 with a full
+/// history are the ruler a 40-sector channel is graded on.
+fn full_history(p: ms::SectorPanel) -> ms::SectorPanel {
+    let full: Vec<bool> = p
+        .returns
+        .iter()
+        .map(|c| c.iter().all(Option::is_some))
+        .collect();
+    let keep = |cols: Vec<Vec<Option<f64>>>| -> Vec<Vec<Option<f64>>> {
+        cols.into_iter()
+            .zip(&full)
+            .filter_map(|(c, f)| f.then_some(c))
+            .collect()
+    };
+    ms::SectorPanel {
+        returns: keep(p.returns),
+        flows: keep(p.flows),
+        market: p.market,
+        rf: p.rf,
+    }
 }
 
 /// THE SECTOR ROWS (`-sectors`): momentum (12-1 and 6-1, whole record and from 1963-07), the
@@ -4415,11 +4531,13 @@ fn sector_panel(dir: &str, table: &str) -> (Vec<String>, ms::SectorPanel) {
 /// 10- and 49-industry tables; one TSV row each, bands where a row has one.
 fn print_sector_rows(dir: &str, resamples: usize, seed: u64) {
     println!("row\ttable\tform\twindow\tstatistic\tvalue\tlo\thi\tmonths");
-    for (table, file, top) in [
-        ("industries10", "10_Industry_Portfolios.CSV", 3usize),
-        ("industries49", "49_Industry_Portfolios.CSV", 10usize),
+    for (table, file, top, full) in [
+        ("industries10", "10_Industry_Portfolios.CSV", 3usize, false),
+        ("industries49", "49_Industry_Portfolios.CSV", 10usize, false),
+        ("industries40", "49_Industry_Portfolios.CSV", 12usize, true),
     ] {
         let (months, p) = sector_panel(dir, file);
+        let p = if full { full_history(p) } else { p };
         let from63 = months
             .iter()
             .position(|d| d.as_str() >= "1963-07")
@@ -4484,6 +4602,34 @@ fn print_sector_rows(dir: &str, resamples: usize, seed: u64) {
             "shape\t{table}\t\tmarket middle decile\tmedian pairwise correlation\t{:.6}\t\t\t{}",
             s[3], n[2]
         );
+        // the long rows, on a table whose every industry holds a return in every month
+        if p.returns.iter().all(|c| c.iter().all(Option::is_some)) {
+            let (l, n) = ms::sector_long_rows(&p);
+            for (k, (kind, form, stat)) in [
+                ("strength", "13-24", "rank correlation with the next month"),
+                ("strength", "61-120", "rank correlation with the next month"),
+                ("shape", "10y", "mean cross-sectional sd of log returns"),
+                ("flow", "1y", "rank correlation with the next year's flow"),
+                (
+                    "flow",
+                    "1y",
+                    "rank correlation with the year before's return",
+                ),
+                (
+                    "flow",
+                    "3y",
+                    "rank correlation with the return three years on",
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                println!(
+                    "{kind}\t{table}\t{form}\tall\t{stat}\t{:.6}\t\t\t{}",
+                    l[k], n[k]
+                );
+            }
+        }
     }
 }
 
@@ -4633,6 +4779,10 @@ mod block_tests {
         assert_eq!(block_of(&args(&["-x", "1"])), None);
         assert_eq!(block_of(&args(&["-block", "252"])), Some(1));
         assert_eq!(block_of(&args(&["-block", "756"])), Some(3));
+        assert_eq!(
+            block_of(&args(&["-sectors", "d", "-block", "5040"])),
+            Some(20)
+        );
     }
 
     /// A run names its rows apart by `;`, since a row's name may hold `|`; its own header,

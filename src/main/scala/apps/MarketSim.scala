@@ -524,6 +524,18 @@ object MarketSim:
     "              ;   (sectors-2026-09-30.tsv): 12-1 momentum, per-sector trend, the cross-section's",
     "              ;   shape, as ratios that carry across primaries.  Anchored K 10, idio 0.7, drift",
     "              ;   0.25 with a 2-year half-life on both sets.  Default 0 = off",
+    "-sectorchase G ; the share of a leg's relative return over the past year carried into its drift",
+    "              ;   over the next; -sectorlevelhalf H the half-life in years of the pull of a leg's",
+    "              ;   level toward the legs' mean; -sectorflow L the share counts (logShares1..K) and",
+    "              ;   the fall of a leg's drift a year per unit of its three-year relative share",
+    "              ;   growth; -sectorbreadth B the share of a leg's idio variance the legs have in",
+    "              ;   common.  Each 0 = off, bit-identical; with 40 legs the rows are read against",
+    "              ;   the 40-industry record (sectors-2026-11-12.tsv)",
+    "-sectorbetalift L ; THE LEGS' SHAPE: L is added to every leg's beta, in (-1, 1); -sectoridiospread S",
+    "              ;   the sd of a leg's log idio scale, one draw a leg, correlated 0.40 with its beta",
+    "              ;   and normalised to mean square 1; -sectoridioflat F the share of the idio's vol",
+    "              ;   held at the vol state's running rms; -sectorbetanoise N adds N^2 x the primary's",
+    "              ;   squared session return to a leg's idio variance.  Each 0 = off, bit-identical",
     "-macro 1      ; THE MACRO PANEL: nine observables DERIVED from the model's own state, in",
     "              ;   their counterparts' units -- macroSpread (BAA10Y: equity + bond stress),",
     "              ;   macroSlope (T10Y2Y: the 10y-2y expectation the rate process implies; the",
@@ -585,6 +597,14 @@ object MarketSim:
     "-cyclevol P   ; the cycle's daily increment times the session's conditional sd over its four-year",
     "              ;   rms, to the power P: at 1 the cycle re-rates in the vol state the rest of the",
     "              ;   return arrives in, its stationary sd preserved; 0 = the constant-sd increment",
+    "-burstback B  ; THE GIVE-BACK IN A BURST: a session gives back the share B x (b - 1) of its move in",
+    "              ;   the next one, b its return's fast sd over its slow sd, capped at 0.5; 0 = off,",
+    "              ;   bit-identical",
+    "-legbreakdepth D ; THE FIRST-LEG BREAK: when the log drawdown from the running peak first reaches D",
+    "              ;   on a decline's first leg (no rally of 8% off the low since the peak), a sale of",
+    "              ;   -legbreaksize S in log return starts the next session, spread evenly over",
+    "              ;   -legbreakdays N sessions (default 10) and bought back evenly over -legbreakback M",
+    "              ;   (default 75); the sessions whole, at least 1 while on.  0 = off, bit-identical",
     "-stressadapt M ; the equity spiral's SCALE speed: the EWMA weight on ret^2 that standardizes",
     "              ;   the decline the spiral's stress index reads.  0.005, a ~140-session memory,",
     "              ;   reads a persistently volatile stretch as continuous stress; faster lets the",
@@ -1584,6 +1604,29 @@ object MarketSim:
                             // THE DRAWDOWN GAP'S CEILING: the linear vol answer's gap term reads
                             // B tanh(G / B), B = drawdownCap in log gap; 0 is off and bit-identical
                             drawdownCap: Double = 0.0,
+                            // THE SECTOR LEGS' FLOWS (see `World.sectors`; with 40 legs the rows are read
+                            // against the 49-industry file's 40 with a full history, `SectorRecords40`).
+                            // `sectorChase` carries that share of a leg's relative return over the past 252
+                            // sessions into its drift over the next 252; `sectorLevelHalf` is the half-life
+                            // in years of the pull of a leg's log level toward the legs' mean; `sectorFlow`
+                            // turns on the share counts (`logShares1..K`) and is the fall of a leg's drift a
+                            // year per unit of its relative share growth over `SectorFlowYears`;
+                            // `sectorBreadth` is the share of a leg's idio variance that is one draw the
+                            // legs share.  Each 0 is off and bit-identical.
+                            sectorChase: Double = 0.0, sectorLevelHalf: Double = 0.0,
+                            sectorFlow: Double = 0.0, sectorBreadth: Double = 0.0,
+                            // THE LEGS' SHAPE, read on the record's 40 industries.  `sectorBetaLift` is
+                            // added to every leg's beta, so the legs' mean beta is 1 + the lift (the
+                            // record's 1.06); `sectorIdioSpread` is the sd of a leg's log idio scale, one
+                            // draw a leg once a path after the stream's other draws, correlated
+                            // `SectorIdioBetaCorr` with the leg's beta draw and normalised to mean square 1;
+                            // `sectorIdioFlat` is the share of the idio's vol that holds at the vol state's
+                            // running rms instead of riding the state, the idio's vol
+                            // `ref^flat x state^(1 - flat)`; `sectorBetaNoise` adds its square x the
+                            // primary's squared session return to a leg's own idio variance, on the idio's
+                            // draw.  Each 0 is off and bit-identical; the spread draws only while on.
+                            sectorBetaLift: Double = 0.0, sectorIdioSpread: Double = 0.0,
+                            sectorIdioFlat: Double = 0.0, sectorBetaNoise: Double = 0.0,
                             // THE TIPS LEG (item 60): a third bond market at this duration (0 = off),
                             // the nominal leg's state and flows at its scale on its own stream, marked
                             // to the nominal leg's yield LESS the market's ten-year inflation
@@ -1616,6 +1659,27 @@ object MarketSim:
                             // vol level: it thins the standardized return's tail and damps the level's
                             // doubling).  0 is bit-identical.
                             cycleVol: Double = 0.0,
+                            // THE GIVE-BACK IN A BURST.  The daily reversal since 1999 (lag-1 -0.08) lives in
+                            // the volatility bursts: in the months whose rms is 1.5 times the quarter before
+                            // or more the next session gives back 18% of a move (25% at twice), outside them
+                            // 4%.  At B the share B x (b - 1), b the session return's fast sd over its slow sd
+                            // (0.95 and 62/63 EWMAs of the squared return, read before the session enters),
+                            // capped at `BurstBackCap`, of the session return is owed back and taken from the
+                            // input of the next session, sized in return through the liquidity of the step as
+                            // the overshoot give-back is.  0 is bit-identical.
+                            burstBack: Double = 0.0,
+                            // THE FIRST-LEG BREAK.  When the log drawdown from the running peak first
+                            // reaches `legBreakDepth` on a decline's first leg (no rally of `LegBreakRally`
+                            // off the low since the peak and no break since it) with no sale or buy-back
+                            // running, a sale of `legBreakSize` in log return starts the next session,
+                            // spread evenly over `legBreakDays` sessions and then bought back evenly over
+                            // `legBreakBack` sessions, sized in return through the liquidity of the step as
+                            // the overshoot give-back is.  No draw is consumed.  On while the depth is above
+                            // 0 (0 is bit-identical); the sessions are whole (the fraction dropped) and at
+                            // least 1 while on, 10 and 75 their off values, inert like the size while the
+                            // depth is 0.
+                            legBreakDepth: Double = 0.0, legBreakSize: Double = 0.0,
+                            legBreakDays: Double = 10.0, legBreakBack: Double = 75.0,
                             // THE BREAKEVEN PREMIUM (item 60): the sd per sqrt-year, decimal, of the
                             // innovation of the premium the market's ten-year breakeven carries over its
                             // inflation expectation, an OU state reverting at `BrkRevert` on its own
@@ -1863,6 +1927,8 @@ object MarketSim:
                                                  // LOG prices (empty when `basket` is 0)
                         sectors: Vector[Array[Double]] = Vector.empty,    // the sector legs, LOG
                                                  // prices (empty when `sectors` is 0)
+                        sectorShares: Vector[Array[Double]] = Vector.empty, // the sector legs' LOG
+                                                 // share counts (empty when `sectorFlow` is 0)
                         chanK: Double = 0.0,     // the world's channel level the bars and the
                         chanKSat: Double = 0.0,  // satellite were sampled at (`worldLevel`),
                                                  // carried into the sidecar so the emitted data's
@@ -1896,7 +1962,7 @@ object MarketSim:
            logLo = Array.emptyDoubleArray, logVolume = Array.emptyDoubleArray,
            divYield = Array.emptyDoubleArray, traded = Array.emptyDoubleArray,
            logOpen = Array.emptyDoubleArray, names = Vector.empty, sectors = Vector.empty,
-           macroPanel = None, macroNullPanel = None)
+           sectorShares = Vector.empty, macroPanel = None, macroNullPanel = None)
 
     /** The path's last `sessions`, for the rows read at a record's window, which ends where the
       * record's does: every series cut to them, the channels and the macro panel included (the
@@ -1912,7 +1978,8 @@ object MarketSim:
            inflPress = cut(inflPress), cpi = cut(cpi), sat = cut(sat), logHi = cut(logHi),
            logLo = cut(logLo), logVolume = cut(logVolume), divYield = cut(divYield),
            traded = cut(traded), logOpen = cut(logOpen), names = names.map(cut),
-           sectors = sectors.map(cut), macroPanel = macroPanel.map(_.tail(m)),
+           sectors = sectors.map(cut), sectorShares = sectorShares.map(cut),
+           macroPanel = macroPanel.map(_.tail(m)),
            macroNullPanel = macroNullPanel.map(_.tail(m)), bondStressHi = bondStressHi.takeRight(m))
 
     /** The path's last `years`: `tailSessions` at the year's sessions. */
@@ -1934,8 +2001,8 @@ object MarketSim:
            inflPress = cut(inflPress), cpi = cut(cpi), sat = Array.emptyDoubleArray,
            logHi = Array.emptyDoubleArray, logLo = Array.emptyDoubleArray, logVolume = Array.emptyDoubleArray,
            divYield = cut(divYield), traded = cut(traded), logOpen = Array.emptyDoubleArray,
-           names = Vector.empty, sectors = Vector.empty, macroPanel = None, macroNullPanel = None,
-           bondStressHi = bondStressHi.slice(a, math.min(a + sessions, bondStressHi.length)))
+           names = Vector.empty, sectors = Vector.empty, sectorShares = Vector.empty, macroPanel = None,
+           macroNullPanel = None, bondStressHi = bondStressHi.slice(a, math.min(a + sessions, bondStressHi.length)))
 
     /** THE FIRST SERIES OF THE PATH THAT IS NOT A NUMBER: its printed price, then the channel level
       * its world's derived series were sampled at (`worldLevel`, solved on an ensemble of its own,
@@ -1949,6 +2016,7 @@ object MarketSim:
         .collectFirst { case (name, xs) if xs.exists(_.isNaN) => name }
         .orElse(Option.when(names.exists(_.exists(_.isNaN)))("basket"))
         .orElse(Option.when(sectors.exists(_.exists(_.isNaN)))("sectors"))
+        .orElse(Option.when(sectorShares.exists(_.exists(_.isNaN)))("sector shares"))
 
     /** THE BOND STRESS ROWS (`BondStressRows`): `MarketSim.bondStressRows` on the path's bond
       * returns, the statistic the record is read with, the share in percent.  The spiral's own
@@ -2713,7 +2781,11 @@ object MarketSim:
     * (`spikeNeg` 0.62), 101 dials: the recipe before held collapsing histories (its bound history
     * -2.44 against the edge -2.06; this one's -1.74).  Its 32-member set 36.32 against the 65's
     * 42.41, -6.09 [-7.07, -4.29]; set misses `vol coupling monthly corr`, `vol coupling quarterly
-    * corr` and `return lag-1 autocorr`.
+    * corr` and `return lag-1 autocorr`.  Then (2026-11-12) the give-back in a burst (`burstBack` 0.5)
+    * and a local re-solve under the weighted ledger: 33.27 against 37.69 on the judge's seeds; its
+    * 90-member set 34.48 against the 32's 37.72 under those weights, -3.24 [-4.49, -0.18], `return
+    * lag-1 autocorr` back inside the pool (30% of it beyond the record, from 1.7%), the two vol
+    * coupling misses carried.
     *
     * `0.25.1-nasdaq` (2026-11-05), as the S&P's: `yieldAnchor` 0.63 and `termPress` 1, the rate and
     * bond side re-solved around them, on the Nasdaq's own era the breakeven premium's innovation too;
@@ -2734,7 +2806,9 @@ object MarketSim:
     * cleared.  Then (2026-11-11) re-solved under the collapse bound with the two ceilings held
     * (`slowCap` 3.21, `drawdownCap` 0.94) and read back by family, 94 dials: 34.99 against 37.83 on
     * the judge's seeds; its 47-member set 34.03 against the 37's 38.35, -4.32 [-5.66, -2.69], every
-    * member inside the bound, the one set miss carried.  Both literals are the Rust twin's `recipe_0251_sp500` and `recipe_0251_nasdaq`,
+    * member inside the bound, the one set miss carried.  Then (2026-11-12) a local re-solve under the
+    * weighted ledger: 30.57 against 35.21 on the judge's seeds; its 112-member set 31.01 against the
+    * 47's 36.18 under those weights, -5.17 [-8.07, -3.54], the one set miss carried.  Both literals are the Rust twin's `recipe_0251_sp500` and `recipe_0251_nasdaq`,
     * field for field. */
   val Recipes0251: Vector[(String, World, String)] =
     def base(name: String): World =
@@ -2742,70 +2816,75 @@ object MarketSim:
     val sp = base("0.25.0-sp500")
     val nq = base("0.25.0-nasdaq")
     Vector(("0.25.1-sp500",
-            sp.copy(trendShare = 0.14538338, depth = 16.460135, stress = 3.0844373, drift = 0.13994832,
-                    fundVol = 0.054122324, rateMean = 0.071925601, volOfVol = 0.019915479, leverage = 0.10212671,
-                    downShock = 0.019171689, jumpSkew = 0.76981152, jumpVar = 0.13434382, jumpRate = 0.0022997084,
-                    newsRate = 2.1212435, newsSize = 0.021652093, newsLev = 4.6887563, newsRevert = 0.44768380,
-                    newsScale = 0.38429948, newsBond = 0.43900536, newsBondSkip = 0.058157602,
-                    creditRegime = 0.24212182, creditRegimeRate = 0.67784945, slowBondInfl = 0.10851959,
-                    noiseSkew = 0.91558440, newsFlip = 0.35505387, valuePull = 0.12922871,
-                    recoveryFloor = 0.21255802, boomRate = 2.4767900, boomSize = 0.63014953, boomLen = 13.764899,
-                    recessRate = 0.40294192, recessSize = 0.27429490, recessLen = 1.4257376,
-                    recessRecover = 0.77969946, recessNews = 1.2992549, recessVol = 0.0064347984,
-                    recessReprice = 0.96792191, recessBase = 0.36949491, recessShape = 2.1512282,
-                    overshoot = 0.48347627, overshootRate = 0.18790573, recessRecMult = 1.6052534,
-                    recessCredit = 13.918700, recessInfl = 0.0000000, regimeDrift = 0.00089661829,
-                    driftSd = 0.011507561, boomFade = 5.3979063, delevRate = 0.65390908, delevFrom = 1.3754363,
-                    delevSize = 0.19047633, delevLen = 0.085374331, volPull = 1.8357360, beliefYears = 2.7514651,
-                    beliefLeak = 0.32841736, capYears = 0.51017704, cycleSd = 0.16152393, cycleYears = 20.000000,
-                    crowdImpact = 0.012324032, easing = 0.14681192, floorhold = 0.13161498, refuge = 0.11812463,
-                    refugeDays = 1.1909195, divYield = 1.9500000, levGain = 5.5657374, bustAmp = 0.090637511,
-                    slowShare = 0.47542917, slowVol = 1.1543973, slowPerm = 0.34505308, slowBeta = 0.82677910,
-                    inflSize = 0.054747101, discount = 6.2660639, discountRef = 1.7926100, margin = 0.0080000000,
-                    ext = sp.ext.copy(cycleVol = 1.0000000, crowdAdjust = 1.1650288, termPremium = 0.052574915,
-                                      cpiNoise = 0.0057394285, deflProb = 0.0091910768, deflSize = 0.035328025,
-                                      spikeRate = 0.45188566, spikeNeg = 0.61844287, spikeSize = 0.038030046,
-                                      termVol = 0.0061125149, termPress = 0.70262805, cpiNoiseLevel = 0.87967506,
-                                      policyGrowth = 0.12899392, yieldBeta = 0.0033838755, yieldLag = 36.750095,
-                                      expAnchor = 0.48926061, yieldAnchor = 0.66443120, volFeedback = 0.29804100,
-                                      valueCap = 0.0094504363, valueCapFall = 0.0043879941,
-                                      recessSpread = 0.093439673, recessTransient = 0.23042519,
-                                      noiseScale = 1.1442450, declineVol = 0.47903617, declineVolHalf = 8.2772626,
-                                      drawdownVol = 0.47015849, drawdownCap = 0.96999024,
-                                      declineVolAttack = 0.91092179, slowCap = 3.7723032)),
+            sp.copy(trendShare = 0.22004195, depth = 16.368968, stress = 3.2619926, drift = 0.13677146,
+                    fundVol = 0.044494258, rateMean = 0.070793401, volOfVol = 0.023024316, leverage = 0.094456270,
+                    downShock = 0.017274019, jumpSkew = 0.80914918, jumpVar = 0.12506201, jumpRate = 0.0022997084,
+                    newsRate = 2.8625687, newsSize = 0.018837959, newsLev = 8.0654067, newsRevert = 0.49879102,
+                    newsScale = 0.41373766, newsBond = 0.46738067, newsBondSkip = 0.074628795,
+                    creditRegime = 0.25837332, creditRegimeRate = 1.0515878, slowBondInfl = 0.12007444,
+                    noiseSkew = 0.91808078, newsFlip = 0.40958063, valuePull = 0.13345808, recoveryDrag = 0.13711896,
+                    recoveryFloor = 0.18191598, boomRate = 2.1297613, boomSize = 0.72464392, boomLen = 14.095313,
+                    recessRate = 0.39386519, recessSize = 0.23013752, recessLen = 1.4243274,
+                    recessRecover = 0.72006067, recessNews = 1.5735863, recessVol = 0.0067565020,
+                    recessBase = 0.39575277, recessShape = 2.0284970, overshoot = 0.51413952,
+                    overshootRate = 0.17569842, recessRecMult = 1.6623632, recessCredit = 15.112148,
+                    recessInfl = 0.19053322, regimeDrift = 0.0010479646, driftSd = 0.012354417, boomFade = 6.2868061,
+                    delevRate = 0.56093418, delevFrom = 1.3743875, delevSize = 0.21742707, delevLen = 0.037235328,
+                    volPull = 1.9595228, beliefShare = 0.96697691, beliefYears = 3.0533511, beliefLeak = 0.26415771,
+                    capYears = 0.19301992, cycleSd = 0.16161830, cycleYears = 19.110003, crowdImpact = 0.010000000,
+                    easing = 0.14576577, floorhold = 0.14078171, refuge = 0.10305688, refugeDays = 0.91350008,
+                    divYield = 1.9500000, sectors = 40, sectorIdio = 0.73500000, sectorDriftSd = 0.0000000,
+                    sectorDriftHalf = 0.75000000, levGain = 3.8600108, bustAmp = 0.11533980, slowShare = 0.56302631,
+                    slowVol = 1.0703202, slowPerm = 0.30549434, slowBeta = 0.85752200, inflSize = 0.060112216,
+                    discount = 5.8071147, discountRef = 1.5728145, margin = 0.0079568674,
+                    ext = sp.ext.copy(burstBack = 0.50000000, cycleVol = 1.0000000, crowdAdjust = 2.4759740,
+                                      termPremium = 0.044068552, cpiNoise = 0.0062841734, deflProb = 0.016228007,
+                                      deflSize = 0.047507117, spikeRate = 0.50256282, spikeNeg = 0.58603524,
+                                      spikeSize = 0.034906950, termVol = 0.0056809413, termPress = 0.71900131,
+                                      cpiNoiseLevel = 0.88279222, policyGrowth = 0.098838313,
+                                      yieldBeta = 0.0012412657, yieldLag = 40.329130, expAnchor = 0.45902738,
+                                      yieldAnchor = 0.64036667, volFeedback = 0.29804100, valueCap = 0.0074048811,
+                                      valueCapFall = 0.0043274899, recessSpread = 0.18904620,
+                                      recessTransient = 0.27810874, sectorChase = 0.23000000,
+                                      sectorLevelHalf = 12.000000, sectorFlow = 0.085000000,
+                                      sectorBreadth = 0.063000000, sectorBetaLift = 0.060000000,
+                                      sectorIdioSpread = 0.25000000, sectorIdioFlat = 0.30000000,
+                                      sectorBetaNoise = 0.43000000, noiseScale = 1.1810511, declineVol = 0.46740815,
+                                      declineVolHalf = 9.3838652, drawdownVol = 0.35551941,
+                                      declineVolAttack = 0.91795407, drawdownCap = 1.0120244, slowCap = 3.5858677)),
             "sp500"),
            ("0.25.1-nasdaq",
-            nq.copy(depth = 14.448864, stress = 3.5980618, fundVol = 0.044888026, rateMean = 0.034508216,
-                    volOfVol = 0.024148935, leverage = 0.079123047, downShock = 0.00022523643,
-                    jumpSkew = 0.038618110, jumpVar = 0.093198762, jumpRate = 0.0046262668, newsRate = 5.6883432,
-                    newsSize = 0.024258837, newsLev = 39.547822, newsRevert = 0.23752839, newsScale = 0.33630068,
-                    newsBond = 0.24905600, newsBondSkip = 0.26802600, creditRegime = 0.23132005,
-                    creditRegimeRate = 2.4166573, slowBondInfl = 0.48413900, noiseSkew = 0.16350944,
-                    newsFlip = 0.65915399, valuePull = 0.019240590, recoveryDrag = 0.49878993,
-                    recoveryFloor = 0.21831132, boomRate = 1.0697937, boomSize = 1.7194009, boomLen = 1.9247560,
-                    recessRate = 0.30511416, recessSize = 0.24720789, recessLen = 1.5143282,
-                    recessRecover = 0.84716992, recessNews = 1.0000000, recessVol = 0.0000000,
-                    recessReprice = 0.91365258, recessBase = 1.2553621, recessShape = 1.5017152,
-                    overshoot = 0.85783691, overshootRate = 0.32824799, recessRecMult = 1.5790117,
-                    recessCredit = 0.037939692, recessInfl = 0.36695218, boomFade = 2.4789944,
-                    delevRate = 1.2022333, delevFrom = 5.0357040, delevSize = 0.083384574, delevLen = 0.14169131,
-                    volPull = 0.14505733, beliefShare = 0.71254800, beliefYears = 2.0010612,
-                    beliefLeak = 0.32513571, capYears = 2.9336493, cycleSd = 0.0000000, cycleYears = 8.1364908,
-                    crowdImpact = 0.14932099, easing = 0.070540501, floorhold = 0.078657839, refuge = 0.10451699,
-                    refugeDays = 0.41558600, levGain = 4.1352583, bustAmp = 0.17763277, slowVol = 1.0633348,
-                    inflSize = 0.043623249, margin = 0.0051318237,
-                    ext = nq.ext.copy(cycleVol = 1.0000000, crowdAdjust = 1.1635638, termPremium = 0.090792400,
-                                      cpiNoise = 0.0094186678, deflProb = 0.18156909, deflSize = 0.034980202,
-                                      spikeRate = 0.26011936, spikeSize = 0.0067448357, termVol = 0.0056821201,
-                                      termPress = 1.0000000, brkVol = 0.0033537566, brkNominal = 0.091217630,
-                                      cpiNoiseLevel = 0.89585897, policyGrowth = 0.095846395,
-                                      yieldBeta = 0.028855859, yieldLag = 24.417600, expAnchor = 0.46574422,
-                                      yieldAnchor = 0.63363114, volFeedback = 0.24874898, valueCap = 0.057041288,
-                                      valueCapFall = 0.014602550, recessSpread = 0.15041412,
-                                      recessTransient = 0.24414122, noiseScale = 1.5334019,
-                                      declineVol = 0.051980829, declineVolHalf = 3.8943863,
-                                      drawdownVol = 0.86336817, drawdownCap = 0.93875320,
-                                      declineVolAttack = 0.076862136, slowCap = 3.2131710)),
+            nq.copy(trendShare = 0.076127779, depth = 14.364819, stress = 3.6548962, drift = 0.13765619,
+                    fundVol = 0.054948660, rateMean = 0.034826545, volOfVol = 0.026278467, leverage = 0.082266897,
+                    downShock = 0.0032130547, jumpSkew = 0.062662481, jumpVar = 0.076780384, jumpRate = 0.0042514823,
+                    newsRate = 5.0769390, newsSize = 0.023473421, newsLev = 32.732633, newsRevert = 0.16440306,
+                    newsScale = 0.36648272, newsBond = 0.17458521, newsBondSkip = 0.36574753,
+                    creditRegime = 0.12254414, creditRegimeRate = 2.5654486, slowBondInfl = 0.47953423,
+                    noiseSkew = 0.24142011, newsFlip = 0.72809877, valuePull = 0.013406190, recoveryDrag = 0.62977391,
+                    recoveryFloor = 0.28287147, boomRate = 0.99932719, boomSize = 1.7629094, boomLen = 2.1756118,
+                    recessRate = 0.25082185, recessSize = 0.32024650, recessLen = 1.7006581,
+                    recessRecover = 0.78251016, recessNews = 1.7833781, recessVol = 0.0073796368,
+                    recessReprice = 0.80695486, recessBase = 0.99459570, recessShape = 1.3246257,
+                    overshoot = 0.90222302, overshootRate = 0.31417798, recessRecMult = 1.6060878,
+                    recessCredit = 1.5839619, recessInfl = 0.56228415, regimeDrift = 0.00011383904,
+                    driftSd = 0.033444109, boomFade = 2.9456461, delevRate = 1.1743087, delevFrom = 4.9458065,
+                    delevSize = 0.050000000, delevLen = 0.17134769, volPull = 0.0000000, beliefShare = 0.86749892,
+                    beliefYears = 1.8295526, beliefLeak = 0.26330022, capYears = 3.0166078, cycleSd = 0.0081211567,
+                    cycleYears = 7.8868263, crowdImpact = 0.14134020, easing = 0.065984575, floorhold = 0.077953122,
+                    refuge = 0.11455268, refugeDays = 0.84270036, levGain = 4.5528533, bustAmp = 0.17050901,
+                    slowShare = 0.28460183, slowVol = 1.0807893, slowPerm = 0.24253748, slowBeta = 0.82093621,
+                    inflSize = 0.050824484, discount = 7.8916141, discountRef = 5.7582618, margin = 0.0051900285,
+                    ext = nq.ext.copy(cycleVol = 1.0000000, crowdAdjust = 0.69514637, termPremium = 0.058529222,
+                                      cpiNoise = 0.0065443761, deflProb = 0.13698707, deflSize = 0.022714989,
+                                      spikeRate = 0.38085752, spikeNeg = 0.086661926, spikeSize = 0.0070654179,
+                                      termVol = 0.0055167716, termPress = 0.95117784, brkVol = 0.0038205472,
+                                      brkNominal = 0.14177185, cpiNoiseLevel = 0.99229600, policyGrowth = 0.16433080,
+                                      yieldBeta = 0.029548085, yieldLag = 30.152182, expAnchor = 0.43966253,
+                                      yieldAnchor = 0.66546071, volFeedback = 0.19975357, valueCap = 0.060270830,
+                                      valueCapFall = 0.019074008, recessSpread = 0.0000000,
+                                      recessTransient = 0.28094147, noiseScale = 1.5199861, declineVol = 0.018880487,
+                                      declineVolHalf = 2.3258611, drawdownVol = 1.3252715,
+                                      declineVolAttack = 0.070286536, drawdownCap = 0.67672071, slowCap = 2.7883051)),
             "nasdaq"))
 
   val Recipes: Vector[(String, World, String)] =
@@ -2887,6 +2966,24 @@ object MarketSim:
   val InflCap     = 0.12
   /** THE SPIKES' DECAY, per year (item 60): a pulse of `spikeSize` falls to a third in half a year. */
   val SpikeDecay  = 2.0
+  /** `WorldExt.burstBack`: the largest share of a session's return the burst gives back */
+  val BurstBackCap = 0.5
+  /** `WorldExt.legBreakDepth`: the rally off the low, in log (8%), that ends a decline's first leg */
+  val LegBreakRally = 0.07696
+  /** THE SHARE COUNTS' PROCESS, read on the record's capital flow between industries (the 49-industry
+    * file's 40 with a full history, a year's flow the growth of firms x average size less the
+    * return): sessions between steps, the persistent growth rate's half-life in years and sd a
+    * year, the transient noise's sd a year, the share of the past year's relative return the flow
+    * follows, and the years of share growth the price answers. */
+  val SectorFlowStep  = 21
+  val SectorFlowHalf  = 3.3
+  val SectorFlowSd    = 0.037
+  val SectorFlowNoise = 0.053
+  val SectorFlowChase = 0.06
+  val SectorFlowYears = 3
+  /** The sd of the legs' log sizes at the start: the record's 40 industries' log shares of the total
+    * value spread 1.2 to 1.9 across the century. */
+  val SectorSizeSd    = 1.5
   /** The base inflation the regime's pressure sits on, per year: the long-run target the market's
     * ten-year expectation returns to (`expInfl10`), and what makes a `rateMean` of 4.2% a ~1.7%
     * real rate. */
@@ -3154,6 +3251,13 @@ object MarketSim:
     w => nonNegRefusal("-declinevol", w.ext.declineVol),
     w => Option.when(w.ext.declineVolHalf.isNaN || w.ext.declineVolHalf <= 0.0)(s"-declinevolhalf ${w.ext.declineVolHalf} must be above 0"),
     w => nonNegRefusal("-drawdownvol", w.ext.drawdownVol),
+    w => nonNegRefusal("-burstback", w.ext.burstBack),
+    w => nonNegRefusal("-legbreakdepth", w.ext.legBreakDepth),
+    w => nonNegRefusal("-legbreaksize", w.ext.legBreakSize),
+    w => refused(w.ext.legBreakDepth > 0.0 && (w.ext.legBreakDays.isNaN || w.ext.legBreakDays < 1.0),
+                 "-legbreakdepth requires -legbreakdays of at least 1 session"),
+    w => refused(w.ext.legBreakDepth > 0.0 && (w.ext.legBreakBack.isNaN || w.ext.legBreakBack < 1.0),
+                 "-legbreakdepth requires -legbreakback of at least 1 session"),
     w => nonNegRefusal("-drawdowncap", w.ext.drawdownCap),
     w => refused(!(w.ext.declineVolAttack >= 0.0 && w.ext.declineVolAttack < 1.0), "-declinevolattack is a persistence in [0, 1)"),
     w => nonNegRefusal("-yieldlag", w.ext.yieldLag),
@@ -3221,6 +3325,15 @@ object MarketSim:
     w => nonNegRefusal("-basketdrift", w.basketDrift),
     w => nonNegRefusal("-sectoridio", w.sectorIdio),
     w => nonNegRefusal("-sectordriftsd", w.sectorDriftSd),
+    w => nonNegRefusal("-sectorchase", w.ext.sectorChase),
+    w => nonNegRefusal("-sectorlevelhalf", w.ext.sectorLevelHalf),
+    w => nonNegRefusal("-sectorflow", w.ext.sectorFlow),
+    w => shareRefusal("-sectorbreadth", w.ext.sectorBreadth),
+    w => refused(!(w.ext.sectorBetaLift > -1.0 && w.ext.sectorBetaLift < 1.0),
+                 "-sectorbetalift is a shift of the legs' mean beta in (-1, 1)"),
+    w => nonNegRefusal("-sectoridiospread", w.ext.sectorIdioSpread),
+    w => shareRefusal("-sectoridioflat", w.ext.sectorIdioFlat),
+    w => nonNegRefusal("-sectorbetanoise", w.ext.sectorBetaNoise),
     w => refused(w.sectors > 0 && w.sectorDriftHalf <= 0.0, "-sectors requires -sectordrifthalf > 0: the legs' drift state needs a half-life"),
     w => Option.when(w.macroPanel > 1)(s"-macro ${w.macroPanel}: 0 (off) or 1 (the panel)"),
     w => Option.when(w.macroNull > 2)(s"-macronull ${w.macroNull}: 0 (the path's own panel), 1 (a sibling's) or 2 (both)"),
@@ -3969,7 +4082,8 @@ object MarketSim:
   final case class Channels(sat: Array[Double], logHi: Array[Double], logLo: Array[Double],
                             logVolume: Array[Double], logOpen: Array[Double],
                             names: Vector[Array[Double]],   // the basket's log prices, N of them
-                            sectors: Vector[Array[Double]]) // the sector legs' log prices, K of them
+                            sectors: Vector[Array[Double]], // the sector legs' log prices, K of them
+                            sectorShares: Vector[Array[Double]]) // their log share counts while `sectorFlow` is on
 
   /** The record's cross-sectional dispersion of the industries' betas on the market: the sd of
     * the ten value-weighted industries' monthly betas on `Mkt-RF + RF`, 1926-07..2026-08 (mean
@@ -3978,7 +4092,8 @@ object MarketSim:
 
   /** The legs' betas on the primary: one normal each from `rng` before the session loop, centred
     * exactly and rescaled by sqrt(K/(K-1)) because centring costs that much sample sd, at
-    * `SectorBetaSd` around 1, so the equal-weight aggregate's beta is 1 to the bit.  K < 2 gives
+    * `SectorBetaSd` around 1, so the equal-weight aggregate's beta is 1 to the bit; the channels then
+    * add `sectorBetaLift` to every leg, and the aggregate's beta is 1 + the lift.  K < 2 gives
     * beta 1. */
   def sectorBetas(w: World, secOn: Boolean, rng: NumPyRNG): Array[Double] =
     if secOn && w.sectors >= 2 then
@@ -3988,6 +4103,23 @@ object MarketSim:
       val sc = SectorBetaSd * math.sqrt(n / (n - 1.0))
       z.map(v => 1.0 + (v - zb) * sc)
     else Array.fill(w.sectors)(1.0)
+
+  /** `WorldExt.sectorIdioSpread`'s correlation of a leg's log idio scale with its beta draw: across
+    * the record's 40 industries the correlation of beta with idio sd is 0.40. */
+  val SectorIdioBetaCorr: Double = 0.40
+
+  /** The legs' idio multipliers (`sectorIdioSpread`): exp(spread x u) a leg, u a unit normal
+    * correlated `SectorIdioBetaCorr` with the leg's standardized beta draw (`betas` before the
+    * lift), one normal a leg from `rng`, normalised to mean square 1.  Empty, with no draw, while
+    * the spread is 0 or K < 2. */
+  def sectorIdioScales(w: World, betas: Array[Double], rng: NumPyRNG): Array[Double] =
+    if w.ext.sectorIdioSpread <= 0.0 || betas.length < 2 then Array.emptyDoubleArray
+    else
+      val r = SectorIdioBetaCorr
+      val h = betas.map(b =>
+        expDet(w.ext.sectorIdioSpread * (r * ((b - 1.0) / SectorBetaSd) + math.sqrt(1.0 - r * r) * rng.randn())))
+      val rms = math.sqrt(h.foldLeft(0.0)((a, x) => a + x * x) / h.length)
+      h.map(_ / rms)
 
   /** THE DERIVED CHANNELS, sampled in a second pass from the price loop's recorded inputs.  They
     * are OBSERVATIONAL -- nothing here reaches a price -- which is what licenses the second pass,
@@ -4049,6 +4181,8 @@ object MarketSim:
     private val op  = if openOn then new Array[Double](tot) else Array.emptyDoubleArray
     private val nm  = if bskOn then Vector.fill(w.basket)(new Array[Double](tot)) else Vector.empty
     private val sc  = if secOn then Vector.fill(w.sectors)(new Array[Double](tot)) else Vector.empty
+    private val sh: Vector[Array[Double]] =
+      if w.ext.sectorFlow > 0.0 then Vector.fill(w.sectors)(new Array[Double](tot)) else Vector.empty
     private val k  = level.k
     private val kS = level.kSat
     private val kV = level.kVs
@@ -4074,10 +4208,36 @@ object MarketSim:
     // dial's half-life and stationary sd.
     private var sectorPrevPx = 0.0
     private val secLogP  = new Array[Double](w.sectors)
-    private val secBetas = sectorBetas(w, secOn, jrng)
+    private val secBetaDraws = sectorBetas(w, secOn, jrng)
     private val secMu    = new Array[Double](w.sectors)
     private val secPhi   = if w.sectorDriftHalf > 0.0 then expDet(-Ln2 / (w.sectorDriftHalf * DaysPerYear)) else 0.0
     private val secInnov = math.sqrt(1.0 - secPhi * secPhi)
+    // the flows' state (`sectorLegsFlows`): the pull's rate a session, the legs' mean log level before
+    // each session, each leg's relative return over the past year, its log share count (the legs'
+    // unequal sizes: each starts at its own draw, after the betas' on the same stream, only while the
+    // share counts are on), its persistent growth rate a year and its growth over `SectorFlowYears`
+    // relative to the legs' mean
+    private val secFlows = secOn && (w.ext.sectorChase > 0.0 || w.ext.sectorLevelHalf > 0.0 ||
+      w.ext.sectorFlow > 0.0 || w.ext.sectorBreadth > 0.0 || w.ext.sectorIdioSpread > 0.0 ||
+      w.ext.sectorIdioFlat > 0.0 || w.ext.sectorBetaNoise > 0.0)
+    private val secLevelPull =
+      if w.ext.sectorLevelHalf > 0.0 then Ln2 / (w.ext.sectorLevelHalf * DaysPerYear) else 0.0
+    private val secBars  = new Array[Double](if secFlows then tot else 0)
+    private val secPast  = new Array[Double](w.sectors)
+    private val secLogS  =
+      if w.ext.sectorFlow > 0.0 then Array.fill(w.sectors)(SectorSizeSd * jrng.randn())
+      else new Array[Double](w.sectors)
+    private val secFlowRate = new Array[Double](w.sectors)
+    private val secGrown = new Array[Double](w.sectors)
+    // THE LEGS' SHAPE: each leg's idio multiplier (`sectorIdioScales`, drawn after every other draw of
+    // the stream; empty while `sectorIdioSpread` is 0), then the betas with their lift, and the
+    // running mean of the squared vol state with its count of sessions, the level `sectorIdioFlat`
+    // holds the idio's vol at
+    private val secIdioScale = sectorIdioScales(w, secBetaDraws, jrng)
+    private val secBetas =
+      if w.ext.sectorBetaLift != 0.0 then secBetaDraws.map(_ + w.ext.sectorBetaLift) else secBetaDraws
+    private var secVolRef2 = 0.0
+    private var secVolRefN = 0.0
     // SATELLITE LEG state: its log price and the primary's observed log price last session.
     private var satLogP = 0.0; private var satPrevPx = 0.0
     // THE RELATIVE CYCLE's state (see `satCycleSd`): the drift and the level, their per-session
@@ -4107,7 +4267,7 @@ object MarketSim:
           sectorLegs(i)
           bar(i)
           i += 1
-      Channels(sat, hi, lo, vv, op, nm, sc)
+      Channels(sat, hi, lo, vv, op, nm, sc, sh)
 
     /** The satellite leg's session. */
     private def satellite(i: Int): Unit =
@@ -4170,8 +4330,126 @@ object MarketSim:
           nm(q)(i) = nameLogP(q)
           q += 1
 
+    /** The vol a leg's idio rides (`sectorIdioFlat`): `ref^flat x volState^(1 - flat)`, `ref^2` the
+      * mean of the squared vol state over the sessions so far, this one included; the vol state
+      * itself while the dial is 0. */
+    private def sectorIdioVol(volState: Double): Double =
+      val flat = w.ext.sectorIdioFlat
+      if flat <= 0.0 then volState
+      else
+        secVolRef2 += (volState * volState - secVolRef2) / (secVolRefN + 1.0)
+        secVolRefN += 1.0
+        val level = math.sqrt(secVolRef2)
+        if level > 0.0 && volState > 0.0 then powDet(level, flat) * powDet(volState, 1.0 - flat)
+        else volState
+
+    /** Leg `q`'s idio of the session from its draw `z`: the common part plus its own at `ownSd`, the
+      * beta noise's `jitter` added in variance, times the leg's multiplier (`sectorIdioSpread`). */
+    private def sectorLegIdio(q: Int, common: Double, ownSd: Double, jitter: Double, z: Double): Double =
+      val idio =
+        if jitter == 0.0 then common + ownSd * z
+        else common + math.sqrt(ownSd * ownSd + jitter * jitter) * z
+      if q < secIdioScale.length then idio * secIdioScale(q) else idio
+
+    /** The legs' session with the chase, the level pull, the share counts, the breadth factor or the
+      * idio's shape (`sectorIdioSpread`, `sectorIdioFlat`, `sectorBetaNoise`, none of which takes a
+      * session draw) on.
+      * The draws of the session without them, in their order (K for the drift states, one for the
+      * breadth factor while `sectorBreadth` is on, K for the idio); then, on a share step, K for the
+      * growth rates and K for the transient flow.  A leg's drift a year gains `sectorChase` x its
+      * relative return over the past year and loses `sectorFlow` x its relative share growth over
+      * the past `SectorFlowYears`; its log level is pulled to the legs' mean at `sectorLevelHalf`.
+      * A leg's shares grow at their persistent rate plus `SectorFlowChase` x the past year's
+      * relative return, plus the transient noise. */
+    private def sectorLegsFlows(i: Int): Unit =
+      val n = w.sectors
+      val days = DaysPerYear.toDouble
+      val year = DaysPerYear
+      val logPx = x.px(i)
+      val volState = x.volState(i) * kV
+      val primaryRet = logPx - sectorPrevPx
+      val sd = w.sectorDriftSd * level.kDr
+      var q = 0
+      while q < n do
+        secMu(q) = secPhi * secMu(q) + sd * secInnov * krng.randn()
+        q += 1
+      var muSum = 0.0
+      var lpSum = 0.0
+      q = 0
+      while q < n do
+        muSum += secMu(q)
+        q += 1
+      q = 0
+      while q < n do
+        lpSum += secLogP(q)
+        q += 1
+      val muBar = muSum / n
+      val lpBar = lpSum / n
+      secBars(i) = lpBar
+      val flowOn = sh.nonEmpty
+      val back = SectorFlowYears * year
+      if flowOn && i > back then
+        q = 0
+        while q < n do
+          secGrown(q) = secLogS(q) - sh(q)(i - 1 - back)
+          q += 1
+        var gSum = 0.0
+        q = 0
+        while q < n do
+          gSum += secGrown(q)
+          q += 1
+        val gBar = gSum / n
+        q = 0
+        while q < n do
+          secGrown(q) -= gBar
+          q += 1
+      val idioVol = sectorIdioVol(volState)
+      // the beta noise's sd of the session; session 0's "return" is the primary's log level, so none there
+      val jitter = if i > 0 then w.ext.sectorBetaNoise * primaryRet else 0.0
+      // the breadth factor: `sectorBreadth` of a leg's idio variance is one draw the legs share
+      val breadth = w.ext.sectorBreadth
+      val common = if breadth > 0.0 then math.sqrt(breadth) * w.sectorIdio * idioVol * krng.randn() else 0.0
+      val own = if breadth > 0.0 then math.sqrt(1.0 - breadth) else 1.0
+      q = 0
+      while q < n do
+        val ownSd = own * w.sectorIdio * idioVol
+        val idio = sectorLegIdio(q, common, ownSd, jitter, krng.randn())
+        val lp = secLogP(q)
+        var drift = (secMu(q) - muBar) / days - w.ext.sectorFlow * secGrown(q) / days
+        if i > year then
+          secPast(q) = (lp - lpBar) - (sc(q)(i - 1 - year) - secBars(i - year))
+          drift += w.ext.sectorChase * secPast(q) / days
+        secLogP(q) = lp + secBetas(q) * primaryRet + drift + idio - secLevelPull * (lp - lpBar)
+        q += 1
+      sectorPrevPx = logPx
+      q = 0
+      while q < n do
+        sc(q)(i) = secLogP(q)
+        q += 1
+      if flowOn then
+        if (i + 1) % SectorFlowStep == 0 then
+          val dt = SectorFlowStep.toDouble / days
+          val phi = expDet(-Ln2 * dt / SectorFlowHalf)
+          val innov = math.sqrt(1.0 - phi * phi)
+          q = 0
+          while q < n do
+            secFlowRate(q) = phi * secFlowRate(q) + SectorFlowSd * innov * krng.randn()
+            q += 1
+          q = 0
+          while q < n do
+            secLogS(q) += (secFlowRate(q) + SectorFlowChase * secPast(q)) * dt +
+              SectorFlowNoise * math.sqrt(dt) * krng.randn()
+            q += 1
+        q = 0
+        while q < n do
+          sh(q)(i) = secLogS(q)
+          q += 1
+
     /** The sector legs' session. */
     private def sectorLegs(i: Int): Unit =
+      if secFlows then sectorLegsFlows(i) else sectorLegsPlain(i)
+
+    private def sectorLegsPlain(i: Int): Unit =
       val logPx = x.px(i)
       // THE SECTOR LEGS -- see the `sectors` field.  Every leg's drift state takes its
       // innovation (K normals), the states are centred, then each leg adds beta x the
@@ -4674,6 +4952,7 @@ object MarketSim:
       logOpen   = if w.overnight > 0.0 then chan.logOpen.drop(BurnIn) else Array.emptyDoubleArray,
       names     = if w.basket > 0 then chan.names.map(_.drop(BurnIn)) else Vector.empty,
       sectors   = if w.sectors > 0 then chan.sectors.map(_.drop(BurnIn)) else Vector.empty,
+      sectorShares = chan.sectorShares.map(_.drop(BurnIn)),
       chanK     = level.k,
       chanKSat  = level.kSat,
       chanKDiv  = level.kDiv,
@@ -4952,7 +5231,7 @@ object MarketSim:
                       tips10 = empty, realYield10 = empty,
                       sat = empty, logHi = empty, logLo = empty, logVolume = empty, divYield = empty,
                       traded = empty, logOpen = empty, names = Vector.empty, sectors = Vector.empty,
-                      macroPanel = None, macroNullPanel = None),
+                      sectorShares = Vector.empty, macroPanel = None, macroNullPanel = None),
                seed + k.toLong * 7919L,
                if p.macroPanel.isDefined then Some(macroPathRead(p)) else None)
       }, years)
@@ -5076,6 +5355,46 @@ object MarketSim:
         vs.delev = -c
         x - c
       else x
+
+  /** THE FIRST-LEG BREAK's state (`WorldExt.legBreakDepth`): the running peak of the log price, the
+    * low since it, whether the decline's first leg is over or its break has fired, and the
+    * sessions of the sale and of the buy-back still to run, whole as the dials truncate. */
+  private final class LegBreak(w: World):
+    private var peak = Double.NegativeInfinity
+    private var low = 0.0
+    private var spent = false
+    private var sell = 0
+    private var buy = 0
+    private val days = Math.max(w.ext.legBreakDays.toInt, 0)
+    private val back = Math.max(w.ext.legBreakBack.toInt, 0)
+
+    /** The session's order in log return, before the step's liquidity sizes it, at the log price
+      * `logP` the session opens on: a session of the sale, else one of the buy-back, else none;
+      * the session the break fires on carries none and the sale starts on the next. */
+    def order(logP: Double): Double =
+      if sell > 0 then
+        val sale = -w.ext.legBreakSize / days.toDouble
+        sell -= 1
+        if sell == 0 then buy = back
+        sale
+      else if buy > 0 then
+        buy -= 1
+        w.ext.legBreakSize / back.toDouble
+      else
+        if !spent && peak - logP >= w.ext.legBreakDepth then
+          sell = days
+          spent = true
+        0.0
+
+    /** The session's close: a new peak opens a first leg, a rally of `LegBreakRally` off the low
+      * since the peak ends it. */
+    def close(logP: Double): Unit =
+      if logP >= peak then
+        peak = logP
+        low = logP
+        spent = false
+      else if logP < low then low = logP
+      else if logP - low >= LegBreakRally then spent = true
 
   /** THE OVERSHOOT's ledger (see `World.overshoot`): the amplification's excess owed back to the
     * price, in log units.  `into` takes this session's give-back off the step's input, sized in
@@ -5440,6 +5759,10 @@ object MarketSim:
     // `newsFlip`)
     private val flipRng = new NumPyRNG(seed ^ 0x0f119e00L)
     private var flipOwed = 0.0
+    // THE GIVE-BACK (`WorldExt.burstBack`): the fast and slow variances of the session return and the give-back owed
+    private var burstFast = 0.0
+    private var burstSlow = 0.0
+    private var burstOwed = 0.0
     private var markdownPrev = 0.0
     private val skewA   = Math.sqrt(1.0 - w.noiseSkew * w.noiseSkew)
     private val skewB   = Math.sqrt(1.0 - 2.0 * w.noiseSkew * w.noiseSkew / math.Pi)
@@ -5719,6 +6042,7 @@ object MarketSim:
     private val boomFade = boomFadeOf(w)
     private val delev = new Deleveraging(w, seed)
     private val over = new Overshoot(w)
+    private val legBreak = new LegBreak(w)
     private var boom = 0.0; private var boomLeft = 0; private var boomStep = 0.0; private var boomCount = 0
     // THE CHANNELS' INPUTS, recorded per session and sampled AFTER the loop by `deriveChannels`
     // (see it for why the level is a world constant, never read off the path being emitted): the
@@ -6489,7 +6813,14 @@ object MarketSim:
         lev = borrow * (1.0 + ddS)
       // THE DAY FLIP (see `newsFlip`): the day's would-be return, reflected when the draw fires;
       // the debt the flips cannot pay at q0 = 1 is a lift
-      val x0 = delev.into(over.into(eqFlow + eqShockA, eqM, vs), eqM, vs)
+      // THE GIVE-BACK (`WorldExt.burstBack`): last session's share given back whole, sized like the overshoot's
+      val burstIn =
+        if w.ext.burstBack > 0.0 && burstOwed != 0.0 then
+          val x = eqFlow + eqShockA - burstOwed / eqM.liquidity
+          burstOwed = 0.0
+          x
+        else eqFlow + eqShockA
+      val x0 = delev.into(over.into(burstIn, eqM, vs), eqM, vs)
       val stepIn =
         if flipOwed > 0.0 then
           val sd = newsDamp * sigmaN * newsVolMultiplier(w, logVol, volNorm, kickS, volRespS, linM) * asymM * regimeM
@@ -6505,8 +6836,20 @@ object MarketSim:
           vs.volFeedback = -c
           stepIn - c
         else stepIn
-      retE = eqM.step(perceivedFair, stepInFb)
-      over.record(stepInFb, recessOver, eqM)
+      // THE FIRST-LEG BREAK (`WorldExt.legBreakDepth`): the sale's or the buy-back's session
+      val stepInLb =
+        if w.ext.legBreakDepth > 0.0 then stepInFb + legBreak.order(eqM.logP) / eqM.liquidity
+        else stepInFb
+      retE = eqM.step(perceivedFair, stepInLb)
+      if w.ext.legBreakDepth > 0.0 then legBreak.close(eqM.logP)
+      // THE GIVE-BACK (`WorldExt.burstBack`): the share by the burst read before this session
+      if w.ext.burstBack > 0.0 then
+        if burstSlow > 0.0 then
+          val b = Math.sqrt(burstFast / burstSlow)
+          burstOwed = Math.min(Math.max(w.ext.burstBack * (b - 1.0), 0.0), BurstBackCap) * retE
+        burstFast = 0.95 * burstFast + 0.05 * retE * retE
+        burstSlow += (retE * retE - burstSlow) / 63.0
+      over.record(stepInLb, recessOver, eqM)
       recessOver = 0.0
       if w.volResp > 0.0 || w.jumpResp > 0.0 then
         // The REALIZED decline, in units of the sd that generated it, saturated at four like the
@@ -7187,9 +7530,13 @@ object MarketSim:
 
   /** The legs of one path as the ruler's panel: simple monthly returns from month 1 on, the
     * primary's as the market, the rate compounded over each month's sessions as the bill. */
-  def sectorPanelOf(s: Path): SectorPanel =
-    val d = sectorColumnsOf(s)
-    SectorPanel(d.ret.toVector.map(_.toVector.map(Some(_))), d.market.toVector, d.rf.toVector)
+  def sectorPanelOf(s: Path): SectorPanel = sectorPanelOfColumns(sectorColumnsOf(s), s)
+
+  /** `sectorPanelOf` from the path's columns, the share counts' growth over each month beside them. */
+  private def sectorPanelOfColumns(d: SectorColumns, s: Path): SectorPanel =
+    val ends = monthEnds(s.price.length)
+    SectorPanel(d.ret.toVector.map(_.toVector.map(Some(_))), d.market.toVector, d.rf.toVector,
+                s.sectorShares.map(ls => (1 until ends.length).toVector.map(t => Some(ls(ends(t)) - ls(ends(t - 1))))))
 
   /** `sectorPanelOf` as columns, every month present. */
   private def sectorColumnsOf(s: Path): SectorColumns =
@@ -7243,18 +7590,29 @@ object MarketSim:
   val SectorRows: Vector[String] =
     Vector("sector momentum 12-1 / xs sd", "sector trend 12m / xs sd", "sector trend sma10 / xs sd",
            "sector xs sd / market sd", "sector pair corr", "sector pair corr worst decile",
-           "sector pair corr middle decile")
+           "sector pair corr middle decile", "sector strength months 13-24", "sector strength months 61-120",
+           "sector xs sd 10y / market sd", "sector flow persistence 1y", "sector flow after return 1y",
+           "sector return after flow 3y")
 
   /** One history's sector rows in the gate's forms over `sectorPathStats`: the 12-1 momentum
     * spread and the 12-month and sma10 trends each over the cross-sectional sd, that sd over the
     * market's monthly sd, and the median pairwise correlation whole and on the market's worst and
     * middle deciles; NaN when no sector channel ran.  The record (French's ten industries) is a
-    * whole path's length, so a history is read whole, never cut. */
+    * whole path's length, so a history is read whole, never cut.  The last six are the long rows
+    * (`sectorLongRows`), the 10-year spread over the market's monthly sd as the monthly one is;
+    * the three share-count rows are NaN on a path without share counts (`sectorFlow` off). */
   def sectorRowsOfPath(p: Path): Vector[Double] =
-    if p.sectors.isEmpty then Vector.fill(7)(Double.NaN) else sectorRowsOfStats(sectorPathStats(p))
+    if p.sectors.isEmpty then Vector.fill(13)(Double.NaN)
+    else
+      val d = sectorColumnsOf(p)
+      sectorRowsWithLong(sectorStatsOfColumns(d), sectorLongRows(sectorPanelOfColumns(d, p))._1)
 
   /** The sector rows of a panel, as `sectorRowsOfPath` reads a history. */
-  def sectorRowsOfPanel(p: SectorPanel): Vector[Double] = sectorRowsOfStats(sectorStatsOfPanel(p))
+  def sectorRowsOfPanel(p: SectorPanel): Vector[Double] =
+    sectorRowsWithLong(sectorStatsOfPanel(p), sectorLongRows(p)._1)
+
+  private def sectorRowsWithLong(s: Vector[Double], l: Vector[Double]): Vector[Double] =
+    sectorRowsOfStats(s) ++ Vector(l(0), l(1), l(2) / s(6), l(3), l(4), l(5))
 
   private def sectorRowsOfStats(s: Vector[Double]): Vector[Double] =
     Vector(s(0) / s(5), s(3) / s(5), s(4) / s(5), s(5) / s(6), s(7), s(8), s(9))
@@ -7872,7 +8230,11 @@ object MarketSim:
       basket = d.basket, basketBeta = d.basketBeta, basketSector = d.basketSector, basketIdio = d.basketIdio,
       basketGaps = d.basketGaps, basketDrift = d.basketDrift, sectors = d.sectors, sectorIdio = d.sectorIdio,
       sectorDriftSd = d.sectorDriftSd, sectorDriftHalf = d.sectorDriftHalf, macroPanel = d.macroPanel,
-      macroNull = d.macroNull))
+      macroNull = d.macroNull,
+      ext = w.ext.copy(sectorChase = d.ext.sectorChase, sectorLevelHalf = d.ext.sectorLevelHalf,
+                       sectorFlow = d.ext.sectorFlow, sectorBreadth = d.ext.sectorBreadth,
+                       sectorBetaLift = d.ext.sectorBetaLift, sectorIdioSpread = d.ext.sectorIdioSpread,
+                       sectorIdioFlat = d.ext.sectorIdioFlat, sectorBetaNoise = d.ext.sectorBetaNoise)))
 
   /** The open's readings, medians across paths: the overnight share of close-to-close variance
     * (sample variances), and the regression share of the overnight in the session -- sum(o r) /
@@ -9990,7 +10352,10 @@ object MarketSim:
     satBeta: Double, satIdio: Double, satTailDrop: Double, satCycleSd: Double, satDriftHalf: Double,
     satLevelHalf: Double, rangeScale: Double, rangeDown: Double, volIdio: Double,
     overnight: Double, divYield: Double,
-    sectors: Int, sectorIdio: Double, sectorDriftSd: Double, sectorDriftHalf: Double, macroPanel: Int)
+    sectors: Int, sectorIdio: Double, sectorDriftSd: Double, sectorDriftHalf: Double, macroPanel: Int,
+    sectorChase: Double = 0.0, sectorLevelHalf: Double = 0.0, sectorFlow: Double = 0.0,
+    sectorBreadth: Double = 0.0, sectorBetaLift: Double = 0.0, sectorIdioSpread: Double = 0.0,
+    sectorIdioFlat: Double = 0.0, sectorBetaNoise: Double = 0.0)
 
   object ChannelDials:
     /** A world's derived-series dials. */
@@ -9998,7 +10363,9 @@ object MarketSim:
       ChannelDials(w.satBeta, w.satIdio, w.ext.satTailDrop, w.satCycleSd, w.satDriftHalf, w.satLevelHalf,
                    w.rangeScale, w.rangeDown, w.volIdio, w.overnight,
                    w.divYield,
-                   w.sectors, w.sectorIdio, w.sectorDriftSd, w.sectorDriftHalf, w.macroPanel)
+                   w.sectors, w.sectorIdio, w.sectorDriftSd, w.sectorDriftHalf, w.macroPanel,
+                   w.ext.sectorChase, w.ext.sectorLevelHalf, w.ext.sectorFlow, w.ext.sectorBreadth,
+                   w.ext.sectorBetaLift, w.ext.sectorIdioSpread, w.ext.sectorIdioFlat, w.ext.sectorBetaNoise)
 
   /** The S&P set's derived-series dials: `0.24.5-sp500`'s (its `levGain` is a primary
     * dial, not one of these), the satellite leg at item 62 B's tail beta: beta 1.3 on ordinary
@@ -10043,7 +10410,11 @@ object MarketSim:
     val sec =
       if w.sectors == 0 then
         div.copy(sectors = d.sectors, sectorIdio = d.sectorIdio, sectorDriftSd = d.sectorDriftSd,
-                 sectorDriftHalf = d.sectorDriftHalf)
+                 sectorDriftHalf = d.sectorDriftHalf,
+                 ext = div.ext.copy(sectorChase = d.sectorChase, sectorLevelHalf = d.sectorLevelHalf,
+                                    sectorFlow = d.sectorFlow, sectorBreadth = d.sectorBreadth,
+                                    sectorBetaLift = d.sectorBetaLift, sectorIdioSpread = d.sectorIdioSpread,
+                                    sectorIdioFlat = d.sectorIdioFlat, sectorBetaNoise = d.sectorBetaNoise))
       else div
     val mac  = if w.macroPanel == 0 then sec.copy(macroPanel = d.macroPanel) else sec
     // the 10-year leg runs at `VerdictBond10` where the caller left it off, the TIPS leg at `VerdictTips`
@@ -13354,7 +13725,12 @@ object MarketSim:
     * table is blank.  Every row below is read from one of these, so a world's sector legs are read
     * the same way once they are aggregated to months. */
   final case class SectorPanel(returns: Vector[Vector[Option[Double]]], market: Vector[Double],
-                               rf: Vector[Double])
+                               rf: Vector[Double],
+                               // `flows(industry)(month)`: the growth of the industry's log share
+                               // count over the month (its capital's log growth less its log
+                               // return), `None` where the panel has none; empty for a panel
+                               // without share counts
+                               flows: Vector[Vector[Option[Double]]] = Vector.empty)
 
   /** months in one bootstrap block of the sector rows */
   val SectorBlockMonths = 12
@@ -13428,6 +13804,79 @@ object MarketSim:
       sxy += (x(i) - mx) * (y(i) - my); sxx += (x(i) - mx) * (x(i) - mx); syy += (y(i) - my) * (y(i) - my)
       i += 1
     sxy / math.sqrt(sxx * syy)
+
+  /** Ordinal ranks of a cross-section, ties in index order; the order is the IEEE total order. */
+  private def ranksOf(v: Array[Double]): Array[Double] =
+    def key(x: Double): Long =
+      val b = java.lang.Double.doubleToRawLongBits(x)
+      b ^ ((b >> 63) >>> 1)
+    val order = Array.range(0, v.length).sortBy(i => key(v(i)))
+    val r = new Array[Double](v.length)
+    var k = 0
+    while k < order.length do
+      r(order(k)) = k.toDouble
+      k += 1
+    r
+
+  /** months of an industry's return the long rows look back over */
+  val SectorLongMonths = 120
+
+  /** THE LONG ROWS, read in log returns on the panel's industries with a return in every month.
+    * RELATIVE STRENGTH BEYOND A YEAR: each month from the 121st, the cross-sectional rank
+    * correlation of the returns over months 13-24 back, and over months 61-120 back, with the
+    * month's own; the mean over months.  THE 10-YEAR SPREAD: each twelve months from the 120th, the
+    * cross-sectional sd (population) of the trailing 120 months' returns; the mean.  THE SHARE
+    * COUNTS' ROWS, on the panel's years (twelve months from the first; a year's flow the sum of its
+    * months', counted where every such industry holds one in each): the rank correlation of a
+    * year's flow with the next year's, of a year's flow with the year before's return, and of a
+    * year's flow with the return three years on; each the mean over years.  Returns `(strength
+    * 13-24, strength 61-120, spread, flow persistence, flow after return, return after flow)` and
+    * the count of periods each is the mean over; NaN where a row has none (the flow rows on a panel
+    * without flows, every row on fewer than two such industries).  Sums start at -0.0, as the Rust
+    * twin's do. */
+  def sectorLongRows(p: SectorPanel): (Vector[Double], Vector[Int]) =
+    val months = p.market.length
+    val full = p.returns.indices.filter(j => p.returns(j).forall(_.isDefined)).toArray
+    if full.length < 2 then (Vector.fill(6)(Double.NaN), Vector.fill(6)(0))
+    else
+      val n = full.length
+      // month-major: each month's log returns, and the log return of the first t months
+      val cols = full.map(j => p.returns(j))
+      val lr = Array.tabulate(months)(t => cols.map(c => lnDet(1.0 + c(t).get)))
+      val cum = new Array[Array[Double]](months + 1)
+      cum(0) = new Array[Double](n)
+      var m = 0
+      while m < months do
+        val (c, r) = (cum(m), lr(m))
+        cum(m + 1) = Array.tabulate(n)(k => c(k) + r(k))
+        m += 1
+      def over(a: Int, b: Int): Array[Double] =
+        val (x, y) = (cum(b), cum(a))
+        Array.tabulate(n)(k => x(k) - y(k))
+      def meanFrom(v: Seq[Double]): Double = v.foldLeft(-0.0)(_ + _) / v.length
+      val back = SectorLongMonths
+      val held = (back until months).map(t => ranksOf(lr(t)))
+      val near = (back until months).map(t => pearsonOf(ranksOf(over(t - 24, t - 12)), held(t - back), n))
+      val far  = (back until months).map(t => pearsonOf(ranksOf(over(t - back, t - 60)), held(t - back), n))
+      val spread = (back to months by 12).map: t =>
+        val d = over(t - back, t)
+        val mu = meanOfRange(d, 0, n)
+        math.sqrt(d.foldLeft(-0.0)((a, x) => a + (x - mu) * (x - mu)) / n)
+      val years = months / 12
+      val ret = Vector.tabulate(years)(y => ranksOf(over(12 * y, 12 * y + 12)))
+      // a year's flow of one industry: its twelve months' sum, none where a month is
+      def yearFlow(j: Int, y: Int): Option[Double] =
+        p.flows.lift(j).filter(_.length >= 12 * y + 12).flatMap: f =>
+          (12 * y until 12 * y + 12).foldLeft(Option(-0.0))((a, k) => a.flatMap(x => f(k).map(x + _)))
+      val flow: Vector[Option[Array[Double]]] = Vector.tabulate(years): y =>
+        val f = full.map(j => yearFlow(j, y))
+        Option.when(f.forall(_.isDefined))(ranksOf(f.map(_.get)))
+      val pairs = (0 until years).map(y => (y, flow.lift(y + 1).flatten))
+      val after   = pairs.flatMap((y, next) => next.map(g => pearsonOf(ret(y), g, n)))
+      val persist = pairs.flatMap((y, next) => flow(y).flatMap(f => next.map(g => pearsonOf(f, g, n))))
+      val ahead   = pairs.flatMap((y, _) => flow(y).flatMap(f => ret.lift(y + 3).map(x => pearsonOf(f, x, n))))
+      val rows = Vector[Seq[Double]](near, far, spread, persist, after, ahead)
+      (rows.map(meanFrom), rows.map(_.length))
 
   def sectorMomentum(p: SectorPanel, form: Int, top: Int, from: Int): SectorMomentum =
     sectorMomentumOf(sectorColumns(p), form, top, from)
@@ -14685,7 +15134,7 @@ object MarketSim:
     "termVol", "brkVol", "brkNominal", "cpiNoiseLevel", "policyGrowth", "yieldBeta",
     "yieldLag", "expAnchor", "volFeedback", "valueCap", "valueCapFall", "recessSpread", "recessTransient",
     "noiseScale", "crowdAdjust", "declineVol", "drawdownVol", "declineVolAttack", "declineVolHalf",
-    "yieldAnchor", "termPress")
+    "yieldAnchor", "termPress", "legBreakDepth", "legBreakSize", "legBreakDays", "legBreakBack")
 
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
@@ -14898,6 +15347,12 @@ object MarketSim:
     // points of pressure; the re-solves place it near 1 with the calm vol below the pooled
     // (`bond10 vol per duration`, `bond stress share %`)
     ("termPress", 0.0, 4.0, (w, x) => w.copy(ext = w.ext.copy(termPress = x)), _.ext.termPress),
+    // the first-leg break: the log drawdown that fires it, off at its floor; the sale in log
+    // return; the sale's and the buy-back's sessions, their off values 10 and 75 inside their ranges
+    ("legBreakDepth", 0.0, 0.25, (w, x) => w.copy(ext = w.ext.copy(legBreakDepth = x)), _.ext.legBreakDepth),
+    ("legBreakSize", 0.0, 0.20, (w, x) => w.copy(ext = w.ext.copy(legBreakSize = x)), _.ext.legBreakSize),
+    ("legBreakDays", 3.0, 30.0, (w, x) => w.copy(ext = w.ext.copy(legBreakDays = x)), _.ext.legBreakDays),
+    ("legBreakBack", 20.0, 250.0, (w, x) => w.copy(ext = w.ext.copy(legBreakBack = x)), _.ext.legBreakBack),
   )
 
   /** THE ROW 65 PROBE DIALS a search may set on its seed worlds and never steps (`-seedset`): the
@@ -14908,7 +15363,8 @@ object MarketSim:
   val ProbeDials: Vector[(String, (World, Double) => World, World => Double)] = Vector(
     ("recessStep", (w, x) => w.copy(ext = w.ext.copy(recessStep = x)), _.ext.recessStep),
     ("recessSteps", (w, x) => w.copy(ext = w.ext.copy(recessSteps = x)), _.ext.recessSteps),
-    ("cycleVol", (w, x) => w.copy(ext = w.ext.copy(cycleVol = x)), _.ext.cycleVol))
+    ("cycleVol", (w, x) => w.copy(ext = w.ext.copy(cycleVol = x)), _.ext.cycleVol),
+    ("burstBack", (w, x) => w.copy(ext = w.ext.copy(burstBack = x)), _.ext.burstBack))
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
     // depth, trendShare, drift and crowdImpact are in the search because they are the strongest
@@ -15926,6 +16382,13 @@ object MarketSim:
     * `sectors-2026-09-30.tsv` over the whole panel, each form's ratio rounded to four decimals.
     * `BarRecordSuite` re-derives them from the fixture. */
   val SectorRecords: Vector[Double] = Vector(0.1275, 0.1802, 0.1193, 0.5815, 0.6986, 0.5608, -0.0307)
+  /** The same rows' records for a panel of 40 legs: the 49-industry file's 40 industries with a full
+    * history (`sectors-2026-11-12.tsv`, table `industries40`), the momentum long and short 12. */
+  val SectorRecords40: Vector[Double] =
+    Vector(0.1548, 0.1122, 0.1114, 0.8104, 0.6186, 0.4890, 0.0519,
+           // the long rows' (`sectors-2026-11-13.tsv`), graded on 40 legs alone: a panel of another
+           // width reads them without a record
+           -0.0095, -0.0249, 9.3910, 0.2256, 0.0513, -0.0405)
 
   /** `historyRows` from the readings a caller already holds (`horizonReadings` on `sims` with the
     * extreme rows), so the verdict builds them once for its fidelity rows and its placement.  Each
@@ -16005,7 +16468,8 @@ object MarketSim:
       val (name, j) = nj
       val xs = sectorReads.map(_(j))
       if xs.exists(_.isFinite) then
-        (acc._1.updated(name, (years, xs)), acc._2.updated(name, if nasdaq then None else Some(SectorRecords(j))))
+        val record = if sims.head.sectors.length == 40 then Some(SectorRecords40(j)) else SectorRecords.lift(j)
+        (acc._1.updated(name, (years, xs)), acc._2.updated(name, record.filter(_ => !nasdaq)))
       else acc
     // the satellite's and the dividend's rows whenever a path carries the channel, gaps and all
     val (lines5, records4) =
@@ -17779,6 +18243,9 @@ object MarketSim:
   /** `logSector1..K`, present exactly when the sector channel ran. */
   def sectorColumns(p: Path): Vector[String] = p.sectors.indices.map(q => s"logSector${q + 1}").toVector
 
+  /** `logShares1..K`, present exactly while the share counts are on; no row reads them. */
+  def shareColumns(p: Path): Vector[String] = p.sectorShares.indices.map(q => s"logShares${q + 1}").toVector
+
   /** The equal-weight aggregate of the names as a LOG price series: the mean of the names'
     * price levels relative to their common start, the fixture's convention (equal weights held
     * from the first session, never rebalanced). */
@@ -17811,6 +18278,7 @@ object MarketSim:
           else EmitColumn("logBasket", basketAggregate(p.names)) +:
                p.names.zipWithIndex.map((lp, q) => EmitColumn(s"logName${q + 1}", lp)))
       ++ p.sectors.zipWithIndex.map((lp, q) => EmitColumn(s"logSector${q + 1}", lp))
+      ++ p.sectorShares.zipWithIndex.map((ls, q) => EmitColumn(s"logShares${q + 1}", ls))
       ++ p.macroPanel.toVector.flatMap(m => MacroK.Columns.indices.map(j => EmitColumn(MacroK.Columns(j), m.member(j))))
       ++ p.macroNullPanel.toVector.flatMap(m =>
            MacroK.NullColumns.indices.map(j => EmitColumn(MacroK.NullColumns(j), m.member(j))))
@@ -17833,7 +18301,7 @@ object MarketSim:
       val q = name.stripPrefix(prefix)
       name.startsWith(prefix) && q.nonEmpty && !q.startsWith("0") && q.forall(c => c >= '0' && c <= '9')
     EmitColumns.tail.contains(name) || optional.contains(name) || MacroK.Columns.contains(name) ||
-      MacroK.NullColumns.contains(name) || indexed("logName") || indexed("logSector")
+      MacroK.NullColumns.contains(name) || indexed("logName") || indexed("logSector") || indexed("logShares")
 
   def writeEmitTsv(file: String, table: Vector[EmitColumn], dates: Vector[String]): Unit =
     val header = ("date" +: table.map(_.name)).mkString("\t")
@@ -18014,7 +18482,11 @@ object MarketSim:
   val OptionalWorldKeys: Vector[(String, String)] = Vector(
     ("volPullStep", "0"), ("recessStep", "0"), ("recessSteps", "0"), ("declineVol", "0"),
     ("declineVolHalf", "5"), ("drawdownVol", "0"), ("declineVolAttack", "0"), ("yieldAnchor", "0"),
-    ("termPress", "0"), ("cycleVol", "0"), ("spikeNeg", "0"), ("slowCap", "0"), ("drawdownCap", "0"))
+    ("termPress", "0"), ("cycleVol", "0"), ("burstBack", "0"),
+    ("legBreakDepth", "0"), ("legBreakSize", "0"), ("legBreakDays", "10"), ("legBreakBack", "75"),
+    ("sectorChase", "0"), ("sectorLevelHalf", "0"), ("sectorFlow", "0"), ("sectorBreadth", "0"),
+    ("sectorBetaLift", "0"), ("sectorIdioSpread", "0"), ("sectorIdioFlat", "0"), ("sectorBetaNoise", "0"),
+    ("spikeNeg", "0"), ("slowCap", "0"), ("drawdownCap", "0"))
 
   /** Every `World` field, in declaration order, as the indented body of a JSON object.  A world
     * that reaches a consumer without its parameters cannot be re-simulated.
@@ -18117,6 +18589,10 @@ object MarketSim:
     // the attack shapes the linear answer's two terms alone and the half-life its decline term:
     // each is inert while what it shapes is off and reads as its off value then, so it moves no
     // body or digest
+    // the break's size and sessions likewise, inert while its depth is 0
+    val (breakSize, breakDays, breakBack) =
+      if w.ext.legBreakDepth > 0.0 then (w.ext.legBreakSize, w.ext.legBreakDays, w.ext.legBreakBack)
+      else (0.0, 10.0, 75.0)
     val attack = if w.ext.declineVol > 0.0 || w.ext.drawdownVol > 0.0 then w.ext.declineVolAttack else 0.0
     val half = if w.ext.declineVol > 0.0 then w.ext.declineVolHalf else 5.0
     // THE ROW 65 KEYS (the recession's probes, the linear vol answer's searched dials), each beside
@@ -18128,6 +18604,24 @@ object MarketSim:
       (Vector("jumpResp"), "declineVol", w.ext.declineVol, 0.0),
       (Vector("expAnchor"), "yieldAnchor", w.ext.yieldAnchor, 0.0),
       (Vector("cycleYears"), "cycleVol", w.ext.cycleVol, 0.0),
+      (Vector("overshoot"), "burstBack", w.ext.burstBack, 0.0),
+      (Vector("burstBack", "overshoot"), "legBreakDepth", w.ext.legBreakDepth, 0.0),
+      (Vector("legBreakDepth"), "legBreakSize", breakSize, 0.0),
+      (Vector("legBreakSize", "legBreakDepth"), "legBreakDays", breakDays, 10.0),
+      (Vector("legBreakDays", "legBreakSize", "legBreakDepth"), "legBreakBack", breakBack, 75.0),
+      (Vector("sectorDriftHalf"), "sectorChase", w.ext.sectorChase, 0.0),
+      (Vector("sectorChase", "sectorDriftHalf"), "sectorLevelHalf", w.ext.sectorLevelHalf, 0.0),
+      (Vector("sectorLevelHalf", "sectorChase", "sectorDriftHalf"), "sectorFlow", w.ext.sectorFlow, 0.0),
+      (Vector("sectorFlow", "sectorLevelHalf", "sectorChase", "sectorDriftHalf"), "sectorBreadth",
+       w.ext.sectorBreadth, 0.0),
+      (Vector("sectorBreadth", "sectorFlow", "sectorLevelHalf", "sectorChase", "sectorDriftHalf"),
+       "sectorBetaLift", w.ext.sectorBetaLift, 0.0),
+      (Vector("sectorBetaLift", "sectorBreadth", "sectorFlow", "sectorLevelHalf", "sectorChase",
+              "sectorDriftHalf"), "sectorIdioSpread", w.ext.sectorIdioSpread, 0.0),
+      (Vector("sectorIdioSpread", "sectorBetaLift", "sectorBreadth", "sectorFlow", "sectorLevelHalf",
+              "sectorChase", "sectorDriftHalf"), "sectorIdioFlat", w.ext.sectorIdioFlat, 0.0),
+      (Vector("sectorIdioFlat", "sectorIdioSpread", "sectorBetaLift", "sectorBreadth", "sectorFlow",
+              "sectorLevelHalf", "sectorChase", "sectorDriftHalf"), "sectorBetaNoise", w.ext.sectorBetaNoise, 0.0),
       (Vector("spikeRate"), "spikeNeg", w.ext.spikeNeg, 0.0),
       (Vector("slowShare"), "slowCap", w.ext.slowCap, 0.0),
       (Vector("termVol"), "termPress", w.ext.termPress, 0.0),
@@ -18307,7 +18801,20 @@ object MarketSim:
         s""""basketIdio": ${ef(gateW.basketIdio)}, "basketGaps": ${ef(gateW.basketGaps)}, "basketDrift": ${ef(gateW.basketDrift)}, """ +
         s""""source": ${jsonStr(if w.basket > 0 then "emitted" else "off")}, "graded": $basketGraded }""",
       s""""sector": { "sectors": ${gateW.sectors}, "sectorIdio": ${ef(gateW.sectorIdio)}, "sectorDriftSd": ${ef(gateW.sectorDriftSd)}, """ +
-        s""""sectorDriftHalf": ${ef(gateW.sectorDriftHalf)}, "source": ${source(w.sectors > 0)} }""",
+        s""""sectorDriftHalf": ${ef(gateW.sectorDriftHalf)}, """ +
+        // the chase, the pull, the share counts and the breadth factor, written while one is on
+        (if gateW.ext.sectorChase > 0.0 || gateW.ext.sectorLevelHalf > 0.0 || gateW.ext.sectorFlow > 0.0 ||
+            gateW.ext.sectorBreadth > 0.0 then
+           s""""sectorChase": ${ef(gateW.ext.sectorChase)}, "sectorLevelHalf": ${ef(gateW.ext.sectorLevelHalf)}, """ +
+             s""""sectorFlow": ${ef(gateW.ext.sectorFlow)}, "sectorBreadth": ${ef(gateW.ext.sectorBreadth)}, """
+         else "") +
+        // the legs' shape, written while one of its four dials is on
+        (if gateW.ext.sectorBetaLift != 0.0 || gateW.ext.sectorIdioSpread > 0.0 || gateW.ext.sectorIdioFlat > 0.0 ||
+            gateW.ext.sectorBetaNoise > 0.0 then
+           s""""sectorBetaLift": ${ef(gateW.ext.sectorBetaLift)}, "sectorIdioSpread": ${ef(gateW.ext.sectorIdioSpread)}, """ +
+             s""""sectorIdioFlat": ${ef(gateW.ext.sectorIdioFlat)}, "sectorBetaNoise": ${ef(gateW.ext.sectorBetaNoise)}, """
+         else "") +
+        s""""source": ${source(w.sectors > 0)} }""",
       s""""macro": { "macro": ${gateW.macroPanel}, "source": ${source(w.macroPanel > 0 && w.macroNull != 1)} }""",
     ).mkString(", ")
 
@@ -18390,6 +18897,7 @@ object MarketSim:
       // an f32 chunk may carry a selection; both lists name only what is in the file
       s"""    "ungradedChannelSeries": ${strList(((if p.macroPanel.exists(_.sibling) then MacroK.Columns else Vector.empty)
         ++ basketColumns(p).take(1) ++ (if gateSt.basket.isDefined then Vector.empty else basketColumns(p).drop(1))
+        ++ shareColumns(p)
         ++ (if p.macroNullPanel.isEmpty then Vector.empty else MacroK.NullColumns)).filter(shape.columns.contains))},""",
       // Since schema 19 the verdict grades every derived series and the macro panel on every
       // world (`verdictWorld`), so `verdictSeries` lists everything it graded -- read off the
@@ -19051,7 +19559,9 @@ $body
     var cpiNoise = dw.ext.cpiNoise; var deflProb = dw.ext.deflProb; var deflSize = dw.ext.deflSize
     var spikeRate = dw.ext.spikeRate; var spikeSize = dw.ext.spikeSize; var termVol = dw.ext.termVol
     var spikeNeg = dw.ext.spikeNeg; var slowCap = dw.ext.slowCap; var drawdownCap = dw.ext.drawdownCap
-    var termPress = dw.ext.termPress; var cycleVol = dw.ext.cycleVol
+    var termPress = dw.ext.termPress; var cycleVol = dw.ext.cycleVol; var burstBack = dw.ext.burstBack
+    var legBreakDepth = dw.ext.legBreakDepth; var legBreakSize = dw.ext.legBreakSize
+    var legBreakDays = dw.ext.legBreakDays; var legBreakBack = dw.ext.legBreakBack
     var brkVol = dw.ext.brkVol; var brkNominal = dw.ext.brkNominal
     var discountYield = dw.ext.discountYield; var cpiNoiseLevel = dw.ext.cpiNoiseLevel
     var policyGrowth = dw.ext.policyGrowth; var yieldBeta = dw.ext.yieldBeta
@@ -19079,6 +19589,10 @@ $body
     var basketRulerFile = ""; var solveBasketFlag = false
     var sectors = dw.sectors; var sectorIdio = dw.sectorIdio; var sectorDriftSd = dw.sectorDriftSd
     var sectorDriftHalf = dw.sectorDriftHalf
+    var sectorChase = dw.ext.sectorChase; var sectorLevelHalf = dw.ext.sectorLevelHalf
+    var sectorFlow = dw.ext.sectorFlow; var sectorBreadth = dw.ext.sectorBreadth
+    var sectorBetaLift = dw.ext.sectorBetaLift; var sectorIdioSpread = dw.ext.sectorIdioSpread
+    var sectorIdioFlat = dw.ext.sectorIdioFlat; var sectorBetaNoise = dw.ext.sectorBetaNoise
     var levGain = dw.levGain; var stressScale = dw.stressScale
     var levPersist = dw.levPersist; var noiseAsym = dw.noiseAsym
     var noiseAsymPhi = dw.noiseAsymPhi
@@ -19231,6 +19745,11 @@ $body
       case "-termvol"    => termVol = numOr("-termvol", consumeNext)
       case "-termpress"  => termPress = numOr("-termpress", consumeNext)
       case "-cyclevol"   => cycleVol = numOr("-cyclevol", consumeNext)
+      case "-burstback"  => burstBack = numOr("-burstback", consumeNext)
+      case "-legbreakdepth" => legBreakDepth = numOr("-legbreakdepth", consumeNext)
+      case "-legbreaksize" => legBreakSize = numOr("-legbreaksize", consumeNext)
+      case "-legbreakdays" => legBreakDays = numOr("-legbreakdays", consumeNext)
+      case "-legbreakback" => legBreakBack = numOr("-legbreakback", consumeNext)
       case "-brkvol"     => brkVol = numOr("-brkvol", consumeNext)
       case "-brknominal" => brkNominal = numOr("-brknominal", consumeNext)
       case "-discountyield" => discountYield = numOr("-discountyield", consumeNext)
@@ -19286,6 +19805,14 @@ $body
       case "-sectoridio" => sectorIdio = numOr("-sectoridio", consumeNext)
       case "-sectordriftsd" => sectorDriftSd = numOr("-sectordriftsd", consumeNext)
       case "-sectordrifthalf" => sectorDriftHalf = numOr("-sectordrifthalf", consumeNext)
+      case "-sectorchase" => sectorChase = numOr("-sectorchase", consumeNext)
+      case "-sectorlevelhalf" => sectorLevelHalf = numOr("-sectorlevelhalf", consumeNext)
+      case "-sectorflow" => sectorFlow = numOr("-sectorflow", consumeNext)
+      case "-sectorbreadth" => sectorBreadth = numOr("-sectorbreadth", consumeNext)
+      case "-sectorbetalift" => sectorBetaLift = numOr("-sectorbetalift", consumeNext)
+      case "-sectoridiospread" => sectorIdioSpread = numOr("-sectoridiospread", consumeNext)
+      case "-sectoridioflat" => sectorIdioFlat = numOr("-sectoridioflat", consumeNext)
+      case "-sectorbetanoise" => sectorBetaNoise = numOr("-sectorbetanoise", consumeNext)
       case "-macro"      => macroPanel = intOr("-macro", consumeNext)
       case "-macronull"  => macroNull = intOr("-macronull", consumeNext)
       case "-levgain"    => levGain = numOr("-levgain", consumeNext)
@@ -19420,7 +19947,13 @@ $body
                   ext = WorldExt(termPremium = termPremium, cpiNoise = cpiNoise, deflProb = deflProb, deflSize = deflSize,
                                  spikeRate = spikeRate, spikeSize = spikeSize, tips = tips, termVol = termVol,
                                  spikeNeg = spikeNeg, slowCap = slowCap, drawdownCap = drawdownCap,
-                                 termPress = termPress, cycleVol = cycleVol, brkVol = brkVol, brkNominal = brkNominal,
+                                 sectorChase = sectorChase, sectorLevelHalf = sectorLevelHalf, sectorFlow = sectorFlow,
+                                 sectorBreadth = sectorBreadth,
+                                 sectorBetaLift = sectorBetaLift, sectorIdioSpread = sectorIdioSpread,
+                                 sectorIdioFlat = sectorIdioFlat, sectorBetaNoise = sectorBetaNoise,
+                                 legBreakDepth = legBreakDepth, legBreakSize = legBreakSize,
+                                 legBreakDays = legBreakDays, legBreakBack = legBreakBack,
+                                 termPress = termPress, cycleVol = cycleVol, burstBack = burstBack, brkVol = brkVol, brkNominal = brkNominal,
                                  discountYield = discountYield, cpiNoiseLevel = cpiNoiseLevel,
                                  policyGrowth = policyGrowth, yieldBeta = yieldBeta,
                                  yieldLag = yieldLag, expAnchor = expAnchor, yieldAnchor = yieldAnchor,

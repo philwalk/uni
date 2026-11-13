@@ -228,6 +228,38 @@ class RecordBandSuite extends FunSuite:
     assertEquals(row.split("\t")(5), "0.003923")
   }
 
+  // THE LONG SECTOR ROWS read a hand-built panel as stated: industries in one order month after
+  // month correlate at 1 over either look-back, flows in the returns' order at 1 and against it
+  // at -1, a year with a month's flow missing is left out, an industry with a blank month is
+  // left out, and a panel without flows reads no flow row.
+  test("the long sector rows read a hand panel as stated") {
+    val months = 264
+    def ind(x: Double) = Vector.fill(months)(Some(x): Option[Double])
+    def panel(flows: Vector[Vector[Option[Double]]]) =
+      MarketSim.SectorPanel(Vector(ind(0.01), ind(0.0), ind(-0.01)), Vector.fill(months)(0.0), Vector.fill(months)(0.0), flows)
+    val (v0, n0) = MarketSim.sectorLongRows(panel(Vector.empty))
+    assert(math.abs(v0(0) - 1.0) < 1e-12 && math.abs(v0(1) - 1.0) < 1e-12)
+    assertEquals(n0, Vector(144, 144, 13, 0, 0, 0))
+    val (up, down) = (120.0 * math.log(1.01), 120.0 * math.log(0.99))
+    val m = (up + down) / 3.0
+    val sd = math.sqrt(((up - m) * (up - m) + m * m + (down - m) * (down - m)) / 3.0)
+    assert(math.abs(v0(2) - sd) < 1e-12, s"${v0(2)} against $sd")
+    assert(v0.drop(3).forall(_.isNaN))
+    val (v1, n1) = MarketSim.sectorLongRows(panel(Vector(ind(0.03), ind(0.02), ind(0.01))))
+    assert(v1.drop(3).forall(x => math.abs(x - 1.0) < 1e-12), v1.toString)
+    assertEquals(n1.drop(3), Vector(21, 21, 19))
+    val against = Vector(ind(0.01).updated(5, None), ind(0.02), ind(0.03))
+    val q0 = panel(against)
+    val q = q0.copy(returns = q0.returns :+ ind(0.05).updated(7, None), flows = q0.flows :+ ind(0.09))
+    val (v2, n2) = MarketSim.sectorLongRows(q)
+    assert(math.abs(v2(3) - 1.0) < 1e-12 && math.abs(v2(4) + 1.0) < 1e-12 && math.abs(v2(5) + 1.0) < 1e-12)
+    assertEquals(n2, Vector(144, 144, 13, 20, 21, 18))
+    val rows = MarketSim.sectorRowsOfPanel(q)
+    def bits(x: Double): Long = java.lang.Double.doubleToRawLongBits(x)
+    assertEquals(bits(rows(7)), bits(v2(0)))
+    assertEquals(bits(rows(12)), bits(v2(5)))
+  }
+
   test("the profit decline anchors are the fixture's records and the reader reads as stated") {
     val rows = Paths.get("test-data/equity-anchors/profits-2026-10-19.tsv").lines.toVector
       .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set\t"))

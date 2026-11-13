@@ -1369,6 +1369,7 @@ class MarketSimContractSuite extends FunSuite:
     val stN   = MarketSim.measure(simsN, 100)
     val rowsN = MarketSim.historyRows(MarketSim.NasdaqAnchors, stN, simsN, 100, 8, MarketSim.DefaultSeed + 1, nq)
     val secN  = rowsN.filter(_.name.startsWith("sector "))
-    assertEquals(secN.map(_.name).toSet, MarketSim.SectorRows.toSet)
+    // the share counts' three rows are absent while `sectorFlow` is off
+    assertEquals(secN.map(_.name).toSet, MarketSim.SectorRows.take(MarketSim.SectorRows.length - 3).toSet)
     assert(secN.forall(_.record.isEmpty), "the Nasdaq reads the S&P's industries ungraded")
   }
