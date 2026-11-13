@@ -14,14 +14,29 @@ drawdown's gap in the vol's answer to it the same way. Both are 0 when off, bit-
 only when on, and searched with the families they bound. The collapses were the slow state and, on the Nasdaq, the
 drawdown term compounding without limit; with the ceilings the ledger pays nothing for the bound.
 
-**The 0.25.1 recipes and sets re-solved under the bound.** `0.25.1-sp500` is member 0 of a 32-member set, `-slowcap`
-3.77, `-drawdowncap` 0.97 and `-spikeneg` 0.62: the set ledger 36.32 against the earlier set's 42.41, -6.09 [-7.07,
--4.29], every member inside the bound (the worst member's bound history -2.01, the median -1.74). `0.25.1-nasdaq` is
-member 0 of a 47-member set, `-slowcap` 3.21 and `-drawdowncap` 0.94: 34.03 against 38.35, -4.32 [-5.66, -2.69],
-every member inside the bound (edge -2.40, the median -2.05). Known gaps: the S&P set carries the record outside the
-central 95% of its pool on `vol coupling monthly corr`, `vol coupling quarterly corr` and `return lag-1 autocorr`
-(the record below the pool on each: the model's losses lift its vol less than the record's do); the Nasdaq set on
-`decline length p50 y long`, with `vol coupling monthly corr` at the pool's 4% point.
+**The give-back in a burst.** `-burstback B`: in a volatility burst a session gives back part of its move in the
+next one, the share B x (b - 1), b the session return's fast sd over its slow sd, capped at 0.5; 0 is off and
+bit-identical, and the key is written in a world's block only when on. The record's daily reversal since 1999 (lag-1
+-0.08) lives in its bursts: 18% of a move given back in the months whose volatility is 1.5 times the quarter before,
+4% outside them.
+
+**The ledger's rows weighted.** The set score weights the rows (the `weight` column of `-ledger FILE`): half by a
+row's independence of the other rows, half by its measured share of what a history gives a strategy that times the
+market, rotates between categories, draws an income or holds; each weight between 0.25 and 4, their mean 1, the same
+in both worlds. Every figure below is read under those weights.
+
+**The 0.25.1 recipes and sets re-solved under the bound.** `0.25.1-sp500` is member 0 of a 90-member set, `-slowcap`
+3.59, `-drawdowncap` 1.01, `-spikeneg` 0.59 and `-burstback` 0.5; `0.25.1-nasdaq` is member 0 of a 112-member set,
+`-slowcap` 2.79, `-drawdowncap` 0.68 and `-spikeneg` 0.09; every member inside the bound. Against the published
+0.25.0 sets, read under this simulator: the S&P 65.24 to 34.48, -30.76 [-32.21, -28.23], the whitened surprise
+unchanged (-11.1 [-25.7, +2.7]); the Nasdaq 57.15 to 31.01, -26.14 [-29.05, -23.75], the whitened surprise -13.9
+[-32.7, -1.1]. 58 of the 60 published S&P members and 34 of the 38 Nasdaq members fail the bound. The S&P set returns
+`real yield change vs inflation corr` to its pool; the Nasdaq set that row, `vol coupling monthly corr`, `z beyond 3
+sds %`, `z beyond 4 sds %` and `vol doubling months %`. Known gaps (the record outside the central 95% of the pool;
+share of histories at or beyond the record, 2.5% the line): the S&P set on `vol coupling monthly corr`, 0.22% in
+0.25.0 to 1.72%, and `vol coupling quarterly corr`, 3.03% to 2.24% (the record below the pool on each: the model's
+losses lift its vol less than the record's do); the Nasdaq set on `decline length p50 y long`, 9.51% to 1.16%, which
+was inside the 0.25.0 pool, so the release rule's no-row-lost test fails against 0.25.0 on the Nasdaq set.
 
 **`Path::price_returns` on a path built without its kept returns** computes them from the price; it recursed without
 end.

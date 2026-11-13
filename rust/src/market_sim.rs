@@ -425,6 +425,8 @@ const INFL_CAP: f64 = 0.12;
 /// year, so a 5-point spike holds the year-over-year rate above 4% for about seven months, the
 /// record's spells' median length being five.
 const SPIKE_DECAY: f64 = 2.0;
+/// `World::burst_back`: the largest share of a session's return the burst gives back
+const BURST_BACK_CAP: f64 = 0.5;
 /// The base inflation the regime's pressure sits on, per year: the long-run target the market's
 /// ten-year expectation returns to (`expInfl10`), and what makes a `rate_mean` of 4.2% a ~1.7%
 /// real rate.
@@ -715,7 +717,7 @@ fn refused(bad: bool, why: &str) -> Option<String> {
 /// every range `calibrate` sweeps. A `contains` test is false for NaN, so a NaN literal is
 /// refused here rather than reaching the model. Value-level checks only: a check on which flags
 /// were given stays in the parser.
-const WORLD_DOMAIN: [fn(&World) -> Option<String>; 166] = [
+const WORLD_DOMAIN: [fn(&World) -> Option<String>; 167] = [
     |w| share_refusal("-trendshare", w.trend_share),
     |w| share_refusal("-leverage", w.leverage),
     |w| share_refusal("-downshock", w.down_shock),
@@ -784,6 +786,7 @@ const WORLD_DOMAIN: [fn(&World) -> Option<String>; 166] = [
             .then(|| format!("-declinevolhalf {} must be above 0", w.decline_vol_half))
     },
     |w| non_neg_refusal("-drawdownvol", w.drawdown_vol),
+    |w| non_neg_refusal("-burstback", w.burst_back),
     |w| non_neg_refusal("-drawdowncap", w.drawdown_cap),
     |w| {
         refused(
@@ -1430,6 +1433,7 @@ pub fn default_world() -> World {
         drawdown_vol: 0.0,
         drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
+        burst_back: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         yield_anchor: 0.0,
@@ -1625,6 +1629,7 @@ fn v0_19_2() -> World {
         drawdown_vol: 0.0,
         drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
+        burst_back: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         yield_anchor: 0.0,
@@ -1780,6 +1785,7 @@ fn v0_24_1() -> World {
         drawdown_vol: 0.0,
         drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
+        burst_back: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         yield_anchor: 0.0,
@@ -2080,113 +2086,119 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
 /// and the negative inflation pulse (`spike_neg` 0.62), 101 dials: the recipe before held
 /// collapsing histories (its bound history -2.44 against the edge -2.06; this one's -1.74). Its
 /// 32-member set 36.32 against the 65's 42.41, -6.09 [-7.07, -4.29]; set misses `vol coupling
-/// monthly corr`, `vol coupling quarterly corr` and `return lag-1 autocorr`.
+/// monthly corr`, `vol coupling quarterly corr` and `return lag-1 autocorr`. Then (2026-11-12) the
+/// give-back in a burst (`burst_back` 0.5) and a local re-solve under the weighted ledger: 33.27
+/// against 37.69 on the judge's seeds; its 90-member set 34.48 against the 32's 37.72 under those
+/// weights, -3.24 [-4.49, -0.18], `return lag-1 autocorr` back inside the pool (30% of it beyond
+/// the record, from 1.7%), the two vol coupling misses carried.
 #[expect(
     clippy::too_many_lines,
     reason = "one recipe literal, every moved dial named"
 )]
 fn recipe_0251_sp500(mut w: World) -> World {
-    w.trend_share = 0.14538338;
-    w.depth = 16.460135;
-    w.stress = 3.0844373;
-    w.drift = 0.13994832;
-    w.fund_vol = 0.054122324;
-    w.rate_mean = 0.071925601;
-    w.vol_of_vol = 0.019915479;
-    w.leverage = 0.10212671;
-    w.down_shock = 0.019171689;
-    w.jump_skew = 0.76981152;
-    w.jump_var = 0.13434382;
+    w.trend_share = 0.22004195;
+    w.depth = 16.368968;
+    w.stress = 3.2619926;
+    w.drift = 0.13677146;
+    w.fund_vol = 0.044494258;
+    w.rate_mean = 0.070793401;
+    w.vol_of_vol = 0.023024316;
+    w.leverage = 0.094456270;
+    w.down_shock = 0.017274019;
+    w.jump_skew = 0.80914918;
+    w.jump_var = 0.12506201;
     w.jump_rate = 0.0022997084;
-    w.news_rate = 2.1212435;
-    w.news_size = 0.021652093;
-    w.news_lev = 4.6887563;
-    w.news_revert = 0.44768380;
-    w.news_scale = 0.38429948;
-    w.news_bond = 0.43900536;
-    w.news_bond_skip = 0.058157602;
-    w.credit_regime = 0.24212182;
-    w.credit_regime_rate = 0.67784945;
-    w.slow_bond_infl = 0.10851959;
-    w.noise_skew = 0.91558440;
-    w.news_flip = 0.35505387;
-    w.value_pull = 0.12922871;
-    w.recovery_floor = 0.21255802;
-    w.boom_rate = 2.4767900;
-    w.boom_size = 0.63014953;
-    w.boom_len = 13.764899;
-    w.recess_rate = 0.40294192;
-    w.recess_size = 0.27429490;
-    w.recess_len = 1.4257376;
-    w.recess_recover = 0.77969946;
-    w.recess_news = 1.2992549;
-    w.recess_vol = 0.0064347984;
-    w.recess_reprice = 0.96792191;
-    w.recess_base = 0.36949491;
-    w.recess_shape = 2.1512282;
-    w.overshoot = 0.48347627;
-    w.overshoot_rate = 0.18790573;
-    w.recess_rec_mult = 1.6052534;
-    w.recess_credit = 13.918700;
-    w.recess_infl = 0.0000000;
-    w.regime_drift = 0.00089661829;
-    w.drift_sd = 0.011507561;
-    w.boom_fade = 5.3979063;
-    w.delev_rate = 0.65390908;
-    w.delev_from = 1.3754363;
-    w.delev_size = 0.19047633;
-    w.delev_len = 0.085374331;
-    w.vol_pull = 1.8357360;
-    w.belief_years = 2.7514651;
-    w.belief_leak = 0.32841736;
-    w.cap_years = 0.51017704;
-    w.cycle_sd = 0.16152393;
-    w.cycle_years = 20.000000;
+    w.news_rate = 2.8625687;
+    w.news_size = 0.018837959;
+    w.news_lev = 8.0654067;
+    w.news_revert = 0.49879102;
+    w.news_scale = 0.41373766;
+    w.news_bond = 0.46738067;
+    w.news_bond_skip = 0.074628795;
+    w.credit_regime = 0.25837332;
+    w.credit_regime_rate = 1.0515878;
+    w.slow_bond_infl = 0.12007444;
+    w.noise_skew = 0.91808078;
+    w.news_flip = 0.40958063;
+    w.value_pull = 0.13345808;
+    w.recovery_drag = 0.13711896;
+    w.recovery_floor = 0.18191598;
+    w.boom_rate = 2.1297613;
+    w.boom_size = 0.72464392;
+    w.boom_len = 14.095313;
+    w.recess_rate = 0.39386519;
+    w.recess_size = 0.23013752;
+    w.recess_len = 1.4243274;
+    w.recess_recover = 0.72006067;
+    w.recess_news = 1.5735863;
+    w.recess_vol = 0.0067565020;
+    w.recess_base = 0.39575277;
+    w.recess_shape = 2.0284970;
+    w.overshoot = 0.51413952;
+    w.burst_back = 0.50000000;
+    w.overshoot_rate = 0.17569842;
+    w.recess_rec_mult = 1.6623632;
+    w.recess_credit = 15.112148;
+    w.recess_infl = 0.19053322;
+    w.regime_drift = 0.0010479646;
+    w.drift_sd = 0.012354417;
+    w.boom_fade = 6.2868061;
+    w.delev_rate = 0.56093418;
+    w.delev_from = 1.3743875;
+    w.delev_size = 0.21742707;
+    w.delev_len = 0.037235328;
+    w.vol_pull = 1.9595228;
+    w.belief_share = 0.96697691;
+    w.belief_years = 3.0533511;
+    w.belief_leak = 0.26415771;
+    w.cap_years = 0.19301992;
+    w.cycle_sd = 0.16161830;
+    w.cycle_years = 19.110003;
     w.cycle_vol = 1.0000000;
-    w.crowd_impact = 0.012324032;
-    w.crowd_adjust = 1.1650288;
-    w.term_premium = 0.052574915;
-    w.cpi_noise = 0.0057394285;
-    w.defl_prob = 0.0091910768;
-    w.defl_size = 0.035328025;
-    w.spike_rate = 0.45188566;
-    w.spike_neg = 0.61844287;
-    w.spike_size = 0.038030046;
-    w.term_vol = 0.0061125149;
-    w.term_press = 0.70262805;
-    w.cpi_noise_level = 0.87967506;
-    w.policy_growth = 0.12899392;
-    w.yield_beta = 0.0033838755;
-    w.yield_lag = 36.750095;
-    w.exp_anchor = 0.48926061;
-    w.yield_anchor = 0.66443120;
+    w.crowd_impact = 0.010000000;
+    w.crowd_adjust = 2.4759740;
+    w.term_premium = 0.044068552;
+    w.cpi_noise = 0.0062841734;
+    w.defl_prob = 0.016228007;
+    w.defl_size = 0.047507117;
+    w.spike_rate = 0.50256282;
+    w.spike_neg = 0.58603524;
+    w.spike_size = 0.034906950;
+    w.term_vol = 0.0056809413;
+    w.term_press = 0.71900131;
+    w.cpi_noise_level = 0.88279222;
+    w.policy_growth = 0.098838313;
+    w.yield_beta = 0.0012412657;
+    w.yield_lag = 40.329130;
+    w.exp_anchor = 0.45902738;
+    w.yield_anchor = 0.64036667;
     w.vol_feedback = 0.29804100;
-    w.value_cap = 0.0094504363;
-    w.value_cap_fall = 0.0043879941;
-    w.recess_spread = 0.093439673;
-    w.recess_transient = 0.23042519;
-    w.easing = 0.14681192;
-    w.floorhold = 0.13161498;
-    w.refuge = 0.11812463;
-    w.refuge_days = 1.1909195;
+    w.value_cap = 0.0074048811;
+    w.value_cap_fall = 0.0043274899;
+    w.recess_spread = 0.18904620;
+    w.recess_transient = 0.27810874;
+    w.easing = 0.14576577;
+    w.floorhold = 0.14078171;
+    w.refuge = 0.10305688;
+    w.refuge_days = 0.91350008;
     w.div_yield = 1.9500000;
-    w.lev_gain = 5.5657374;
-    w.noise_scale = 1.1442450;
-    w.decline_vol = 0.47903617;
-    w.decline_vol_half = 8.2772626;
-    w.drawdown_vol = 0.47015849;
-    w.drawdown_cap = 0.96999024;
-    w.decline_vol_attack = 0.91092179;
-    w.bust_amp = 0.090637511;
-    w.slow_share = 0.47542917;
-    w.slow_cap = 3.7723032;
-    w.slow_vol = 1.1543973;
-    w.slow_perm = 0.34505308;
-    w.slow_beta = 0.82677910;
-    w.infl_size = 0.054747101;
-    w.discount = 6.2660639;
-    w.discount_ref = 1.7926100;
-    w.margin = 0.0080000000;
+    w.lev_gain = 3.8600108;
+    w.noise_scale = 1.1810511;
+    w.decline_vol = 0.46740815;
+    w.decline_vol_half = 9.3838652;
+    w.drawdown_vol = 0.35551941;
+    w.decline_vol_attack = 0.91795407;
+    w.drawdown_cap = 1.0120244;
+    w.bust_amp = 0.11533980;
+    w.slow_share = 0.56302631;
+    w.slow_cap = 3.5858677;
+    w.slow_vol = 1.0703202;
+    w.slow_perm = 0.30549434;
+    w.slow_beta = 0.85752200;
+    w.infl_size = 0.060112216;
+    w.discount = 5.8071147;
+    w.discount_ref = 1.5728145;
+    w.margin = 0.0079568674;
     w
 }
 
@@ -2209,102 +2221,119 @@ fn recipe_0251_sp500(mut w: World) -> World {
 /// 66's `vol doubling months %` cleared. Then (2026-11-11) re-solved under the collapse bound with
 /// the two ceilings held (`slow_cap` 3.21, `drawdown_cap` 0.94) and read back by family, 94 dials:
 /// 34.99 against 37.83 on the judge's seeds; its 47-member set 34.03 against the 37's 38.35, -4.32
-/// [-5.66, -2.69], every member inside the bound, the one set miss carried.
+/// [-5.66, -2.69], every member inside the bound, the one set miss carried. Then (2026-11-12) a
+/// local re-solve under the weighted ledger: 30.57 against 35.21 on the judge's seeds; its
+/// 112-member set 31.01 against the 47's 36.18 under those weights, -5.17 [-8.07, -3.54], the one
+/// set miss carried.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one recipe literal, every moved dial named"
+)]
 fn recipe_0251_nasdaq(mut w: World) -> World {
-    w.depth = 14.448864;
-    w.stress = 3.5980618;
-    w.fund_vol = 0.044888026;
-    w.rate_mean = 0.034508216;
-    w.vol_of_vol = 0.024148935;
-    w.leverage = 0.079123047;
-    w.down_shock = 0.00022523643;
-    w.jump_skew = 0.038618110;
-    w.jump_var = 0.093198762;
-    w.jump_rate = 0.0046262668;
-    w.news_rate = 5.6883432;
-    w.news_size = 0.024258837;
-    w.news_lev = 39.547822;
-    w.news_revert = 0.23752839;
-    w.news_scale = 0.33630068;
-    w.news_bond = 0.24905600;
-    w.news_bond_skip = 0.26802600;
-    w.credit_regime = 0.23132005;
-    w.credit_regime_rate = 2.4166573;
-    w.slow_bond_infl = 0.48413900;
-    w.noise_skew = 0.16350944;
-    w.news_flip = 0.65915399;
-    w.value_pull = 0.019240590;
-    w.recovery_drag = 0.49878993;
-    w.recovery_floor = 0.21831132;
-    w.boom_rate = 1.0697937;
-    w.boom_size = 1.7194009;
-    w.boom_len = 1.9247560;
-    w.recess_rate = 0.30511416;
-    w.recess_size = 0.24720789;
-    w.recess_len = 1.5143282;
-    w.recess_recover = 0.84716992;
-    w.recess_news = 1.0000000;
-    w.recess_vol = 0.0000000;
-    w.recess_reprice = 0.91365258;
-    w.recess_base = 1.2553621;
-    w.recess_shape = 1.5017152;
-    w.overshoot = 0.85783691;
-    w.overshoot_rate = 0.32824799;
-    w.recess_rec_mult = 1.5790117;
-    w.recess_credit = 0.037939692;
-    w.recess_infl = 0.36695218;
-    w.boom_fade = 2.4789944;
-    w.delev_rate = 1.2022333;
-    w.delev_from = 5.0357040;
-    w.delev_size = 0.083384574;
-    w.delev_len = 0.14169131;
-    w.vol_pull = 0.14505733;
-    w.belief_share = 0.71254800;
-    w.belief_years = 2.0010612;
-    w.belief_leak = 0.32513571;
-    w.cap_years = 2.9336493;
-    w.cycle_sd = 0.0000000;
-    w.cycle_years = 8.1364908;
+    w.trend_share = 0.076127779;
+    w.depth = 14.364819;
+    w.stress = 3.6548962;
+    w.drift = 0.13765619;
+    w.fund_vol = 0.054948660;
+    w.rate_mean = 0.034826545;
+    w.vol_of_vol = 0.026278467;
+    w.leverage = 0.082266897;
+    w.down_shock = 0.0032130547;
+    w.jump_skew = 0.062662481;
+    w.jump_var = 0.076780384;
+    w.jump_rate = 0.0042514823;
+    w.news_rate = 5.0769390;
+    w.news_size = 0.023473421;
+    w.news_lev = 32.732633;
+    w.news_revert = 0.16440306;
+    w.news_scale = 0.36648272;
+    w.news_bond = 0.17458521;
+    w.news_bond_skip = 0.36574753;
+    w.credit_regime = 0.12254414;
+    w.credit_regime_rate = 2.5654486;
+    w.slow_bond_infl = 0.47953423;
+    w.noise_skew = 0.24142011;
+    w.news_flip = 0.72809877;
+    w.value_pull = 0.013406190;
+    w.recovery_drag = 0.62977391;
+    w.recovery_floor = 0.28287147;
+    w.boom_rate = 0.99932719;
+    w.boom_size = 1.7629094;
+    w.boom_len = 2.1756118;
+    w.recess_rate = 0.25082185;
+    w.recess_size = 0.32024650;
+    w.recess_len = 1.7006581;
+    w.recess_recover = 0.78251016;
+    w.recess_news = 1.7833781;
+    w.recess_vol = 0.0073796368;
+    w.recess_reprice = 0.80695486;
+    w.recess_base = 0.99459570;
+    w.recess_shape = 1.3246257;
+    w.overshoot = 0.90222302;
+    w.overshoot_rate = 0.31417798;
+    w.recess_rec_mult = 1.6060878;
+    w.recess_credit = 1.5839619;
+    w.recess_infl = 0.56228415;
+    w.regime_drift = 0.00011383904;
+    w.drift_sd = 0.033444109;
+    w.boom_fade = 2.9456461;
+    w.delev_rate = 1.1743087;
+    w.delev_from = 4.9458065;
+    w.delev_size = 0.050000000;
+    w.delev_len = 0.17134769;
+    w.vol_pull = 0.0000000;
+    w.belief_share = 0.86749892;
+    w.belief_years = 1.8295526;
+    w.belief_leak = 0.26330022;
+    w.cap_years = 3.0166078;
+    w.cycle_sd = 0.0081211567;
+    w.cycle_years = 7.8868263;
     w.cycle_vol = 1.0000000;
-    w.crowd_impact = 0.14932099;
-    w.crowd_adjust = 1.1635638;
-    w.term_premium = 0.090792400;
-    w.cpi_noise = 0.0094186678;
-    w.defl_prob = 0.18156909;
-    w.defl_size = 0.034980202;
-    w.spike_rate = 0.26011936;
-    w.spike_size = 0.0067448357;
-    w.term_vol = 0.0056821201;
-    w.term_press = 1.0000000;
-    w.brk_vol = 0.0033537566;
-    w.brk_nominal = 0.091217630;
-    w.cpi_noise_level = 0.89585897;
-    w.policy_growth = 0.095846395;
-    w.yield_beta = 0.028855859;
-    w.yield_lag = 24.417600;
-    w.exp_anchor = 0.46574422;
-    w.yield_anchor = 0.63363114;
-    w.vol_feedback = 0.24874898;
-    w.value_cap = 0.057041288;
-    w.value_cap_fall = 0.014602550;
-    w.recess_spread = 0.15041412;
-    w.recess_transient = 0.24414122;
-    w.easing = 0.070540501;
-    w.floorhold = 0.078657839;
-    w.refuge = 0.10451699;
-    w.refuge_days = 0.41558600;
-    w.lev_gain = 4.1352583;
-    w.noise_scale = 1.5334019;
-    w.decline_vol = 0.051980829;
-    w.decline_vol_half = 3.8943863;
-    w.drawdown_vol = 0.86336817;
-    w.drawdown_cap = 0.93875320;
-    w.decline_vol_attack = 0.076862136;
-    w.bust_amp = 0.17763277;
-    w.slow_cap = 3.2131710;
-    w.slow_vol = 1.0633348;
-    w.infl_size = 0.043623249;
-    w.margin = 0.0051318237;
+    w.crowd_impact = 0.14134020;
+    w.crowd_adjust = 0.69514637;
+    w.term_premium = 0.058529222;
+    w.cpi_noise = 0.0065443761;
+    w.defl_prob = 0.13698707;
+    w.defl_size = 0.022714989;
+    w.spike_rate = 0.38085752;
+    w.spike_neg = 0.086661926;
+    w.spike_size = 0.0070654179;
+    w.term_vol = 0.0055167716;
+    w.term_press = 0.95117784;
+    w.brk_vol = 0.0038205472;
+    w.brk_nominal = 0.14177185;
+    w.cpi_noise_level = 0.99229600;
+    w.policy_growth = 0.16433080;
+    w.yield_beta = 0.029548085;
+    w.yield_lag = 30.152182;
+    w.exp_anchor = 0.43966253;
+    w.yield_anchor = 0.66546071;
+    w.vol_feedback = 0.19975357;
+    w.value_cap = 0.060270830;
+    w.value_cap_fall = 0.019074008;
+    w.recess_spread = 0.0000000;
+    w.recess_transient = 0.28094147;
+    w.easing = 0.065984575;
+    w.floorhold = 0.077953122;
+    w.refuge = 0.11455268;
+    w.refuge_days = 0.84270036;
+    w.lev_gain = 4.5528533;
+    w.noise_scale = 1.5199861;
+    w.decline_vol = 0.018880487;
+    w.decline_vol_half = 2.3258611;
+    w.drawdown_vol = 1.3252715;
+    w.decline_vol_attack = 0.070286536;
+    w.drawdown_cap = 0.67672071;
+    w.bust_amp = 0.17050901;
+    w.slow_share = 0.28460183;
+    w.slow_cap = 2.7883051;
+    w.slow_vol = 1.0807893;
+    w.slow_perm = 0.24253748;
+    w.slow_beta = 0.82093621;
+    w.infl_size = 0.050824484;
+    w.discount = 7.8916141;
+    w.discount_ref = 5.7582618;
+    w.margin = 0.0051900285;
     w
 }
 
@@ -2530,6 +2559,7 @@ fn v0_24_6_nasdaq(nq_0244: World) -> World {
         drawdown_vol: 0.0,
         drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
+        burst_back: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         yield_anchor: 0.0,
@@ -3406,6 +3436,7 @@ fn v0_23_0() -> World {
         drawdown_vol: 0.0,
         drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
+        burst_back: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         yield_anchor: 0.0,
@@ -3582,6 +3613,7 @@ fn v0_22_1() -> World {
         drawdown_vol: 0.0,
         drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
+        burst_back: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         yield_anchor: 0.0,
@@ -3760,6 +3792,7 @@ fn v0_22_0() -> World {
         drawdown_vol: 0.0,
         drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
+        burst_back: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         yield_anchor: 0.0,
@@ -3938,6 +3971,7 @@ fn v0_21_0() -> World {
         drawdown_vol: 0.0,
         drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
+        burst_back: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         yield_anchor: 0.0,
@@ -4116,6 +4150,7 @@ fn v0_20_0() -> World {
         drawdown_vol: 0.0,
         drawdown_cap: 0.0,
         decline_vol_attack: 0.0,
+        burst_back: 0.0,
         yield_lag: 0.0,
         exp_anchor: 1.0,
         yield_anchor: 0.0,
@@ -5116,6 +5151,15 @@ pub struct World {
     /// before the factor, so the answer builds over three or four sessions and then holds, where
     /// at 0 it is largest at lag 1. Inert while `decline_vol` and `drawdown_vol` are 0.
     pub decline_vol_attack: f64,
+    /// THE GIVE-BACK IN A BURST. The daily reversal since 1999 (lag-1 -0.08) lives in
+    /// the volatility bursts: in the months whose rms is 1.5 times the quarter before or more the
+    /// next session gives back 18% of a move (25% at twice), outside them 4%, the bursts of 2008-09,
+    /// 2011, 2020 and 2025 and not the slow declines of 2000-02 and 2022. At B the share
+    /// B x (b - 1), b the session return, its fast sd over its slow sd (0.95 and 62/63 EWMAs of the
+    /// squared return, read before the session enters), capped at `BURST_BACK_CAP`, of the
+    /// session return is owed back and taken from the input of the next session, sized in return
+    /// through the liquidity of the step as the overshoot give-back is. 0 is bit-identical.
+    pub burst_back: f64,
     /// THE RESPONSE'S LAG (item 61): the return the beta's state reads is an EWMA of the
     /// observed equity return with this half-life in sessions, unit mass, so the same move
     /// reprices the path over weeks rather than the next session: the record's correlation
@@ -8806,6 +8850,10 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
     let mut recess_back = 0.0f64;
     // the overshoot owed back to the price, in log units (see `overshoot`)
     let mut over_owed = 0.0f64;
+    // THE GIVE-BACK (`burst_back`): the fast and slow variances of the session return and the give-back owed
+    let mut burst_fast = 0.0f64;
+    let mut burst_slow = 0.0f64;
+    let mut burst_owed = 0.0f64;
     let mut rrec_left = 0usize;
     let mut rrec_step = 0.0f64;
     let mut recess_count = 0usize;
@@ -10075,6 +10123,11 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             lev = borrow * (1.0 + dd_s);
         }
         let mut step_in = eq_flow + eq_shock;
+        // THE GIVE-BACK (`burst_back`): last session's share given back whole, sized like the overshoot's
+        if w.burst_back > 0.0 && burst_owed != 0.0 {
+            step_in -= burst_owed / eq_m.liquidity();
+            burst_owed = 0.0;
+        }
         if w.overshoot > 0.0 && over_owed != 0.0 {
             // the give-back, sized in return like the deleveraging's input
             let back = w.overshoot_rate * over_owed;
@@ -10126,6 +10179,15 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
             step_in
         };
         let ret_e = eq_m.step(perceived_fair, step_in);
+        // THE GIVE-BACK (`burst_back`): the share by the burst read before this session
+        if w.burst_back > 0.0 {
+            if burst_slow > 0.0 {
+                let b = (burst_fast / burst_slow).sqrt();
+                burst_owed = (w.burst_back * (b - 1.0)).clamp(0.0, BURST_BACK_CAP) * ret_e;
+            }
+            burst_fast = 0.95 * burst_fast + 0.05 * ret_e * ret_e;
+            burst_slow += (ret_e * ret_e - burst_slow) / 63.0;
+        }
         if w.overshoot > 0.0 {
             // the amplification's excess over the unamplified order: (amp - 1) x input x impact
             over_owed += w.overshoot * step_in * (eq_m.last_liq - eq_m.impact);
@@ -27486,6 +27548,7 @@ pub fn probe_dials() -> Vec<(&'static str, Setter, Getter)> {
         ),
         ("recessSteps", |w, x| w.recess_steps = x, |w| w.recess_steps),
         ("cycleVol", |w, x| w.cycle_vol = x, |w| w.cycle_vol),
+        ("burstBack", |w, x| w.burst_back = x, |w| w.burst_back),
     ]
 }
 
@@ -32306,6 +32369,7 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         (&["jumpResp"][..], "declineVol", w.decline_vol, 0.0),
         (&["expAnchor"][..], "yieldAnchor", w.yield_anchor, 0.0),
         (&["cycleYears"][..], "cycleVol", w.cycle_vol, 0.0),
+        (&["overshoot"][..], "burstBack", w.burst_back, 0.0),
         (&["spikeRate"][..], "spikeNeg", w.spike_neg, 0.0),
         (&["slowShare"][..], "slowCap", w.slow_cap, 0.0),
         (&["termVol"][..], "termPress", w.term_press, 0.0),
@@ -33432,6 +33496,7 @@ pub const OPTIONAL_WORLD_KEYS: &[(&str, &str)] = &[
     ("yieldAnchor", "0"),
     ("termPress", "0"),
     ("cycleVol", "0"),
+    ("burstBack", "0"),
     ("spikeNeg", "0"),
     ("slowCap", "0"),
     ("drawdownCap", "0"),
@@ -34251,6 +34316,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
     let mut cycle_sd = dw.cycle_sd;
     let mut cycle_years = dw.cycle_years;
     let mut cycle_vol = dw.cycle_vol;
+    let mut burst_back = dw.burst_back;
     let mut belief_leak = dw.belief_leak;
     let mut slow_share = dw.slow_share;
     let mut slow_vol = dw.slow_vol;
@@ -34514,6 +34580,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
             "-cyclesd" => cycle_sd = req_f64(&mut it, "-cyclesd"),
             "-cycleyears" => cycle_years = req_f64(&mut it, "-cycleyears"),
             "-cyclevol" => cycle_vol = req_f64(&mut it, "-cyclevol"),
+            "-burstback" => burst_back = req_f64(&mut it, "-burstback"),
             "-beliefleak" => belief_leak = req_f64(&mut it, "-beliefleak"),
             "-slowshare" => slow_share = req_f64(&mut it, "-slowshare"),
             "-slowvol" => slow_vol = req_f64(&mut it, "-slowvol"),
@@ -34811,6 +34878,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         cycle_sd,
         cycle_years,
         cycle_vol,
+        burst_back,
         belief_leak,
         slow_share,
         slow_vol,
@@ -47232,6 +47300,30 @@ mod valuation_cycle_tests {
             a.price == b.price && a.bond == b.bond,
             "0 must be bit-identical"
         );
+    }
+
+    #[test]
+    fn the_burst_back_reverses_the_bursts() {
+        // the lag-1 autocorrelation of the S&P recipe's session returns is lower with its
+        // give-back than without it; two seeds of 100 years
+        let (_, w, _) = recipes()
+            .into_iter()
+            .find(|(n, _, _)| *n == "0.25.1-sp500")
+            .expect("the S&P recipe");
+        assert!(w.burst_back > 0.0, "the recipe carries the give-back");
+        let lag1 = |w: &World, seed: u64| -> f64 {
+            let p = simulate_at(w, 100, seed, world_level(w));
+            lag1_demeaned(&daily_returns(&p.price))
+        };
+        let mut off = w;
+        off.burst_back = 0.0;
+        for seed in 1..=2u64 {
+            let (a, b) = (lag1(&off, seed), lag1(&w, seed));
+            assert!(
+                b.is_finite() && b <= a - 0.02,
+                "seed {seed}: the contrast is {a:.3} -> {b:.3}"
+            );
+        }
     }
 
     #[test]

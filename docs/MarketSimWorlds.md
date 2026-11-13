@@ -1788,7 +1788,12 @@ How it is read:
   at 250 days, 1954-2026); the model's trended (1.68) because the asymmetric recovery freezes the buy-back
   in a drawdown. The overshoot is the churn a slow decline is made of, and leaves the asymmetric recovery in
   place (switching that off instead misses both wings). 0 is off; searched | 0 | | `-overshootrate` | the
-  overshoot's give-back per session. Searched | 0.1 | | `-recesslen` | the recession's length in years; the
+  overshoot's give-back per session. Searched | 0.1 | | `-burstback` | THE GIVE-BACK IN A BURST: the record's
+  daily reversal since 1999 (lag-1 -0.08) lives in its volatility bursts, 18% of a move given back the next
+  session in the months whose volatility is 1.5 times the quarter before and 4% outside them. A session gives
+  back the share B x (b - 1) of its move in the next one, b its return's fast sd over its slow sd (0.95 and
+  62/63 EWMAs of the squared return), capped at 0.5. 0 is off and bit-identical, keyed only when on | 0 | |
+  `-recesslen` | the recession's length in years; the
   recovery leg regains `-recessrecover` of the fall over twice this | 1.5 | | `-recessrecover` | the share
   of the recession's fall regained; the rest is permanent | 0.5 | | `-recessnews` | the news channel's event
   rate, and its compensator with it, multiplied while a recession runs (zero-mean; the news stream's draws
@@ -2868,12 +2873,14 @@ and each Nasdaq re-solve's set significantly better than the set before it (the 
 Both are then re-solved whole under THE COLLAPSE BOUND, the realism gate `no collapse`: at most one history in
 200, read on a membership's pooled histories, may hold a 252-session log return beyond twice the record's worst
 (-1.03 on the S&P, -1.20 on the Nasdaq). The recipes before it held such histories; the two ceilings
-(`-slowcap` 3.77 and `-drawdowncap` 0.97 on the S&P, 3.21 and 0.94 on the Nasdaq) keep a world inside it at no
-cost on the ledger, and the S&P's carries the negative inflation pulse (`-spikeneg` 0.62). The sets are 32
-and 47 members, every member inside the bound: 36.32 against the earlier S&P set's 42.41 and 34.03 against the
-Nasdaq's 38.35. The S&P set misses `vol coupling monthly corr`, `vol coupling quarterly corr` and `return
-lag-1 autocorr` (the model's losses lift its vol less than the record's do), the Nasdaq set `decline length
-p50 y long`.
+(`-slowcap` 3.59 and `-drawdowncap` 1.01 on the S&P, 2.79 and 0.68 on the Nasdaq) keep a world inside it at no
+cost on the ledger; the S&P's carries the negative inflation pulse (`-spikeneg` 0.59) and the give-back in a
+burst (`-burstback` 0.5), which returns `return lag-1 autocorr` to its pool. The set score weights the
+ledger's rows, half by a row's independence of the others and half by its measured share of what a history
+gives a strategy, each weight between 0.25 and 4. The sets are 90 and 112 members, every member inside the
+bound: under those weights 34.48 against the published 0.25.0 S&P set's 65.24 and 31.01 against the Nasdaq's
+57.15. The S&P set misses `vol coupling monthly corr` and `vol coupling quarterly corr` (the model's losses
+lift its vol less than the record's do), the Nasdaq set `decline length p50 y long`.
 
 **`0.25.0-sp500` and `0.25.0-nasdaq`** are each member 0 of its `0.25.0` set, a world admitted
 under the membership rule with every class passing on each of four fresh seeds at 200 × 100. The
