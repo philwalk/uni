@@ -62,7 +62,7 @@ class BarRecordSuite extends FunSuite:
       v("shape", "", "market middle decile", "median pairwise correlation"),
       v("strength", "13-24", "all", StrengthStat),
       v("strength", "61-120", "all", StrengthStat),
-      v("shape", "10y", "all", "mean cross-sectional sd of log returns") / v("shape", "", "all", "market monthly sd"),
+      v("shape", "10y", "all", "mean cross-sectional sd of log returns") / xs,
       v("flow", "1y", "all", "rank correlation with the next year's flow"),
       v("flow", "1y", "all", "rank correlation with the year before's return"),
       v("flow", "3y", "all", "rank correlation with the return three years on"))

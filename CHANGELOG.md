@@ -67,8 +67,8 @@ and the ten-industry record.
 
 **Six sector rows for a strategy that follows money between sectors**, graded on a 40-leg channel:
 `sector strength months 13-24` (record -0.0095) and `sector strength months 61-120` (-0.0249), the rank correlation
-of the legs' returns that far back with the month's; `sector xs sd 10y / market sd` (9.391), the legs' 10-year
-spread over the market's monthly sd; `sector flow persistence 1y` (0.2256), `sector flow after return 1y` (0.0513)
+of the legs' returns that far back with the month's; `sector xs sd 10y / xs sd` (11.5887), the legs' 10-year
+spread over their monthly one; `sector flow persistence 1y` (0.2256), `sector flow after return 1y` (0.0513)
 and `sector return after flow 3y` (-0.0405), rank correlations on the legs' share counts, absent while
 `-sectorflow` is off. Records in `sectors-2026-11-13.tsv`; bands from `record_bands -sectors DIR -block 5040
 -legs 40` (20-year blocks, which the rows' look-back needs).

@@ -958,7 +958,7 @@ worst decile 0.489, middle decile 0.052). Six read what a strategy that follows 
 |---|---|---|
 | `sector strength months 13-24` | -0.0095 | the rank correlation of the legs' returns over months 13-24 back with the month's |
 | `sector strength months 61-120` | -0.0249 | the same over months 61-120 back |
-| `sector xs sd 10y / market sd` | 9.391 | the legs' cross-sectional sd of 10-year log returns over the market's monthly sd |
+| `sector xs sd 10y / xs sd` | 11.5887 | the legs' cross-sectional sd of 10-year log returns over their monthly one |
 | `sector flow persistence 1y` | 0.2256 | the rank correlation of a year's flow with the next year's |
 | `sector flow after return 1y` | 0.0513 | of a year's flow with the year before's return |
 | `sector return after flow 3y` | -0.0405 | of a year's flow with the return three years on |

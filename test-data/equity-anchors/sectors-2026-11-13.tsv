@@ -10,7 +10,7 @@
 # strength   each month from the 121st, the cross-sectional rank correlation of the industries' log returns over
 #            the months `form` back (13-24, 61-120) with their returns in the month; the mean over months.
 # shape 10y  each twelve months from the 120th, the cross-sectional sd (population) of the industries' log returns
-#            over the trailing 120 months; the mean. Graded over `sectors-2026-09-30.tsv`'s market monthly sd.
+#            over the trailing 120 months; the mean. Graded over `sectors-2026-11-12.tsv`'s mean cross-sectional sd.
 # flow       an industry's capital at a month's start is its firms times their average size, and its flow over a
 #            month the growth of that capital's log less its log return: the growth of its share count. On the
 #            panel's years (twelve months from the first): the rank correlation of a year's flow with the next

@@ -7591,7 +7591,7 @@ object MarketSim:
     Vector("sector momentum 12-1 / xs sd", "sector trend 12m / xs sd", "sector trend sma10 / xs sd",
            "sector xs sd / market sd", "sector pair corr", "sector pair corr worst decile",
            "sector pair corr middle decile", "sector strength months 13-24", "sector strength months 61-120",
-           "sector xs sd 10y / market sd", "sector flow persistence 1y", "sector flow after return 1y",
+           "sector xs sd 10y / xs sd", "sector flow persistence 1y", "sector flow after return 1y",
            "sector return after flow 3y")
 
   /** One history's sector rows in the gate's forms over `sectorPathStats`: the 12-1 momentum
@@ -7599,7 +7599,7 @@ object MarketSim:
     * market's monthly sd, and the median pairwise correlation whole and on the market's worst and
     * middle deciles; NaN when no sector channel ran.  The record (French's ten industries) is a
     * whole path's length, so a history is read whole, never cut.  The last six are the long rows
-    * (`sectorLongRows`), the 10-year spread over the market's monthly sd as the monthly one is;
+    * (`sectorLongRows`), the 10-year spread over the monthly cross-sectional sd;
     * the three share-count rows are NaN on a path without share counts (`sectorFlow` off). */
   def sectorRowsOfPath(p: Path): Vector[Double] =
     if p.sectors.isEmpty then Vector.fill(13)(Double.NaN)
@@ -7612,7 +7612,7 @@ object MarketSim:
     sectorRowsWithLong(sectorStatsOfPanel(p), sectorLongRows(p)._1)
 
   private def sectorRowsWithLong(s: Vector[Double], l: Vector[Double]): Vector[Double] =
-    sectorRowsOfStats(s) ++ Vector(l(0), l(1), l(2) / s(6), l(3), l(4), l(5))
+    sectorRowsOfStats(s) ++ Vector(l(0), l(1), l(2) / s(5), l(3), l(4), l(5))
 
   private def sectorRowsOfStats(s: Vector[Double]): Vector[Double] =
     Vector(s(0) / s(5), s(3) / s(5), s(4) / s(5), s(5) / s(6), s(7), s(8), s(9))
@@ -16388,7 +16388,7 @@ object MarketSim:
     Vector(0.1548, 0.1122, 0.1114, 0.8104, 0.6186, 0.4890, 0.0519,
            // the long rows' (`sectors-2026-11-13.tsv`), graded on 40 legs alone: a panel of another
            // width reads them without a record
-           -0.0095, -0.0249, 9.3910, 0.2256, 0.0513, -0.0405)
+           -0.0095, -0.0249, 11.5887, 0.2256, 0.0513, -0.0405)
 
   /** `historyRows` from the readings a caller already holds (`horizonReadings` on `sims` with the
     * extreme rows), so the verdict builds them once for its fidelity rows and its placement.  Each

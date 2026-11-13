@@ -18045,7 +18045,7 @@ pub const SECTOR_ROWS: [&str; 13] = [
     "sector pair corr middle decile",
     "sector strength months 13-24",
     "sector strength months 61-120",
-    "sector xs sd 10y / market sd",
+    "sector xs sd 10y / xs sd",
     "sector flow persistence 1y",
     "sector flow after return 1y",
     "sector return after flow 3y",
@@ -18056,7 +18056,7 @@ pub const SECTOR_ROWS: [&str; 13] = [
 /// market's monthly sd, and the median pairwise correlation whole and on the market's worst and
 /// middle deciles; NaN when no sector channel ran. The record (French's ten industries) is a whole
 /// path's length, so a history is read whole, never cut. The last six are the long rows
-/// (`sector_long_rows`), the 10-year spread over the market's monthly sd as the monthly one is;
+/// (`sector_long_rows`), the 10-year spread over the monthly cross-sectional sd;
 /// the three share-count rows are NaN on a path without share counts (`sector_flow` off).
 #[must_use]
 pub fn sector_rows_of_path(p: &Path) -> [f64; 13] {
@@ -18082,7 +18082,7 @@ pub fn sector_rows_of_panel(p: &SectorPanel) -> [f64; 13] {
         f[6],
         l[0],
         l[1],
-        l[2] / s[6],
+        l[2] / s[5],
         l[3],
         l[4],
         l[5],
@@ -25196,7 +25196,7 @@ const SECTOR_RECORDS: [f64; 7] = [0.1275, 0.1802, 0.1193, 0.5815, 0.6986, 0.5608
 /// The last six are the long rows' (`sectors-2026-11-13.tsv`), graded on 40 legs alone: a panel
 /// of another width reads them without a record.
 const SECTOR_RECORDS_40: [f64; 13] = [
-    0.1548, 0.1122, 0.1114, 0.8104, 0.6186, 0.4890, 0.0519, -0.0095, -0.0249, 9.3910, 0.2256,
+    0.1548, 0.1122, 0.1114, 0.8104, 0.6186, 0.4890, 0.0519, -0.0095, -0.0249, 11.5887, 0.2256,
     0.0513, -0.0405,
 ];
 
@@ -46056,7 +46056,7 @@ mod bar_record_tests {
                 "10y",
                 "all",
                 "mean cross-sectional sd of log returns",
-            ) / v("shape", "", "all", "market monthly sd"),
+            ) / xs,
             v(
                 "flow",
                 "1y",
