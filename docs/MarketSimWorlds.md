@@ -2964,7 +2964,7 @@ ledger's rows, half by a row's independence of the others and half by its measur
 gives a strategy, each weight between 0.25 and 4. The Nasdaq's is then re-solved locally with the first-leg
 break searched (depth 0.157, size 0.099, 9 sessions, bought back over 70), which returns `decline length p50 y
 long` to its pool. The sets are 90 and 122 members, every member inside the bound: under those weights 37.15
-against the published 0.25.0 S&P set's 64.90 at ten sector legs (31.92 at 40 with the long sector rows counted)
+against the published 0.25.0 S&P set's 64.90 at ten sector legs (31.54 at 40 with the long sector rows counted)
 and 30.07 against the Nasdaq's 51.83. The S&P set misses `vol
 coupling monthly corr` and `vol coupling quarterly corr` (the model's losses lift its vol less than the
 record's do); the Nasdaq set misses no row.

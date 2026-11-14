@@ -7357,8 +7357,8 @@ struct SectorLegs {
 /// the years of share growth the price answers.
 pub const SECTOR_FLOW_STEP: usize = 21;
 pub const SECTOR_FLOW_HALF: f64 = 3.3;
-pub const SECTOR_FLOW_SD: f64 = 0.037;
-pub const SECTOR_FLOW_NOISE: f64 = 0.053;
+pub const SECTOR_FLOW_SD: f64 = 0.0352;
+pub const SECTOR_FLOW_NOISE: f64 = 0.0541;
 pub const SECTOR_FLOW_CHASE: f64 = 0.06;
 pub const SECTOR_FLOW_YEARS: usize = 3;
 /// The sd of the legs' log sizes at the start: the record's 40 industries' log shares of the total

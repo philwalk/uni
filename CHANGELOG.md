@@ -42,8 +42,8 @@ member 0 of a 122-member set, `-slowcap` 2.57, `-drawdowncap` 0.76, `-spikeneg` 
 member inside the bound. Against the published 0.25.0 sets, read under this simulator: the S&P 64.90 to 37.15, -27.75
 [-29.35, -24.79], the whitened surprise unchanged (-11.0 [-25.6, +2.8]), both sets at ten sector legs against the
 ten-industry record; the Nasdaq 51.83 to 30.07, -21.76 [-24.01, -19.99], the whitened surprise -28.0 [-48.1, -15.5].
-At 40 legs against the 40-industry record the S&P set reads 31.32, against 37.15 for the same members at ten legs
-(-5.84 [-8.07, -5.23]), and 31.92 with the six long sector rows counted. The release rule's three tests pass on both sets against 0.25.0. 58 of the 60 published S&P
+At 40 legs against the 40-industry record the S&P set reads 31.31, against 37.15 for the same members at ten legs
+(-5.84 [-8.07, -5.24]), and 31.54 with the six long sector rows counted. The release rule's three tests pass on both sets against 0.25.0. 58 of the 60 published S&P
 members and 34 of the 38 Nasdaq members fail the bound. The S&P set returns `real yield change vs inflation corr` to
 its pool; the Nasdaq set that row, `vol coupling monthly corr`, `z beyond 3 sds %`, `z beyond 4 sds %` and `vol
 doubling months %`. Known gaps (the record outside the central 95% of the pool; share of histories at or beyond the
@@ -82,7 +82,7 @@ spread over their monthly one; `sector flow persistence 1y` (0.2256), `sector fl
 and `sector return after flow 3y` (-0.0405), rank correlations on the legs' share counts, absent while
 `-sectorflow` is off. Records in `sectors-2026-11-13.tsv`; bands from `record_bands -sectors DIR -block 5040
 -legs 40` (20-year blocks, which the rows' look-back needs). The S&P set holds the record inside its pool on all
-thirteen sector rows, between 12% and 56% of histories below the record (`sector flow persistence 1y` the lowest).
+thirteen sector rows, between 39% and 56% of histories below the record.
 
 **The sector legs' shape.** Four dials read on the record's 40 industries. `-sectorbetalift` is added to every
 leg's beta, so the legs' mean beta is 1 + the lift (the industries' mean beta is 1.06). `-sectoridiospread` is the sd

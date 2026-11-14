@@ -2981,8 +2981,8 @@ object MarketSim:
     * follows, and the years of share growth the price answers. */
   val SectorFlowStep  = 21
   val SectorFlowHalf  = 3.3
-  val SectorFlowSd    = 0.037
-  val SectorFlowNoise = 0.053
+  val SectorFlowSd    = 0.0352
+  val SectorFlowNoise = 0.0541
   val SectorFlowChase = 0.06
   val SectorFlowYears = 3
   /** The sd of the legs' log sizes at the start: the record's 40 industries' log shares of the total
@@ -12193,9 +12193,8 @@ object MarketSim:
     * is zero to the precision shown, so a leading '-' there reports rounding NOISE as direction;
     * uni's own `numStr` blanks the sign for the same reason.  It matters here beyond tidiness: a
     * column whose true value is identically zero (the always-invested rule against buy-and-hold)
-    * has nothing left in it but the last-ulp gap between the JVM's Math.log and libm's, which is
-    * ~0.2% of calls at 1 ulp -- so without this the sign printed there is a coin flip, and the
-    * Rust twin in rust/src/market_sim.rs cannot agree with it. */
+    * has nothing left in it but last-ulp rounding, so without this the sign printed there is
+    * noise; the Rust twin in rust/src/market_sim.rs prints by the same rule. */
   def pm(x: Double, w: Int, d: Int): String =
     val wpart = if w > 0 then w.toString else ""
     val s = String.format(s"%+$wpart.${d}f", Double.box(x))
