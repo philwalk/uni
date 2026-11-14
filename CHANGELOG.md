@@ -1,4 +1,4 @@
-## v0.25.1 — 2026-10-30
+## v0.25.1 — 2026-11-14
 
 **The collapse bound.** A world may not end its market: at most one history in 200 may hold a 252-session log
 return beyond twice the record's worst (`Anchors.worst_year`: the S&P's -1.03, the year to June 1932, the edge a year
