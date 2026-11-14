@@ -2373,116 +2373,122 @@ fn recipe_0251_sp500(mut w: World) -> World {
 /// [-5.66, -2.69], every member inside the bound, the one set miss carried. Then (2026-11-12) a
 /// local re-solve under the weighted ledger: 30.57 against 35.21 on the judge's seeds; its
 /// 112-member set 31.01 against the 47's 36.18 under those weights, -5.17 [-8.07, -3.54], the one
-/// set miss carried.
+/// set miss carried. Then (2026-11-13) a local re-solve with the first-leg break searched: 29.93
+/// against 30.57 on the judge's seeds; its 122-member set 30.71 against the 112's 31.01, -0.29
+/// [-0.84, +0.22], the whitened surprise -14.2 [-21.8, -5.9], no set miss.
 #[expect(
     clippy::too_many_lines,
     reason = "one recipe literal, every moved dial named"
 )]
 fn recipe_0251_nasdaq(mut w: World) -> World {
-    w.trend_share = 0.076127779;
-    w.depth = 14.364819;
-    w.stress = 3.6548962;
-    w.drift = 0.13765619;
-    w.fund_vol = 0.054948660;
-    w.rate_mean = 0.034826545;
-    w.vol_of_vol = 0.026278467;
-    w.leverage = 0.082266897;
-    w.down_shock = 0.0032130547;
-    w.jump_skew = 0.062662481;
-    w.jump_var = 0.076780384;
-    w.jump_rate = 0.0042514823;
-    w.news_rate = 5.0769390;
-    w.news_size = 0.023473421;
-    w.news_lev = 32.732633;
-    w.news_revert = 0.16440306;
-    w.news_scale = 0.36648272;
-    w.news_bond = 0.17458521;
-    w.news_bond_skip = 0.36574753;
-    w.credit_regime = 0.12254414;
-    w.credit_regime_rate = 2.5654486;
-    w.slow_bond_infl = 0.47953423;
-    w.noise_skew = 0.24142011;
-    w.news_flip = 0.72809877;
-    w.value_pull = 0.013406190;
-    w.recovery_drag = 0.62977391;
-    w.recovery_floor = 0.28287147;
-    w.boom_rate = 0.99932719;
-    w.boom_size = 1.7629094;
-    w.boom_len = 2.1756118;
-    w.recess_rate = 0.25082185;
-    w.recess_size = 0.32024650;
-    w.recess_len = 1.7006581;
-    w.recess_recover = 0.78251016;
-    w.recess_news = 1.7833781;
-    w.recess_vol = 0.0073796368;
-    w.recess_reprice = 0.80695486;
-    w.recess_base = 0.99459570;
-    w.recess_shape = 1.3246257;
-    w.overshoot = 0.90222302;
-    w.overshoot_rate = 0.31417798;
-    w.recess_rec_mult = 1.6060878;
-    w.recess_credit = 1.5839619;
-    w.recess_infl = 0.56228415;
-    w.regime_drift = 0.00011383904;
-    w.drift_sd = 0.033444109;
-    w.boom_fade = 2.9456461;
-    w.delev_rate = 1.1743087;
-    w.delev_from = 4.9458065;
-    w.delev_size = 0.050000000;
-    w.delev_len = 0.17134769;
-    w.vol_pull = 0.0000000;
-    w.belief_share = 0.86749892;
-    w.belief_years = 1.8295526;
-    w.belief_leak = 0.26330022;
-    w.cap_years = 3.0166078;
-    w.cycle_sd = 0.0081211567;
-    w.cycle_years = 7.8868263;
+    w.trend_share = 0.060575251;
+    w.depth = 14.751489;
+    w.stress = 3.4555083;
+    w.drift = 0.14049305;
+    w.fund_vol = 0.042043047;
+    w.rate_mean = 0.039924235;
+    w.vol_of_vol = 0.027355329;
+    w.leverage = 0.084550461;
+    w.down_shock = 0.0030873169;
+    w.jump_skew = 0.095160066;
+    w.jump_var = 0.067194253;
+    w.jump_rate = 0.0043056898;
+    w.news_rate = 4.0950882;
+    w.news_size = 0.025646262;
+    w.news_lev = 32.791222;
+    w.news_revert = 0.23631896;
+    w.news_scale = 0.23474789;
+    w.news_bond = 0.11811060;
+    w.news_bond_skip = 0.33914112;
+    w.credit_regime = 0.18165193;
+    w.credit_regime_rate = 2.3035325;
+    w.slow_bond_infl = 0.52328719;
+    w.noise_skew = 0.34749688;
+    w.news_flip = 0.65993902;
+    w.value_pull = 0.010000000;
+    w.recovery_drag = 0.92298576;
+    w.recovery_floor = 0.26559153;
+    w.boom_rate = 1.1629727;
+    w.boom_size = 1.5849794;
+    w.boom_len = 1.8856942;
+    w.recess_rate = 0.47873229;
+    w.recess_size = 0.34416756;
+    w.recess_len = 1.6887812;
+    w.recess_recover = 0.67408178;
+    w.recess_news = 1.7924748;
+    w.recess_vol = 0.0000000;
+    w.recess_reprice = 0.89443498;
+    w.recess_base = 0.99507734;
+    w.recess_shape = 1.3432175;
+    w.overshoot = 0.98818533;
+    w.overshoot_rate = 0.26490602;
+    w.recess_rec_mult = 1.5055793;
+    w.recess_credit = 1.9675544;
+    w.recess_infl = 0.51267163;
+    w.regime_drift = 0.0000000;
+    w.drift_sd = 0.037612159;
+    w.boom_fade = 2.1351552;
+    w.delev_rate = 1.2069381;
+    w.delev_from = 5.0050444;
+    w.delev_size = 0.070794802;
+    w.delev_len = 0.058297214;
+    w.vol_pull = 0.018420784;
+    w.belief_share = 0.87288353;
+    w.belief_years = 1.8272365;
+    w.belief_leak = 0.28317598;
+    w.cap_years = 2.3275785;
+    w.cycle_sd = 0.0052965554;
+    w.cycle_years = 8.1920412;
     w.cycle_vol = 1.0000000;
-    w.crowd_impact = 0.14134020;
-    w.crowd_adjust = 0.69514637;
-    w.term_premium = 0.058529222;
-    w.cpi_noise = 0.0065443761;
-    w.defl_prob = 0.13698707;
-    w.defl_size = 0.022714989;
-    w.spike_rate = 0.38085752;
-    w.spike_neg = 0.086661926;
-    w.spike_size = 0.0070654179;
-    w.term_vol = 0.0055167716;
-    w.term_press = 0.95117784;
-    w.brk_vol = 0.0038205472;
-    w.brk_nominal = 0.14177185;
-    w.cpi_noise_level = 0.99229600;
-    w.policy_growth = 0.16433080;
-    w.yield_beta = 0.029548085;
-    w.yield_lag = 30.152182;
-    w.exp_anchor = 0.43966253;
-    w.yield_anchor = 0.66546071;
-    w.vol_feedback = 0.19975357;
-    w.value_cap = 0.060270830;
-    w.value_cap_fall = 0.019074008;
-    w.recess_spread = 0.0000000;
-    w.recess_transient = 0.28094147;
-    w.easing = 0.065984575;
-    w.floorhold = 0.077953122;
-    w.refuge = 0.11455268;
-    w.refuge_days = 0.84270036;
-    w.lev_gain = 4.5528533;
-    w.noise_scale = 1.5199861;
-    w.decline_vol = 0.018880487;
+    w.crowd_impact = 0.16330551;
+    w.crowd_adjust = 1.8373558;
+    w.term_premium = 0.036905993;
+    w.cpi_noise = 0.0076662148;
+    w.defl_prob = 0.13442963;
+    w.defl_size = 0.026427112;
+    w.spike_rate = 0.33862702;
+    w.spike_neg = 0.15172795;
+    w.spike_size = 0.0075323474;
+    w.term_vol = 0.0059180673;
+    w.term_press = 0.92978786;
+    w.brk_vol = 0.0031759552;
+    w.brk_nominal = 0.16352004;
+    w.cpi_noise_level = 1.0613077;
+    w.policy_growth = 0.11634380;
+    w.yield_beta = 0.026235077;
+    w.yield_lag = 32.452950;
+    w.exp_anchor = 0.46075926;
+    w.yield_anchor = 0.75744584;
+    w.vol_feedback = 0.21886561;
+    w.value_cap = 0.12050981;
+    w.value_cap_fall = 0.011303305;
+    w.recess_spread = 0.0036195680;
+    w.recess_transient = 0.39679666;
+    w.easing = 0.066578544;
+    w.floorhold = 0.075611185;
+    w.refuge = 0.11458495;
+    w.refuge_days = 0.91765546;
+    w.lev_gain = 4.6275240;
+    w.noise_scale = 1.5482244;
+    w.decline_vol = 0.0;
     w.decline_vol_half = 2.3258611;
-    w.drawdown_vol = 1.3252715;
-    w.decline_vol_attack = 0.070286536;
-    w.drawdown_cap = 0.67672071;
-    w.bust_amp = 0.17050901;
-    w.slow_share = 0.28460183;
-    w.slow_cap = 2.7883051;
-    w.slow_vol = 1.0807893;
-    w.slow_perm = 0.24253748;
-    w.slow_beta = 0.82093621;
-    w.infl_size = 0.050824484;
-    w.discount = 7.8916141;
-    w.discount_ref = 5.7582618;
-    w.margin = 0.0051900285;
+    w.drawdown_vol = 1.2498857;
+    w.decline_vol_attack = 0.034724353;
+    w.drawdown_cap = 0.75753082;
+    w.bust_amp = 0.21143062;
+    w.slow_share = 0.27584866;
+    w.slow_cap = 2.5729321;
+    w.slow_vol = 0.99335906;
+    w.slow_perm = 0.28549337;
+    w.slow_beta = 0.72438719;
+    w.infl_size = 0.051210903;
+    w.discount = 8.2053331;
+    w.discount_ref = 7.8898427;
+    w.margin = 0.0050846836;
+    w.leg_break_depth = 0.15709329;
+    w.leg_break_size = 0.098761348;
+    w.leg_break_days = 9.0558234;
+    w.leg_break_back = 70.027203;
     w
 }
 
@@ -48694,17 +48700,23 @@ mod valuation_cycle_tests {
     }
 
     /// The first-leg break on the Nasdaq recipe, four seeds of 100 years: the share of the
-    /// declines of 20% that reach it on their first leg rises. Off in every frozen world, where
-    /// its size and sessions change nothing; refused on without a session to sell or buy back in.
+    /// declines of 20% that reach it on their first leg rises. Off in every frozen world but
+    /// `0.25.1-nasdaq`; with the depth at 0 its size and sessions change nothing; refused on
+    /// without a session to sell or buy back in.
     #[test]
     fn the_leg_break_completes_declines_on_their_first_leg() {
         for (n, w, _) in recipes() {
-            assert!(w.leg_break_depth == 0.0, "{n}");
+            assert!((w.leg_break_depth > 0.0) == (n == "0.25.1-nasdaq"), "{n}");
         }
-        let (_, w, _) = recipes()
+        let (_, recipe, _) = recipes()
             .into_iter()
             .find(|(n, _, _)| *n == "0.25.1-nasdaq")
             .expect("the Nasdaq recipe");
+        let mut w = recipe;
+        w.leg_break_depth = 0.0;
+        w.leg_break_size = 0.0;
+        w.leg_break_days = 10.0;
+        w.leg_break_back = 75.0;
         let mut inert = w;
         inert.leg_break_size = 0.10;
         inert.leg_break_days = 3.0;

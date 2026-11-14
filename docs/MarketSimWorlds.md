@@ -2961,10 +2961,12 @@ Both are then re-solved whole under THE COLLAPSE BOUND, the realism gate `no col
 cost on the ledger; the S&P's carries the negative inflation pulse (`-spikeneg` 0.59) and the give-back in a
 burst (`-burstback` 0.5), which returns `return lag-1 autocorr` to its pool. The set score weights the
 ledger's rows, half by a row's independence of the others and half by its measured share of what a history
-gives a strategy, each weight between 0.25 and 4. The sets are 90 and 112 members, every member inside the
-bound: under those weights 34.48 against the published 0.25.0 S&P set's 65.24 and 31.01 against the Nasdaq's
-57.15. The S&P set misses `vol coupling monthly corr` and `vol coupling quarterly corr` (the model's losses
-lift its vol less than the record's do), the Nasdaq set `decline length p50 y long`.
+gives a strategy, each weight between 0.25 and 4. The Nasdaq's is then re-solved locally with the first-leg
+break searched (depth 0.157, size 0.099, 9 sessions, bought back over 70), which returns `decline length p50 y
+long` to its pool. The sets are 90 and 122 members, every member inside the bound: under those weights 34.48
+against the published 0.25.0 S&P set's 65.24 and 30.71 against the Nasdaq's 57.15. The S&P set misses `vol
+coupling monthly corr` and `vol coupling quarterly corr` (the model's losses lift its vol less than the
+record's do); the Nasdaq set misses no row.
 
 **`0.25.0-sp500` and `0.25.0-nasdaq`** are each member 0 of its `0.25.0` set, a world admitted
 under the membership rule with every class passing on each of four fresh seeds at 200 × 100. The

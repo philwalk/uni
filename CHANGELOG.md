@@ -28,7 +28,8 @@ return starts the next session, spread evenly over `-legbreakdays` sessions and 
 at 0 is off and bit-identical; the size is 0 and the sessions 10 and 75 when off, inert until the depth is on, whole
 sessions (the fraction dropped) and at least 1 then. The four keys are written in a world's block only while the
 break is on, and searched (depth 0-0.25, size 0-0.20, days 3-30, back 20-250), the last four dials of the search's
-table, which now holds 114. No recipe or set carries the break.
+table, which now holds 114. `0.25.1-nasdaq` and its set carry it (depth 0.157, size 0.099, 9 sessions, bought back
+over 70).
 
 **The ledger's rows weighted.** The set score weights the rows (the `weight` column of `-ledger FILE`): half by a
 row's independence of the other rows, half by its measured share of what a history gives a strategy that times the
@@ -36,17 +37,17 @@ market, rotates between categories, draws an income or holds; each weight betwee
 in both worlds. Every figure below is read under those weights.
 
 **The 0.25.1 recipes and sets re-solved under the bound.** `0.25.1-sp500` is member 0 of a 90-member set, `-slowcap`
-3.59, `-drawdowncap` 1.01, `-spikeneg` 0.59 and `-burstback` 0.5; `0.25.1-nasdaq` is member 0 of a 112-member set,
-`-slowcap` 2.79, `-drawdowncap` 0.68 and `-spikeneg` 0.09; every member inside the bound. Against the published
+3.59, `-drawdowncap` 1.01, `-spikeneg` 0.59 and `-burstback` 0.5; `0.25.1-nasdaq` is member 0 of a 122-member set,
+`-slowcap` 2.57, `-drawdowncap` 0.76, `-spikeneg` 0.15 and the first-leg break; every member inside the bound. Against the published
 0.25.0 sets, read under this simulator: the S&P 65.24 to 34.48, -30.76 [-32.21, -28.23], the whitened surprise
-unchanged (-11.1 [-25.7, +2.7]); the Nasdaq 57.15 to 31.01, -26.14 [-29.05, -23.75], the whitened surprise -13.9
-[-32.7, -1.1]. 58 of the 60 published S&P members and 34 of the 38 Nasdaq members fail the bound. The S&P set returns
+unchanged (-11.1 [-25.7, +2.7]); the Nasdaq 57.15 to 30.71, -26.43 [-29.01, -24.27], the whitened surprise -28.0
+[-48.1, -15.5]. 58 of the 60 published S&P members and 34 of the 38 Nasdaq members fail the bound. The S&P set returns
 `real yield change vs inflation corr` to its pool; the Nasdaq set that row, `vol coupling monthly corr`, `z beyond 3
 sds %`, `z beyond 4 sds %` and `vol doubling months %`. Known gaps (the record outside the central 95% of the pool;
 share of histories at or beyond the record, 2.5% the line): the S&P set on `vol coupling monthly corr`, 0.22% in
 0.25.0 to 1.72%, and `vol coupling quarterly corr`, 3.03% to 2.24% (the record below the pool on each: the model's
-losses lift its vol less than the record's do); the Nasdaq set on `decline length p50 y long`, 9.51% to 1.16%, which
-was inside the 0.25.0 pool, so the release rule's no-row-lost test fails against 0.25.0 on the Nasdaq set.
+losses lift its vol less than the record's do). The Nasdaq set has none: the break returns `decline length p50 y
+long` to its pool (3.14% of histories at or beyond the record).
 
 **`Path::price_returns` on a path built without its kept returns** computes them from the price; it recursed without
 end.
