@@ -946,7 +946,7 @@ is its firms times their average size, a year's flow the growth of that value le
   varies with sd k around its beta.
 
 Every dial at 0 is off, bit-identical, and written in a world's block only when on. `0.25.1-sp500` carries K 40,
-idio 0.735, the AR(1) drift off, chase 0.23, level half-life 12, flow 0.085, breadth 0.063, beta lift 0.06, idio
+idio 0.735, the AR(1) drift off, chase 0.245, level half-life 8, flow 0.085, breadth 0.063, beta lift 0.06, idio
 spread 0.25, idio flat 0.3 and beta noise 0.43; the legs reach no price, so the recipe's other rows do not move.
 
 A world with 40 legs is read against the 40-industry record on thirteen sector rows. Seven are the ten-leg
@@ -2957,14 +2957,15 @@ and each Nasdaq re-solve's set significantly better than the set before it (the 
 Both are then re-solved whole under THE COLLAPSE BOUND, the realism gate `no collapse`: at most one history in
 200, read on a membership's pooled histories, may hold a 252-session log return beyond twice the record's worst
 (-1.03 on the S&P, -1.20 on the Nasdaq). The recipes before it held such histories; the two ceilings
-(`-slowcap` 3.59 and `-drawdowncap` 1.01 on the S&P, 2.79 and 0.68 on the Nasdaq) keep a world inside it at no
+(`-slowcap` 3.59 and `-drawdowncap` 1.01 on the S&P, 2.57 and 0.76 on the Nasdaq) keep a world inside it at no
 cost on the ledger; the S&P's carries the negative inflation pulse (`-spikeneg` 0.59) and the give-back in a
 burst (`-burstback` 0.5), which returns `return lag-1 autocorr` to its pool. The set score weights the
 ledger's rows, half by a row's independence of the others and half by its measured share of what a history
 gives a strategy, each weight between 0.25 and 4. The Nasdaq's is then re-solved locally with the first-leg
 break searched (depth 0.157, size 0.099, 9 sessions, bought back over 70), which returns `decline length p50 y
-long` to its pool. The sets are 90 and 122 members, every member inside the bound: under those weights 34.48
-against the published 0.25.0 S&P set's 65.24 and 30.71 against the Nasdaq's 57.15. The S&P set misses `vol
+long` to its pool. The sets are 90 and 122 members, every member inside the bound: under those weights 37.15
+against the published 0.25.0 S&P set's 64.90 at ten sector legs (31.92 at 40 with the long sector rows counted)
+and 30.07 against the Nasdaq's 51.83. The S&P set misses `vol
 coupling monthly corr` and `vol coupling quarterly corr` (the model's losses lift its vol less than the
 record's do); the Nasdaq set misses no row.
 

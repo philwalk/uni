@@ -126,6 +126,9 @@ than 1 ulp. Both sides therefore keep their native fast path, and `exp`, `log` a
   and powers of two built from raw exponent bits. `MarketSim.expDet` / `exp_det` and
   `tanhP` / `tanh_p` are the pattern, and `PlotSvg.log10` / `uplot::svg::log10` is the
   same thing for a logarithm.
+- A natural log of data in a reader or a statistic: `MarketSim.lnStrict` / `ln_strict`,
+  fdlibm's log, equal to `StrictMath.log` to the bit. `lnDet` / `ln_det` is the
+  simulation's and returns NaN at 0.
 - `floor(x + 0.5)`, written out. Java's `round` and Rust's differ on negative halves,
   and `rint` is banker's rounding.
 

@@ -34,23 +34,32 @@ over 70).
 **The ledger's rows weighted.** The set score weights the rows (the `weight` column of `-ledger FILE`): half by a
 row's independence of the other rows, half by its measured share of what a history gives a strategy that times the
 market, rotates between categories, draws an income or holds; each weight between 0.25 and 4, their mean 1, the same
-in both worlds. Every figure below is read under those weights.
+in both worlds, measured on the two 0.25.1 sets. Every figure below is read under those weights.
 
 **The 0.25.1 recipes and sets re-solved under the bound.** `0.25.1-sp500` is member 0 of a 90-member set, `-slowcap`
-3.59, `-drawdowncap` 1.01, `-spikeneg` 0.59 and `-burstback` 0.5; `0.25.1-nasdaq` is member 0 of a 122-member set,
-`-slowcap` 2.57, `-drawdowncap` 0.76, `-spikeneg` 0.15 and the first-leg break; every member inside the bound. Against the published
-0.25.0 sets, read under this simulator: the S&P 65.24 to 34.48, -30.76 [-32.21, -28.23], the whitened surprise
-unchanged (-11.1 [-25.7, +2.7]); the Nasdaq 57.15 to 30.71, -26.43 [-29.01, -24.27], the whitened surprise -28.0
-[-48.1, -15.5]. 58 of the 60 published S&P members and 34 of the 38 Nasdaq members fail the bound. The S&P set returns
-`real yield change vs inflation corr` to its pool; the Nasdaq set that row, `vol coupling monthly corr`, `z beyond 3
-sds %`, `z beyond 4 sds %` and `vol doubling months %`. Known gaps (the record outside the central 95% of the pool;
-share of histories at or beyond the record, 2.5% the line): the S&P set on `vol coupling monthly corr`, 0.22% in
-0.25.0 to 1.72%, and `vol coupling quarterly corr`, 3.03% to 2.24% (the record below the pool on each: the model's
-losses lift its vol less than the record's do). The Nasdaq set has none: the break returns `decline length p50 y
-long` to its pool (3.14% of histories at or beyond the record).
+3.59, `-drawdowncap` 1.01, `-spikeneg` 0.59, `-burstback` 0.5 and the sector channel at 40 legs; `0.25.1-nasdaq` is
+member 0 of a 122-member set, `-slowcap` 2.57, `-drawdowncap` 0.76, `-spikeneg` 0.15 and the first-leg break; every
+member inside the bound. Against the published 0.25.0 sets, read under this simulator: the S&P 64.90 to 37.15, -27.75
+[-29.35, -24.79], the whitened surprise unchanged (-11.0 [-25.6, +2.8]), both sets at ten sector legs against the
+ten-industry record; the Nasdaq 51.83 to 30.07, -21.76 [-24.01, -19.99], the whitened surprise -28.0 [-48.1, -15.5].
+At 40 legs against the 40-industry record the S&P set reads 31.32, against 37.15 for the same members at ten legs
+(-5.84 [-8.07, -5.23]), and 31.92 with the six long sector rows counted. The release rule's three tests pass on both sets against 0.25.0. 58 of the 60 published S&P
+members and 34 of the 38 Nasdaq members fail the bound. The S&P set returns `real yield change vs inflation corr` to
+its pool; the Nasdaq set that row, `vol coupling monthly corr`, `z beyond 3 sds %`, `z beyond 4 sds %` and `vol
+doubling months %`. Known gaps (the record outside the central 95% of the pool; share of histories at or beyond the
+record, 2.5% the line): the S&P set on `vol coupling monthly corr`, 0.22% in 0.25.0 to 1.72%, and `vol coupling
+quarterly corr`, 3.03% to 2.24% (the record below the pool on each: the model's losses lift its vol less than the
+record's do). The Nasdaq set has none: the break returns `decline length p50 y long` to its pool (3.14% of histories
+at or beyond the record).
 
 **`Path::price_returns` on a path built without its kept returns** computes them from the price; it recursed without
 end.
+
+**The readers' log is the same bits in both twins.** Every natural log a reader takes of a finished path goes through
+`ln_strict` / `lnStrict`: fdlibm's algorithm, equal to `StrictMath.log` to the bit and under one ulp from the platform
+log, with `test-data/ln-parity` holding both twins to it. Full-precision readings (`-historyrows`) now agree between
+the twins except where the normal sampler's tail draw differs (the platform `log1p`, kept for the NumPy stream).
+Emitted paths are unchanged and `-validate` prints the same text on the 0.25.1 recipes; the simulation keeps `ln_det`.
 
 **The sector channel at 40 legs, with a trend that ends and a share count.** `-sectorchase` carries a share of a
 leg's relative return over the past year into its drift over the next (the record's industry trend is flat over
@@ -72,7 +81,8 @@ of the legs' returns that far back with the month's; `sector xs sd 10y / xs sd` 
 spread over their monthly one; `sector flow persistence 1y` (0.2256), `sector flow after return 1y` (0.0513)
 and `sector return after flow 3y` (-0.0405), rank correlations on the legs' share counts, absent while
 `-sectorflow` is off. Records in `sectors-2026-11-13.tsv`; bands from `record_bands -sectors DIR -block 5040
--legs 40` (20-year blocks, which the rows' look-back needs).
+-legs 40` (20-year blocks, which the rows' look-back needs). The S&P set holds the record inside its pool on all
+thirteen sector rows, between 12% and 56% of histories below the record (`sector flow persistence 1y` the lowest).
 
 **The sector legs' shape.** Four dials read on the record's 40 industries. `-sectorbetalift` is added to every
 leg's beta, so the legs' mean beta is 1 + the lift (the industries' mean beta is 1.06). `-sectoridiospread` is the sd
@@ -83,9 +93,9 @@ ref^flat x state^(1 - flat), where at 0 it rides the vol state whole (the indust
 dispersion has a mean 0.91 of its rms). `-sectorbetanoise k` adds k^2 x the primary's squared session return to a
 leg's own idio variance. Each is 0 off, bit-identical and written in a world's block and the sidecar's sector block
 only when on; the spread takes its draws, after the legs' other draws of the path, only when on. `0.25.1-sp500`
-carries lift 0.06, spread 0.25, flat 0.3 and noise 0.43 with idio 0.735, chase 0.23 and breadth 0.063 (level
-half-life 12 years, flow 0.085): on the 90-member set the ledger reads 31.40 against 37.02 at ten legs, the two
-vol coupling rows still missed. The legs reach no price.
+carries lift 0.06, spread 0.25, flat 0.3 and noise 0.43 with idio 0.735, chase 0.245 and breadth 0.063 (level
+half-life 8 years, flow 0.085; at a half-life of 12 the legs' 10-year spread stands 8% above the industries' for
+their monthly one). The legs reach no price.
 
 **The rate floor's stays.** Two rows read the floor's shape, which the two floor shares cannot: `rate floor stays
 per century`, how often a stay of three months or more under 0.50% starts, and `rate floor stay max years`, the

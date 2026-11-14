@@ -4654,7 +4654,7 @@ fn rate_after_spreads(reads: &[[f64; 2]], floor_record: f64) -> String {
     };
     let logs: Vec<f64> = reads
         .iter()
-        .map(|x| x[0].ln())
+        .map(|x| ms::ln_strict(x[0]))
         .filter(|v| v.is_finite())
         .collect();
     let shares: Vec<f64> = reads

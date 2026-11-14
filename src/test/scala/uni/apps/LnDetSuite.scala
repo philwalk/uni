@@ -1,6 +1,7 @@
 package uni.apps
 
 import munit.FunSuite
+import uni.*
 import uni.data.*
 
 /** `lnDet`, the deterministic natural log beside `expDet`: pinned to the bit at the same inputs as
@@ -39,6 +40,65 @@ class LnDetSuite extends FunSuite:
   test("lnDet's domain") {
     assert(MarketSim.lnDet(0.0).isNaN && MarketSim.lnDet(-1.0).isNaN && MarketSim.lnDet(Double.NaN).isNaN)
     assertEquals(MarketSim.lnDet(Double.PositiveInfinity), Double.PositiveInfinity)
+  }
+
+  private def bitsOf(x: Double): Long = java.lang.Double.doubleToRawLongBits(x)
+
+  /** `lnStrict` holds `x` to `StrictMath.log` to the bit and to the platform log within an ulp. */
+  private def assertStrict(x: Double): Unit =
+    val (got, want) = (MarketSim.lnStrict(x), StrictMath.log(x))
+    if want.isNaN then assert(got.isNaN, s"lnStrict($x) = $got")
+    else
+      assertEquals(bitsOf(got), bitsOf(want), f"lnStrict($x%s) = 0x${bitsOf(got)}%016X")
+      val native = math.log(x)
+      if native.isFinite then assert(math.abs(got - native) <= math.ulp(native), s"x $x: $got vs $native")
+
+  test("lnStrict is StrictMath.log to the bit") {
+    // SplitMix64: bit patterns over every magnitude, values near 1 from 2^-1 to 2^-52 away, daily
+    // price ratios and subnormals
+    var state = 0x9E3779B97F4A7C15L
+    def next(): Long =
+      state += 0x9E3779B97F4A7C15L
+      val z1 = (state ^ (state >>> 30)) * 0xBF58476D1CE4E5B9L
+      val z2 = (z1 ^ (z1 >>> 27)) * 0x94D049BB133111EBL
+      z2 ^ (z2 >>> 31)
+    def unit(): Double = (next() >>> 11) * (1.0 / 9007199254740992.0)
+    var i = 0
+    while i < 1200000 do
+      val x = i % 4 match
+        case 0 => java.lang.Double.longBitsToDouble(next() & 0x7fffffffffffffffL)
+        case 1 => 1.0 + (unit() - 0.5) * java.lang.Math.scalb(1.0, -((i / 4) % 52))
+        case 2 => 1.0 + (unit() - 0.5) * 0.08
+        case _ => java.lang.Double.longBitsToDouble(next() >>> (12 + (i / 4) % 52))
+      assertStrict(x)
+      i += 1
+  }
+
+  test("lnStrict's domain") {
+    assertEquals(MarketSim.lnStrict(0.0), Double.NegativeInfinity)
+    assertEquals(MarketSim.lnStrict(-0.0), Double.NegativeInfinity)
+    assert(MarketSim.lnStrict(-1.0).isNaN && MarketSim.lnStrict(Double.NegativeInfinity).isNaN)
+    assert(MarketSim.lnStrict(-java.lang.Double.MIN_VALUE).isNaN && MarketSim.lnStrict(Double.NaN).isNaN)
+    assertEquals(MarketSim.lnStrict(Double.PositiveInfinity), Double.PositiveInfinity)
+    assertEquals(bitsOf(MarketSim.lnStrict(1.0)), 0L)
+    Vector(java.lang.Double.MIN_VALUE, java.lang.Double.MIN_NORMAL, Double.MaxValue, 2.0, 0.5,
+           1.4142135623730951, 0.7071067811865476).foreach(assertStrict)
+  }
+
+  test("lnStrict reproduces the shared fixture") {
+    // the Rust twin's `det_math_tests` holds `ln_strict` to the same file
+    val p = s"${sys.props.getOrElse("user.dir", ".")}/test-data/ln-parity/scala-reference.txt".asPath
+    require(p.isFile, s"missing ${p.posx}")
+    val pairs = p.lines.iterator.map(_.trim).filter(l => l.nonEmpty && !l.startsWith("#")).map(_.split(' ')).toVector
+    assertEquals(pairs.length, 4000)
+    pairs.foreach: f =>
+      val x = java.lang.Double.longBitsToDouble(java.lang.Long.parseUnsignedLong(f(0), 16))
+      val got = MarketSim.lnStrict(x)
+      if f(1) == "nan" then assert(got.isNaN && StrictMath.log(x).isNaN, s"lnStrict($x) = $got")
+      else
+        val want = java.lang.Long.parseUnsignedLong(f(1), 16)
+        assertEquals(bitsOf(got), want, f"lnStrict($x%s) = 0x${bitsOf(got)}%016X")
+        assertEquals(bitsOf(StrictMath.log(x)), want, s"the fixture's line for $x is not StrictMath.log's")
   }
 
   test("expDet is total") {

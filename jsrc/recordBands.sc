@@ -2364,7 +2364,7 @@ object RecordBands {
     def sd(xs: Vector[Double]): Double =
       val m = xs.foldLeft(0.0)(_ + _) / xs.length
       math.sqrt(xs.foldLeft(0.0)((a, x) => a + (x - m) * (x - m)) / xs.length)
-    val logs   = reads.map(x => math.log(x(0))).filter(_.isFinite)
+    val logs   = reads.map(x => MarketSim.lnStrict(x(0))).filter(_.isFinite)
     val shares = reads.map(_(1)).filter(_.isFinite)
     f"sd log rate ${sd(logs)}%.3f, floor share sd over record ${sd(shares) / floorRecord}%.3f"
 

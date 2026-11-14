@@ -131,8 +131,12 @@ identically-zero columns, and blanking the sign there removes it.
 `exp`, `log` and `pow` that builds or evolves a path goes through `exp_det` / `ln_det` /
 `pow_det` (`expDet` / `lnDet` / `powDet`): the state, the emitted series and the
 `-emitvolparts` cells. A platform call there lets a one-ulp difference enter the state
-and compound. The readers, statistics of finished paths, keep the platform functions under
-the rendering rule above. One source of a bit difference remains, kept on purpose: `randn`
+and compound. The readers, statistics of finished paths, take their natural logs through
+`ln_strict` / `lnStrict` (fdlibm's `__ieee754_log`, equal to `StrictMath.log` to the bit, under
+one ulp, -inf at 0 as the platform log gives; `test-data/ln-parity` holds both twins to it), so
+a full-precision reading (`-historyrows`) is the same bits in both; their `exp` and `log1p` stay
+the platform's under the rendering rule above. `ln_det` stays the simulation's log: swapping it
+would move every path. One source of a bit difference remains, kept on purpose: `randn`
 calls the platform `log1p` in its tail and the platform `exp` in its wedge-acceptance test.
 Rust's match NumPy's bit for bit, so the generator reproduces NumPy's stream and that stream
 is a third reference; the JVM's differ by one ulp on about 2.5 tail draws per million, and a

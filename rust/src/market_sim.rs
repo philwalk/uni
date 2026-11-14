@@ -2340,8 +2340,8 @@ fn recipe_0251_sp500(mut w: World) -> World {
     w.sector_idio = 0.735;
     w.sector_drift_sd = 0.0;
     w.sector_drift_half = 0.75;
-    w.sector_chase = 0.23;
-    w.sector_level_half = 12.0;
+    w.sector_chase = 0.245;
+    w.sector_level_half = 8.0;
     w.sector_flow = 0.085;
     w.sector_breadth = 0.063;
     w.sector_beta_lift = 0.06;
@@ -6119,6 +6119,85 @@ pub fn ln_det(x: f64) -> f64 {
     (ef * LN2_HI + 2.0 * sum) + ef * LN2_LO
 }
 
+/// THE READERS' natural log: fdlibm's `__ieee754_log`, operation for operation in both twins and
+/// equal to Java's `StrictMath.log` TO THE BIT, so a statistic of a finished path is the same
+/// bits in both. Under one ulp from the true log, and total as the platform log is: NaN below 0
+/// and for NaN, -inf at +-0, +inf at +inf. `ln_det` stays the simulation's log: a path is a
+/// function of its bits.
+#[must_use]
+pub fn ln_strict(x: f64) -> f64 {
+    // fdlibm's constants, as BIT PATTERNS so the twins' are identical by inspection
+    const LN2_HI: f64 = f64::from_bits(0x3FE6_2E42_FEE0_0000);
+    const LN2_LO: f64 = f64::from_bits(0x3DEA_39EF_3579_3C76);
+    const TWO54: f64 = f64::from_bits(0x4350_0000_0000_0000);
+    const THIRD: f64 = f64::from_bits(0x3FD5_5555_5555_5555);
+    const LG1: f64 = f64::from_bits(0x3FE5_5555_5555_5593);
+    const LG2: f64 = f64::from_bits(0x3FD9_9999_9997_FA04);
+    const LG3: f64 = f64::from_bits(0x3FD2_4924_9422_9359);
+    const LG4: f64 = f64::from_bits(0x3FCC_71C5_1D8E_78AF);
+    const LG5: f64 = f64::from_bits(0x3FC7_4664_96CB_03DE);
+    const LG6: f64 = f64::from_bits(0x3FC3_9A09_D078_C69F);
+    const LG7: f64 = f64::from_bits(0x3FC2_F112_DF3E_5244);
+    const SIGN: u64 = 0x8000_0000_0000_0000;
+    let raw = x.to_bits();
+    if raw & !SIGN == 0 {
+        return f64::NEG_INFINITY;
+    }
+    if raw & SIGN != 0 {
+        return f64::NAN;
+    }
+    if (raw >> 52) == 0x7ff {
+        return x + x;
+    }
+    // a subnormal is scaled by 2^54 first, so the exponent field below is a normal's
+    let sub = (raw >> 52) == 0;
+    let bits = if sub { (x * TWO54).to_bits() } else { raw };
+    // the high word's 20 mantissa bits and the unbiased exponent, both exact in an i64
+    let hx = ((bits >> 32) & 0x000f_ffff).cast_signed();
+    let k0 = ((bits >> 52) & 0x7ff).cast_signed() - 1023 - if sub { 54 } else { 0 };
+    // i is 2^20 where the mantissa is past sqrt(2), which halves it into [sqrt(1/2), sqrt(2))
+    let i = (hx + 0x95f64) & 0x10_0000;
+    let high = (hx | (i ^ 0x3ff0_0000)).cast_unsigned();
+    let m = f64::from_bits((high << 32) | (bits & 0xffff_ffff));
+    let k = k0 + (i >> 20);
+    let dk = k as f64;
+    let f = m - 1.0;
+    if (0x000f_ffff & (2 + hx)) < 3 {
+        // |f| < 2^-20
+        if f == 0.0 {
+            return if k == 0 {
+                0.0
+            } else {
+                dk * LN2_HI + dk * LN2_LO
+            };
+        }
+        let r = f * f * (0.5 - THIRD * f);
+        return if k == 0 {
+            f - r
+        } else {
+            dk * LN2_HI - ((r - dk * LN2_LO) - f)
+        };
+    }
+    let s = f / (2.0 + f);
+    let z = s * s;
+    let w = z * z;
+    let t1 = w * (LG2 + w * (LG4 + w * LG6));
+    let t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)));
+    let r = t2 + t1;
+    if ((hx - 0x6147a) | (0x6b851 - hx)) > 0 {
+        let hfsq = 0.5 * f * f;
+        if k == 0 {
+            f - (hfsq - s * (hfsq + r))
+        } else {
+            dk * LN2_HI - ((hfsq - (s * (hfsq + r) + dk * LN2_LO)) - f)
+        }
+    } else if k == 0 {
+        f - s * (f - r)
+    } else {
+        dk * LN2_HI - ((s * (f - r) - dk * LN2_LO) - f)
+    }
+}
+
 /// The macro state's share of the recession's onset hazard (see `recess_credit`, `recess_infl`):
 /// exactly 0 with both dials off, so the hazard is bit-identical.
 fn recession_macro_onset(w: &World, lev_on: bool, borrow: f64, lev_slow: f64, infl: f64) -> f64 {
@@ -6560,8 +6639,8 @@ impl ChannelInputs {
                 let rv = 100.0 * (DAYS_PER_YEAR as f64 * (r2[i + h] - r2[i]) / h as f64).sqrt();
                 let f = self.vol_state[i] * (1.0 + macro_k::IVOL_AMP_SHARE * (self.amp[i] - 1.0));
                 if rv > 0.0 && f > 0.0 {
-                    s_liv += f.ln();
-                    s_lrv += rv.ln();
+                    s_liv += ln_strict(f);
+                    s_lrv += ln_strict(rv);
                     c += 1.0;
                 }
             }
@@ -11132,7 +11211,7 @@ fn price_loop(w: &World, years: usize, seed: u64, mut tape: Option<&mut BondTape
 
 fn daily_returns(px: &[f64]) -> Vec<f64> {
     (0..px.len() - 1)
-        .map(|i| (px[i + 1] / px[i]).ln())
+        .map(|i| ln_strict(px[i + 1] / px[i]))
         .collect()
 }
 
@@ -11419,7 +11498,7 @@ fn crash_points(series: &[f64], cpi: &[f64], eps: &[Episode]) -> Vec<[f64; 2]> {
     }
     eps.iter()
         .filter_map(|ep| {
-            crash_seen(cpi, ep).map(|x| [x, (series[ep.trough] / series[ep.peak]).ln() * 100.0])
+            crash_seen(cpi, ep).map(|x| [x, ln_strict(series[ep.trough] / series[ep.peak]) * 100.0])
         })
         .collect()
 }
@@ -11432,14 +11511,14 @@ fn crash_points_net(series: &[f64], cpi: &[f64], eps: &[Episode]) -> Vec<[f64; 2
     if series.len() < 2 {
         return Vec::new();
     }
-    let mu = (series[series.len() - 1] / series[0]).ln() / (series.len() - 1) as f64;
+    let mu = ln_strict(series[series.len() - 1] / series[0]) / (series.len() - 1) as f64;
     eps.iter()
         .filter_map(|ep| {
             crash_seen(cpi, ep).map(|x| {
                 let drift = mu * (ep.trough - ep.peak) as f64;
                 [
                     x,
-                    ((series[ep.trough] / series[ep.peak]).ln() - drift) * 100.0,
+                    (ln_strict(series[ep.trough] / series[ep.peak]) - drift) * 100.0,
                 ]
             })
         })
@@ -11809,7 +11888,7 @@ fn gbm_depth_share(rung: f64, vol_pct: f64, ret_vol: f64) -> f64 {
     if vol_pct <= 0.0 {
         f64::NAN
     } else {
-        (-2.0 * ret_vol * (1.0 / (1.0 - rung)).ln() / (vol_pct / 100.0)).exp()
+        (-2.0 * ret_vol * ln_strict(1.0 / (1.0 - rung)) / (vol_pct / 100.0)).exp()
     }
 }
 
@@ -16315,11 +16394,11 @@ fn wings_of(price: &[f64], fund: &[f64]) -> (f64, f64, f64) {
         return (0.0, 0.0, 0.0);
     }
     let mu = 1.0 / (BUST_MEAN_YEARS * DAYS_PER_YEAR as f64);
-    let mut reference = (price[0] / fund[0]).ln();
+    let mut reference = ln_strict(price[0] / fund[0]);
     let mut up = 0usize;
     let mut down = 0usize;
     for i in 0..n {
-        let g = (price[i] / fund[i]).ln();
+        let g = ln_strict(price[i] / fund[i]);
         if i >= burn {
             let lvl = g - reference;
             if lvl > 0.5 {
@@ -16344,7 +16423,7 @@ fn gap_drift_of(price: &[f64], fund: &[f64]) -> (f64, f64, f64, f64) {
     let mut e = 0.0f64;
     let mut l = 0.0f64;
     for i in 0..n {
-        let g = (price[i] / fund[i]).ln();
+        let g = ln_strict(price[i] / fund[i]);
         if i < early_end {
             e += g;
         } else if i >= late_from {
@@ -16375,7 +16454,7 @@ fn gap_spread_of(price: &[f64], fund: &[f64]) -> (f64, f64) {
     let mut e2 = 0.0f64;
     let mut l2 = 0.0f64;
     for i in 0..n {
-        let g = (price[i] / fund[i]).ln();
+        let g = ln_strict(price[i] / fund[i]);
         if i < early_end {
             e2 += g * g;
         } else if i >= late_from {
@@ -16777,7 +16856,7 @@ pub fn basket_read(rp: &[f64], rn: &[Vec<f64>], pairs: &[(usize, usize)]) -> Bas
             if m == 0 {
                 f64::NAN
             } else {
-                (s / m as f64).ln()
+                ln_strict(s / m as f64)
             }
         })
         .collect();
@@ -17382,7 +17461,7 @@ pub fn basket_ruler_tsv(
     }
     let rp: Vec<f64> = ts
         .iter()
-        .map(|&t| (c.index_close[t] / c.index_close[t - 1]).ln())
+        .map(|&t| ln_strict(c.index_close[t] / c.index_close[t - 1]))
         .collect();
     let rn: Vec<Vec<f64>> = c
         .closes
@@ -17391,7 +17470,7 @@ pub fn basket_ruler_tsv(
             ts.iter()
                 .map(|&t| {
                     if cl[t].is_finite() && cl[t - 1].is_finite() {
-                        (cl[t] / cl[t - 1]).ln()
+                        ln_strict(cl[t] / cl[t - 1])
                     } else {
                         f64::NAN
                     }
@@ -18148,7 +18227,7 @@ fn open_stats(sims: &[Path]) -> Option<OpenStats> {
     let per: Vec<(f64, f64, f64)> = sims
         .par_iter()
         .map(|s| {
-            let lp: Vec<f64> = s.price.iter().map(|v| v.ln()).collect();
+            let lp: Vec<f64> = s.price.iter().map(|&v| ln_strict(v)).collect();
             let n = lp.len() - 1;
             let o: Vec<f64> = (0..n).map(|t| s.log_open[t + 1] - lp[t]).collect();
             let r: Vec<f64> = (0..n).map(|t| lp[t + 1] - lp[t]).collect();
@@ -18632,7 +18711,7 @@ struct PriceFrame {
 }
 
 fn price_frame(price: &[f64]) -> PriceFrame {
-    let lp: Vec<f64> = price.iter().map(|v| v.ln()).collect();
+    let lp: Vec<f64> = price.iter().map(|&v| ln_strict(v)).collect();
     let fwd60 = fwd_return(&lp, 60);
     let episodes = |thr: f64| -> Vec<DdSpan> {
         dd_spans(price, thr)
@@ -18722,8 +18801,8 @@ fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
     let warnings = warning_counts(&cond_held, spans);
     let inv: Vec<bool> = m.slope.iter().map(|v| *v < 0.0).collect();
     let rv = fwd_realized_vol(lp, 21);
-    let l_iv: Vec<f64> = m.ivol.iter().map(|v| v.ln()).collect();
-    let l_rv: Vec<f64> = rv.iter().map(|v| v.ln()).collect();
+    let l_iv: Vec<f64> = m.ivol.iter().map(|&v| ln_strict(v)).collect();
+    let l_rv: Vec<f64> = rv.iter().map(|&v| ln_strict(v)).collect();
     let d_ok: Vec<f64> = (0..lp.len())
         .filter(|&i| l_rv[i].is_finite())
         .map(|i| l_iv[i] - l_rv[i])
@@ -19440,7 +19519,7 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
         s.price
             .iter()
             .zip(s.fundamental.iter())
-            .map(|(p, f)| (p / f).ln())
+            .map(|(p, f)| ln_strict(p / f))
             .collect()
     } else {
         Vec::new()
@@ -19581,7 +19660,7 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
             f64::NAN
         },
         ann_ret: if eq {
-            (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0
+            ln_strict(s.price[s.price.len() - 1] / s.price[0]) / years as f64 * 100.0
         } else {
             f64::NAN
         },
@@ -19732,7 +19811,7 @@ fn path_read(s: &Path, years: usize, nd: PathNeeds) -> PathRead {
             }
         },
         infl_ann: if rest {
-            (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0
+            ln_strict(s.cpi[s.cpi.len() - 1] / s.cpi[0]) / years as f64 * 100.0
         } else {
             f64::NAN
         },
@@ -25322,7 +25401,7 @@ pub fn ndtri(p: f64) -> f64 {
             + 1.0;
         return num / den;
     }
-    let r = (-(if q <= 0.0 { p } else { 1.0 - p }).ln()).sqrt();
+    let r = (-ln_strict(if q <= 0.0 { p } else { 1.0 - p })).sqrt();
     let x = if r <= 5.0 {
         let r = r - 1.6;
         let num = ((((((7.74545014278341407640e-4 * r + 2.27238449892691845833e-2) * r
@@ -25401,13 +25480,13 @@ fn ln_gamma(x: f64) -> f64 {
     ];
     let mut y = x;
     let tmp = x + 5.242_187_5;
-    let tmp = (x + 0.5) * tmp.ln() - tmp;
+    let tmp = (x + 0.5) * ln_strict(tmp) - tmp;
     let mut ser = 0.999_999_999_999_997_1;
     for c in COF {
         y += 1.0;
         ser += c / y;
     }
-    tmp + (2.506_628_274_631_000_7 * ser / x).ln()
+    tmp + ln_strict(2.506_628_274_631_000_7 * ser / x)
 }
 
 /// The regularized upper incomplete gamma Q(a, x) (series below a + 1, Lentz's continued fraction
@@ -25429,7 +25508,7 @@ fn gamma_q(a: f64, x: f64) -> f64 {
                 break;
             }
         }
-        1.0 - sum * (-x + a * x.ln() - gln).exp()
+        1.0 - sum * (-x + a * ln_strict(x) - gln).exp()
     } else {
         let fpmin = 1e-300;
         let mut b = x + 1.0 - a;
@@ -25454,7 +25533,7 @@ fn gamma_q(a: f64, x: f64) -> f64 {
                 break;
             }
         }
-        (-x + a * x.ln() - gln).exp() * h
+        (-x + a * ln_strict(x) - gln).exp() * h
     }
 }
 
@@ -27279,9 +27358,9 @@ pub fn fitness(
             } else if ADDITIVE_TARGETS.contains(&name) {
                 weight * (m - target).abs() / target.abs()
             } else if scala_sign(m) != scala_sign(target) && target != 0.0 {
-                weight * (2.0 + (m.abs().max(1e-6) / target.abs()).ln().abs())
+                weight * (2.0 + ln_strict(m.abs().max(1e-6) / target.abs()).abs())
             } else {
-                weight * (m.abs().max(1e-6) / target.abs()).ln().abs()
+                weight * ln_strict(m.abs().max(1e-6) / target.abs()).abs()
             };
             (name, m, target, term)
         })
@@ -27418,7 +27497,7 @@ impl Indicators {
             let mut rv = vec![0.0f64; n];
             let mut ew = 0.01 * 0.01f64;
             for i in 1..n {
-                let r = (px[i] / px[i - 1]).ln();
+                let r = ln_strict(px[i] / px[i - 1]);
                 ew = 0.94 * ew + 0.06 * r * r;
                 rv[i] = (ew * DAYS_PER_YEAR as f64).sqrt();
             }
@@ -27718,7 +27797,7 @@ fn arm_path(p: &Path, e: &[f64], cost: f64, safe: Safe) -> ArmPath {
     let real_eq = (&MatD::apply(&eq)
         - &MatD::apply(
             &(0..n)
-                .map(|k| (p.cpi[k] / p.cpi[0]).ln())
+                .map(|k| ln_strict(p.cpi[k] / p.cpi[0]))
                 .collect::<Vec<f64>>(),
         ))
         .toArray();
@@ -27857,8 +27936,8 @@ impl Outcome {
 }
 
 fn fundamental_led(p: &Path, ep: Episode) -> bool {
-    let pd = (p.price[ep.trough] / p.price[ep.peak]).ln();
-    let fd = (p.fundamental[ep.trough] / p.fundamental[ep.peak]).ln();
+    let pd = ln_strict(p.price[ep.trough] / p.price[ep.peak]);
+    let fd = ln_strict(p.fundamental[ep.trough] / p.fundamental[ep.peak]);
     fd <= 0.5 * pd
 }
 
@@ -27905,7 +27984,7 @@ fn evaluate(
             (
                 *fl,
                 eq[end] - eq[ep.peak],
-                (p.price[end] / p.price[ep.peak]).ln(),
+                ln_strict(p.price[end] / p.price[ep.peak]),
             )
         })
         .collect();
@@ -31334,9 +31413,9 @@ pub fn dd_episodes(px: &[f64], threshold: f64) -> Vec<DdEpisode> {
     for s in dd_spans(px, threshold) {
         let (lo, trough, hi, depth, censored) = (s.lo, s.trough, s.hi, s.depth, s.censored);
         let base = lo.saturating_sub(1);
-        let total = (px[trough] / px[base]).ln();
+        let total = ln_strict(px[trough] / px[base]);
         let worst = (lo.max(1)..=trough)
-            .map(|k| (px[k] / px[k - 1]).ln())
+            .map(|k| ln_strict(px[k] / px[k - 1]))
             .fold(f64::INFINITY, f64::min);
         let worst = if worst.is_finite() { worst } else { 0.0 };
         out.push(DdEpisode {
@@ -36302,7 +36381,7 @@ fn run_main(args: &[String], keep: bool) -> Option<SeedRead> {
         .collect();
     let ann_ret: Vec<f64> = sims
         .iter()
-        .map(|s| (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0)
+        .map(|s| ln_strict(s.price[s.price.len() - 1] / s.price[0]) / years as f64 * 100.0)
         .collect();
 
     println!(
@@ -49123,6 +49202,76 @@ mod det_math_tests {
     fn ln_det_domain() {
         assert!(ln_det(0.0).is_nan() && ln_det(-1.0).is_nan() && ln_det(f64::NAN).is_nan());
         assert!(ln_det(f64::INFINITY).is_infinite() && ln_det(f64::INFINITY) > 0.0);
+    }
+
+    /// `ln_strict` against `test-data/ln-parity`, `StrictMath.log`'s results at the same inputs:
+    /// `LnDetSuite` holds the Scala twin to the same file.
+    #[test]
+    fn ln_strict_reproduces_the_shared_fixture() {
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../test-data/ln-parity/scala-reference.txt"
+        ))
+        .expect("the ln fixture");
+        let mut seen = 0;
+        for line in text
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        {
+            let (x, want) = line.trim().split_once(' ').expect("two fields");
+            let x = f64::from_bits(u64::from_str_radix(x, 16).expect("input bits"));
+            let got = ln_strict(x);
+            if want == "nan" {
+                assert!(got.is_nan(), "ln_strict({x}) = {got}, NaN in the fixture");
+            } else {
+                let want = u64::from_str_radix(want, 16).expect("result bits");
+                assert_eq!(
+                    got.to_bits(),
+                    want,
+                    "ln_strict({x}) = {:#018X}",
+                    got.to_bits()
+                );
+            }
+            seen += 1;
+        }
+        assert_eq!(seen, 4000);
+    }
+
+    #[test]
+    fn ln_strict_is_within_an_ulp_of_the_native_log() {
+        // SplitMix64 bit patterns over every magnitude, then daily price ratios
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let z = (state ^ (state >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            let z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        let mut seen = 0;
+        while seen < 200_000 {
+            let bits = next() & 0x7fff_ffff_ffff_ffff;
+            let x = if seen % 2 == 0 {
+                f64::from_bits(bits)
+            } else {
+                1.0 + ((bits >> 11) as f64 / 9_007_199_254_740_992.0 - 0.5) * 0.08
+            };
+            if x.is_finite() && x > 0.0 {
+                let (a, b) = (ln_strict(x), x.ln());
+                let ulp = f64::from_bits(b.abs().to_bits() + 1) - b.abs();
+                assert!((a - b).abs() <= ulp, "x {x}: {a} vs {b}");
+                seen += 1;
+            }
+        }
+    }
+
+    #[test]
+    fn ln_strict_domain() {
+        assert_eq!(ln_strict(0.0), f64::NEG_INFINITY);
+        assert_eq!(ln_strict(-0.0), f64::NEG_INFINITY);
+        assert!(ln_strict(-1.0).is_nan() && ln_strict(f64::NEG_INFINITY).is_nan());
+        assert!(ln_strict(-f64::from_bits(1)).is_nan() && ln_strict(f64::NAN).is_nan());
+        assert_eq!(ln_strict(f64::INFINITY), f64::INFINITY);
+        assert_eq!(ln_strict(1.0).to_bits(), 0);
     }
 
     /// `exp_det` past the normal range, pinned to the same bits in `LnDetSuite`: the subnormals

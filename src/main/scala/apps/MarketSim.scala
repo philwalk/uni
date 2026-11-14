@@ -2848,8 +2848,8 @@ object MarketSim:
                                       yieldBeta = 0.0012412657, yieldLag = 40.329130, expAnchor = 0.45902738,
                                       yieldAnchor = 0.64036667, volFeedback = 0.29804100, valueCap = 0.0074048811,
                                       valueCapFall = 0.0043274899, recessSpread = 0.18904620,
-                                      recessTransient = 0.27810874, sectorChase = 0.23000000,
-                                      sectorLevelHalf = 12.000000, sectorFlow = 0.085000000,
+                                      recessTransient = 0.27810874, sectorChase = 0.24500000,
+                                      sectorLevelHalf = 8.0000000, sectorFlow = 0.085000000,
                                       sectorBreadth = 0.063000000, sectorBetaLift = 0.060000000,
                                       sectorIdioSpread = 0.25000000, sectorIdioFlat = 0.30000000,
                                       sectorBetaNoise = 0.43000000, noiseScale = 1.1810511, declineVol = 0.46740815,
@@ -3664,6 +3664,61 @@ object MarketSim:
         k += 2
       (e * Ln2Hi + 2.0 * sum) + e * Ln2Lo
 
+  /** THE READERS' natural log: fdlibm's `__ieee754_log`, operation for operation in both twins and
+    * equal to `StrictMath.log` TO THE BIT, so a statistic of a finished path is the same bits in
+    * both.  Under one ulp from the true log, and total as the platform log is: NaN below 0 and for
+    * NaN, -inf at +-0, +inf at +inf.  `lnDet` stays the simulation's log: a path is a function of
+    * its bits. */
+  def lnStrict(x: Double): Double =
+    val raw = java.lang.Double.doubleToRawLongBits(x)
+    if (raw & 0x7fffffffffffffffL) == 0L then Double.NegativeInfinity
+    else if raw < 0L then Double.NaN
+    else if (raw >>> 52) == 0x7ffL then x + x
+    else
+      // fdlibm's constants, as BIT PATTERNS so the twins' are identical by inspection
+      val Ln2Hi = java.lang.Double.longBitsToDouble(0x3FE62E42FEE00000L)
+      val Ln2Lo = java.lang.Double.longBitsToDouble(0x3DEA39EF35793C76L)
+      val Two54 = java.lang.Double.longBitsToDouble(0x4350000000000000L)
+      val Third = java.lang.Double.longBitsToDouble(0x3FD5555555555555L)
+      val Lg1   = java.lang.Double.longBitsToDouble(0x3FE5555555555593L)
+      val Lg2   = java.lang.Double.longBitsToDouble(0x3FD999999997FA04L)
+      val Lg3   = java.lang.Double.longBitsToDouble(0x3FD2492494229359L)
+      val Lg4   = java.lang.Double.longBitsToDouble(0x3FCC71C51D8E78AFL)
+      val Lg5   = java.lang.Double.longBitsToDouble(0x3FC7466496CB03DEL)
+      val Lg6   = java.lang.Double.longBitsToDouble(0x3FC39A09D078C69FL)
+      val Lg7   = java.lang.Double.longBitsToDouble(0x3FC2F112DF3E5244L)
+      // a subnormal is scaled by 2^54 first, so the exponent field below is a normal's
+      val sub  = (raw >>> 52) == 0L
+      val bits = if sub then java.lang.Double.doubleToRawLongBits(x * Two54) else raw
+      // the high word's 20 mantissa bits and the unbiased exponent, both exact in a Long
+      val hx = (bits >>> 32) & 0x000fffffL
+      val k0 = ((bits >>> 52) & 0x7ffL) - 1023L - (if sub then 54L else 0L)
+      // i is 2^20 where the mantissa is past sqrt(2), which halves it into [sqrt(1/2), sqrt(2))
+      val i  = (hx + 0x95f64L) & 0x100000L
+      val m  = java.lang.Double.longBitsToDouble(((hx | (i ^ 0x3ff00000L)) << 32) | (bits & 0xffffffffL))
+      val k  = k0 + (i >> 20)
+      val dk = k.toDouble
+      val f  = m - 1.0
+      if (0x000fffffL & (2L + hx)) < 3L then
+        // |f| < 2^-20
+        if f == 0.0 then (if k == 0L then 0.0 else dk * Ln2Hi + dk * Ln2Lo)
+        else
+          val r = f * f * (0.5 - Third * f)
+          if k == 0L then f - r else dk * Ln2Hi - ((r - dk * Ln2Lo) - f)
+      else
+        val s  = f / (2.0 + f)
+        val z  = s * s
+        val w  = z * z
+        val t1 = w * (Lg2 + w * (Lg4 + w * Lg6))
+        val t2 = z * (Lg1 + w * (Lg3 + w * (Lg5 + w * Lg7)))
+        val r  = t2 + t1
+        if ((hx - 0x6147aL) | (0x6b851L - hx)) > 0L then
+          val hfsq = 0.5 * f * f
+          if k == 0L then f - (hfsq - s * (hfsq + r))
+          else dk * Ln2Hi - ((hfsq - (s * (hfsq + r) + dk * Ln2Lo)) - f)
+        else if k == 0L then f - s * (f - r)
+        else dk * Ln2Hi - ((s * (f - r) - dk * Ln2Lo) - f)
+
   /** tanh from `expDet` via (e^2x - 1)/(e^2x + 1), so the twins agree to the bit; past +-20 the
     * guard returns the sign exactly (1 - tanh(20) ~ 8e-18, below one ulp of 1.0).  Both squash
     * sites use it -- the cap term and the momentum crowd's `trendPos`. */
@@ -3986,8 +4041,8 @@ object MarketSim:
           val rv = 100.0 * math.sqrt(DaysPerYear.toDouble * (r2(i + h) - r2(i)) / h)
           val f  = volState(i) * (1.0 + MacroK.IvolAmpShare * (amp(i) - 1.0))
           if rv > 0.0 && f > 0.0 then
-            sLiv += math.log(f)
-            sLrv += math.log(rv)
+            sLiv += lnStrict(f)
+            sLrv += lnStrict(rv)
             c += 1.0
         i += 1
       (sLiv, sLrv, c)
@@ -7037,7 +7092,7 @@ object MarketSim:
     val out = new Array[Double](math.max(px.length - 1, 0))
     var i = 0
     while i < out.length do
-      out(i) = math.log(px(i + 1) / px(i))
+      out(i) = lnStrict(px(i + 1) / px(i))
       i += 1
     out
 
@@ -7246,7 +7301,7 @@ object MarketSim:
     * series. */
   def crashPoints(series: Array[Double], cpi: Array[Double], eps: Vector[Episode]): Vector[(Double, Double)] =
     if series.isEmpty then Vector.empty
-    else eps.flatMap(ep => crashSeen(cpi, ep).map(x => (x, math.log(series(ep.trough) / series(ep.peak)) * 100.0)))
+    else eps.flatMap(ep => crashSeen(cpi, ep).map(x => (x, lnStrict(series(ep.trough) / series(ep.peak)) * 100.0)))
 
   /** `crashPoints` net of `series`' drift: each decline's log move less the series' mean session
     * log move over the whole path times the decline's sessions, in percent.  A series unrelated to
@@ -7255,9 +7310,9 @@ object MarketSim:
   def crashPointsNet(series: Array[Double], cpi: Array[Double], eps: Vector[Episode]): Vector[(Double, Double)] =
     if series.length < 2 then Vector.empty
     else
-      val mu = math.log(series.last / series.head) / (series.length - 1)
+      val mu = lnStrict(series.last / series.head) / (series.length - 1)
       eps.flatMap(ep => crashSeen(cpi, ep).map(x =>
-        (x, (math.log(series(ep.trough) / series(ep.peak)) - mu * (ep.trough - ep.peak)) * 100.0)))
+        (x, (lnStrict(series(ep.trough) / series(ep.peak)) - mu * (ep.trough - ep.peak)) * 100.0)))
 
   /** Inflation seen (yoy, pp) closer than this is one rate: a constant rate carries ~1e-13 of
     * noise. */
@@ -7348,7 +7403,7 @@ object MarketSim:
     * this volatility and return per unit volatility.  Closed form; nothing here is fitted. */
   def gbmDepthShare(rung: Double, volPct: Double, retVol: Double): Double =
     if volPct <= 0.0 then Double.NaN
-    else math.exp(-2.0 * retVol * math.log(1.0 / (1.0 - rung)) / (volPct / 100.0))
+    else math.exp(-2.0 * retVol * lnStrict(1.0 / (1.0 - rung)) / (volPct / 100.0))
 
   /** What a real equity fund of this volatility and return spends more than `rung` below its peak.
     * NaN where the correction is non-positive -- below ~2% volatility for the deep rung, far under
@@ -7722,7 +7777,7 @@ object MarketSim:
         if x.isFinite then
           s += math.exp(x); m += 1
         k += 1
-      if m == 0 then Double.NaN else math.log(s / m)
+      if m == 0 then Double.NaN else lnStrict(s / m)
     }
     val perName = rn.zip(spans).map { case (r, (lo, hi)) =>
       val (cnt, saa, sbb, _) = momentsOver(r, rp, lo, hi)
@@ -8024,9 +8079,9 @@ object MarketSim:
     val s = ts.length
     if s < minSessions then Left(s"the window holds $s sessions, under the $minSessions a ruler reads")
     else
-      val rp = ts.map(t => math.log(c.indexClose(t) / c.indexClose(t - 1))).toArray
+      val rp = ts.map(t => lnStrict(c.indexClose(t) / c.indexClose(t - 1))).toArray
       val rn = c.closes.map(cl => ts.map(t =>
-        if cl(t).isFinite && cl(t - 1).isFinite then math.log(cl(t) / cl(t - 1)) else Double.NaN).toArray)
+        if cl(t).isFinite && cl(t - 1).isFinite then lnStrict(cl(t) / cl(t - 1)) else Double.NaN).toArray)
       val missing = c.names.indices.find(k => !rn(k).exists(_.isFinite))
       missing match
         case Some(k) => Left(s"${c.names(k)} has no return in the window")
@@ -8250,7 +8305,7 @@ object MarketSim:
     if sims.isEmpty || sims.head.logOpen.isEmpty then None
     else
       val per = parMap(sims) { s =>
-        val lp = s.price.map(math.log)
+        val lp = s.price.map(lnStrict)
         val n  = lp.length - 1
         val o  = Array.tabulate(n)(t => s.logOpen(t + 1) - lp(t))
         val r  = Array.tabulate(n)(t => lp(t + 1) - lp(t))
@@ -8559,7 +8614,7 @@ object MarketSim:
                                             spans10: Vector[DdSpan])
 
   private[apps] def priceFrame(price: Array[Double]): PriceFrame =
-    val lp = price.map(math.log)
+    val lp = price.map(lnStrict)
     PriceFrame(lp, fwdReturn(lp, 60), ddSpans(price, 0.20).filter(_.lo - 1 >= RankWindow),
                ddSpans(price, 0.10).filter(_.lo - 1 >= RankWindow))
 
@@ -8655,8 +8710,8 @@ object MarketSim:
     val hz = Vector(hazardCounts(spans, 63), hazardCounts(spans, 252), hazardCounts(spans10, 63))
     val inv   = m.slope.map(_ < 0.0)
     val rv    = fwdRealizedVol(lp, 21)
-    val lIv   = m.ivol.map(math.log)
-    val lRv   = rv.map(math.log)
+    val lIv   = m.ivol.map(lnStrict)
+    val lRv   = rv.map(lnStrict)
     val diffs = Array.tabulate(lp.length)(i => if lRv(i).isFinite then lIv(i) - lRv(i) else Double.NaN)
     val dOk   = diffs.filter(_.isFinite)
     (Vector(rankMember(m.spread), slopeM, condM, rankMember(m.ivol), rankMember(m.yield10),
@@ -9241,8 +9296,8 @@ object MarketSim:
       i = 1
       while i < n do
         if inRegime(i) then
-          a(j) = math.log(sp.price(i) / sp.price(i - 1))
-          b(j) = math.log(sp.bond(i) / sp.bond(i - 1))
+          a(j) = lnStrict(sp.price(i) / sp.price(i - 1))
+          b(j) = lnStrict(sp.bond(i) / sp.bond(i - 1))
           j += 1
         i += 1
       pearson(a, b)
@@ -9253,7 +9308,7 @@ object MarketSim:
         val g = new Array[Double](len)
         var i = 0
         while i < len do
-          g(i) = math.log(sp.price(i) / sp.fundamental(i))
+          g(i) = lnStrict(sp.price(i) / sp.fundamental(i))
           i += 1
         // left folds from the first element, as `Array.sum` reduces; no squared copy
         var sum = g(0)
@@ -9271,7 +9326,7 @@ object MarketSim:
     def maxOverOf: Double =
       var mx = Double.MinValue; var i = 0
       while i < sp.price.length do
-        val v = math.log(sp.price(i) / sp.fundamental(i)); if v > mx then mx = v; i += 1
+        val v = lnStrict(sp.price(i) / sp.fundamental(i)); if v > mx then mx = v; i += 1
       mx
     def tailHedgeOf: Double =
       // counted then filled, in session order, where a boxed index sequence, two mapped copies and
@@ -9288,8 +9343,8 @@ object MarketSim:
       i = 1
       while i < n do
         if sp.inflPress(i) <= InflRegimeEdge then
-          re(j) = math.log(sp.price(i) / sp.price(i - 1))
-          rb(j) = math.log(sp.bond(i) / sp.bond(i - 1))
+          re(j) = lnStrict(sp.price(i) / sp.price(i - 1))
+          rb(j) = lnStrict(sp.bond(i) / sp.bond(i - 1))
           j += 1
         i += 1
       val q = finitePctiles(re, Array(0.10))(0)
@@ -9350,7 +9405,7 @@ object MarketSim:
           }
         else VarRatio250Eras.map(_ => Double.NaN),
       retAc1 = if rest then levelAutocorr(r, 1) else Double.NaN,
-      annRet = if eq then math.log(sp.price.last / sp.price.head) / years * 100.0 else Double.NaN,
+      annRet = if eq then lnStrict(sp.price.last / sp.price.head) / years * 100.0 else Double.NaN,
       divYield = if sp.divYield.isEmpty || !rest then Double.NaN else sp.divYield.sum / sp.divYield.length,
       // Median over non-overlapping BondVolYears windows, pooled across paths -- see BondVolYears
       // for why this row alone is windowed.  A path shorter than one window contributes itself, so
@@ -9410,7 +9465,7 @@ object MarketSim:
       gapEarly = gd._1, gapEarlyN = gd._2, gapLate = gd._3, gapLateN = gd._4,
       gapEarly2 = gs._1, gapLate2 = gs._2,
       tailHedge = if br then tailHedgeOf else Double.NaN,
-      inflAnn = if rest then math.log(sp.cpi.last / sp.cpi.head) / years * 100.0 else Double.NaN)
+      inflAnn = if rest then lnStrict(sp.cpi.last / sp.cpi.head) / years * 100.0 else Double.NaN)
 
   def measure(sims: Vector[Path], years: Int): WorldStats = measureNeeds(sims, years, PathNeeds.All)
 
@@ -11647,8 +11702,8 @@ object MarketSim:
         if m.isNaN then weight * 4.0
         else if AdditiveTargets.contains(name) then weight * math.abs(m - target) / math.abs(target)
         else if m.sign != target.sign && target != 0.0 then
-          weight * (2.0 + math.abs(math.log(math.abs(m).max(1e-6) / math.abs(target))))
-        else weight * math.abs(math.log(math.abs(m).max(1e-6) / math.abs(target)))
+          weight * (2.0 + math.abs(lnStrict(math.abs(m).max(1e-6) / math.abs(target))))
+        else weight * math.abs(lnStrict(math.abs(m).max(1e-6) / math.abs(target)))
       (name, m, target, term)
     }
     val gatePenalty = gateChecks(a, st).count(!_._2) * 0.5
@@ -11691,7 +11746,7 @@ object MarketSim:
       var ew = 0.01 * 0.01
       var i  = 1
       while i < n do
-        val r = math.log(px(i) / px(i - 1))
+        val r = lnStrict(px(i) / px(i - 1))
         ew = 0.94 * ew + 0.06 * r * r
         rv(i) = math.sqrt(ew * DaysPerYear)
         i += 1
@@ -11857,8 +11912,8 @@ object MarketSim:
     case Cash, Bond
 
   def fundamentalLed(p: Path, ep: Episode): Boolean =
-    val pd = math.log(p.price(ep.trough) / p.price(ep.peak))
-    val fd = math.log(p.fundamental(ep.trough) / p.fundamental(ep.peak))
+    val pd = lnStrict(p.price(ep.trough) / p.price(ep.peak))
+    val fd = lnStrict(p.fundamental(ep.trough) / p.fundamental(ep.peak))
     fd <= 0.5 * pd
 
   final case class ArmPath(logEq: Array[Double], realLogEq: Array[Double], steps: Array[Double],
@@ -11887,7 +11942,7 @@ object MarketSim:
     val steps = eHeld * eqRets + (1.0 - eHeld) * safeRets - costs
     val eq    = new Array[Double](n)
     System.arraycopy(steps.cumsum.toArray, 0, eq, 1, n - 1)
-    val realEq = (MatD(eq) - MatD(Array.tabulate(n)(k => math.log(p.cpi(k) / p.cpi(0))))).toArray
+    val realEq = (MatD(eq) - MatD(Array.tabulate(n)(k => lnStrict(p.cpi(k) / p.cpi(0))))).toArray
     ArmPath(eq, realEq, steps.toArray, e.sum / e.length,
             dE.sum, (dE * liqT).sum, costs.sum, eqRets.sum, safeRets.sum)
 
@@ -11914,7 +11969,7 @@ object MarketSim:
     val flat = (me * ap.eqRetSum + (1.0 - me) * ap.safeRetSum) / years * 100.0
     val perEp = eps.zip(fundLed).map { (ep, fl) =>
       val end = if ep.recovered >= 0 then ep.recovered else n - 1
-      (fl, eq(end) - eq(ep.peak), math.log(p.price(end) / p.price(ep.peak)))
+      (fl, eq(end) - eq(ep.peak), lnStrict(p.price(end) / p.price(ep.peak)))
     }
     (Outcome(annG, annN, mdd * 100.0, mddR * 100.0, me, annG - flat, annN - flat,
              churn / years, effChurn / years, swrMed, swrLow), perEp)
@@ -14866,12 +14921,12 @@ object MarketSim:
     if n <= burn then (0.0, 0.0, 0.0)
     else
       val mu = 1.0 / (BustMeanYears * DaysPerYear)
-      var ref = math.log(price(0) / fund(0))
+      var ref = lnStrict(price(0) / fund(0))
       var up = 0
       var down = 0
       var i = 0
       while i < n do
-        val g = math.log(price(i) / fund(i))
+        val g = lnStrict(price(i) / fund(i))
         if i >= burn then
           val lvl = g - ref
           if lvl > 0.5 then up += 1
@@ -14892,7 +14947,7 @@ object MarketSim:
     var l = 0.0
     var i = 0
     while i < n do
-      val g = math.log(price(i) / fund(i))
+      val g = lnStrict(price(i) / fund(i))
       if i < earlyEnd then e += g
       else if i >= lateFrom then l += g
       i += 1
@@ -14915,7 +14970,7 @@ object MarketSim:
     var l2 = 0.0
     var i = 0
     while i < n do
-      val g = math.log(price(i) / fund(i))
+      val g = lnStrict(price(i) / fund(i))
       if i < earlyEnd then e2 += g * g
       else if i >= lateFrom then l2 += g * g
       i += 1
@@ -16511,7 +16566,7 @@ object MarketSim:
           6.8718700749205790830e+2) * r + 4.2313330701600911252e+1) * r + 1.0
         num / den
       else
-        val r0 = math.sqrt(-math.log(if q <= 0.0 then p else 1.0 - p))
+        val r0 = math.sqrt(-lnStrict(if q <= 0.0 then p else 1.0 - p))
         val x =
           if r0 <= 5.0 then
             val r = r0 - 1.6
@@ -16542,14 +16597,14 @@ object MarketSim:
                     -0.261908384015814087e-4, 0.368991826595316234e-5)
     var y   = x
     val t0  = x + 5.2421875
-    val tmp = (x + 0.5) * math.log(t0) - t0
+    val tmp = (x + 0.5) * lnStrict(t0) - t0
     var ser = 0.999999999999997092
     var i   = 0
     while i < Cof.length do
       y += 1.0
       ser += Cof(i) / y
       i += 1
-    tmp + math.log(2.5066282746310005 * ser / x)
+    tmp + lnStrict(2.5066282746310005 * ser / x)
 
   /** The regularized upper incomplete gamma Q(a, x) (series below a + 1, Lentz's continued
     * fraction above), as Numerical Recipes computes it. */
@@ -16569,7 +16624,7 @@ object MarketSim:
           sum += del
           if math.abs(del) < math.abs(sum) * 1e-16 then done = true
           i += 1
-        1.0 - sum * math.exp(-x + a * math.log(x) - gln)
+        1.0 - sum * math.exp(-x + a * lnStrict(x) - gln)
       else
         val fpmin = 1e-300
         var b     = x + 1.0 - a
@@ -16590,7 +16645,7 @@ object MarketSim:
           h *= del
           if math.abs(del - 1.0) < 1e-16 then done = true
           i += 1
-        math.exp(-x + a * math.log(x) - gln) * h
+        math.exp(-x + a * lnStrict(x) - gln) * h
 
   /** The sample CRPS of `y` under the empirical distribution of the finite readings in `xs`:
     * E|X - y| - E|X - X'| / 2, the proper score the release rule sums over the graded rows (its
@@ -17668,8 +17723,8 @@ object MarketSim:
   def ddEpisodes(px: Array[Double], threshold: Double): Vector[DdEpisode] =
     ddSpans(px, threshold).map { s =>
       val base   = math.max(s.lo - 1, 0)
-      val total  = math.log(px(s.trough) / px(base))
-      val legs   = (math.max(s.lo, 1) to s.trough).map(k => math.log(px(k) / px(k - 1)))
+      val total  = lnStrict(px(s.trough) / px(base))
+      val legs   = (math.max(s.lo, 1) to s.trough).map(k => lnStrict(px(k) / px(k - 1)))
       val worst  = if legs.isEmpty then 0.0 else legs.min
       DdEpisode(s.depth, s.trough - s.lo + 1, if s.censored then None else Some(s.hi - s.trough + 1),
                 s.hi - s.lo + 1, if total < 0.0 then worst / total else Double.NaN)
@@ -20179,7 +20234,7 @@ $body
 
     val allRets = sims.map(s => dailyReturns(s.price))
     val annVol  = allRets.map(r => math.sqrt(r.map(x => x * x).sum / r.length * DaysPerYear))
-    val annRet  = sims.map(s => math.log(s.price.last / s.price.head) / years * 100.0)
+    val annRet  = sims.map(s => lnStrict(s.price.last / s.price.head) / years * 100.0)
 
     println(f"paths $paths%d x $years%d years   ${paths * years}%d simulated years")
     // `med` and `pctile` both drop non-finite paths, so summarising the survivors in silence is how
